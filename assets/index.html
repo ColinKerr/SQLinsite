@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SQLinsite visualize</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>SQLinsite</h1>
+    <nav>
+      <button id="tab-pages" class="tab active">Pages</button>
+      <button id="tab-tables" class="tab">Tables</button>
+    </nav>
+    <div id="controls">
+      <button id="zoom-out" title="Zoom out">&minus;</button>
+      <button id="zoom-in" title="Zoom in">+</button>
+      <button id="zoom-fit" title="Fit width">Fit</button>
+      <label>Overlay
+        <select id="metric">
+          <option value="none">none</option>
+          <option value="total">reads + writes</option>
+          <option value="reads">reads</option>
+          <option value="writes">writes</option>
+        </select>
+      </label>
+      <span id="summary"></span>
+    </div>
+  </header>
+
+  <main>
+    <div id="stage">
+      <canvas id="canvas"></canvas>
+    </div>
+    <div id="resizer" title="Drag to resize"></div>
+    <aside id="legend"></aside>
+  </main>
+
+  <div id="popup" hidden></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

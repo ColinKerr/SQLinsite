@@ -1,0 +1,26 @@
+{
+    "TestRun": {
+        "Name": "Fruit example",
+        "Sessions": [
+            {
+                "SessionName": "WarmCacheReads",
+                "Statements": [
+                    "SELECT * FROM Fruit",
+                    "SELECT * FROM Fruit WHERE name = 'banana'"
+                ]
+            },
+            {
+                "SessionName": "ColdSelect",
+                "Statements": [
+                    "SELECT count(*) FROM Fruit"
+                ]
+            },
+            {
+                "SessionName": "Write",
+                "Statements": [
+                    "INSERT INTO Fruit(name) VALUES ('date')"
+                ]
+            }
+        ]
+    }
+}

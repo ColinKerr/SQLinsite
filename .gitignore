@@ -1,0 +1,16 @@
+# Build output
+/build/
+/cmake-build-*/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Test/run artifacts
+*.csv
+*.db
+!tests/**/*.db
+
+# AI Stuff
+.claude/
