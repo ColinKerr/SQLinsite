@@ -15,12 +15,7 @@ It runs in the foreground and prints its URL; stop it with Ctrl-C.
   read/write overlay.
 - `--port` (optional, default `8080`; `0` picks a free port).
 
-> Change note: the previous version shipped the whole map as JSON and drew one
-> DOM node per page with D3. That is slow for small databases and impossible for
-> large ones (a database may have ~4.3 billion pages). The redesign: the map is a
-> queryable SQLite file, the server answers **page-range** queries, and the
-> browser draws blocks directly on a **`<canvas>`** (no DOM per page, no D3) with
-> zoom and level-of-detail. D3 is removed.
+
 
 ## Server architecture
 
@@ -32,7 +27,7 @@ It runs in the foreground and prints its URL; stop it with Ctrl-C.
   table `profile(pageNumber PRIMARY KEY, reads, writes)` so overlay queries are
   range/aggregate SQL joined on `pageNumber`.
 - **Assets:** front-end (`index.html`, `app.js`, `style.css`) embedded in the
-  binary via the CMake byte-array generator. No D3.
+  binary via the CMake byte-array generator.
 
 ### Endpoints
 
@@ -51,7 +46,14 @@ All page ranges are inclusive and 1-based.
 Per-object (Tables view) variants accept `&objectId=` to scope `pages` / `runs`
 to a single object's page sequence.
 
-## Front-end (Canvas, no framework)
+## Definitions
+
+- `run` - a contiguous set of blocks of the same type, for the same object and marked as accessed at least once by the currently loaded profile settings.
+- Top bar - A fixed bar at the top of the app that contains the name of the app, buttons for each view and other controls as specified in this document.
+- View - The main content window of the app that shows details about the blocks or data in the mapped SQLite file
+- Navigation Panel - A resizable bar on the right hand side of the screen that contains navigation controls as specified in this document.
+
+## Front-end
 
 A single `<canvas>` per view, sized to its container and scaled for
 `devicePixelRatio`. State: `blockPx` (zoom), scroll offset, and the derived
@@ -82,8 +84,9 @@ A single `<canvas>` per view, sized to its container and scaled for
   `/api/meta`); structural pages (overflow/freelist/pointer-map/lock-byte/
   unallocated) use a neutral gray ramp.
 - **Symbol → page type** drawn only when blocks are large enough to read.
+- No block or run should be colored 100% black.
 
-### Right-hand legend panel (resizable)
+### Navigation Panel
 
 The right column is a **resizable** panel (drag its left edge; width persisted in
 `localStorage`). It lists:
@@ -92,17 +95,21 @@ The right column is a **resizable** panel (drag its left edge; width persisted i
   `/api/meta` `typeCounts`).
 - **Tables/indexes** — each object's color, name, and its **page count** (from
   `objects.pageCount`).
+  - Tables are root nodes and indexes of that table are child nodes
+  - Each node should have the starting block and the object identifier so that clicking on the node will scroll to the first leaf block or the beginning of the object in block and table views respectively.
 
 Counts give an at-a-glance size breakdown without scanning the canvas. Clicking a
 type or object can filter/highlight it (nice-to-have).
 
 ### Zoom & pan
 
-- Mouse wheel zooms `blockPx` (clamped), anchored at the cursor so the page under
+- Shift + Mouse wheel zooms `blockPx` (clamped), anchored at the cursor so the page under
   the pointer stays put.
 - Vertical scroll / drag pans. The grid wraps to canvas width, so navigation is
   one-dimensional (page order).
 - Buttons/keys for zoom-to-fit and 1:1.
+  - When zooming the block or run in the upper left hand corner of the view should remain in the upper left hand corner post change to zoom level.
+  - Zoom -, + and Fit buttons are in the Top bar.  The scale in pixels is drawn to the left of these buttons, also in the top bar.
 
 ### Hover & popups (level-of-detail aware)
 
@@ -122,8 +129,13 @@ When a profile is loaded:
 
 - **Per-block:** `/api/profile/pages` for the visible range; touched blocks get a
   read/write tint/badge, untouched blocks are drawn lightened.
-- **Zoomed out:** `/api/profile/histogram` buckets shade runs by access density.
-- A control toggles reads | writes | total | off.
+- **Zoomed out:** `/api/profile/histogram` runs are shaded like blocks in the per-block view.
+- A control in the top bar toggles reads | writes | total | off.
+- A control in the tob bar has check boxes for each session in the profile and child check boxes for each query in a session.
+
+### View scroll bar
+
+Each view should have a scroll bar that is a scaled image of the entire view.  Clicking on a location in that scaled image of the view will scroll the view to that location.
 
 ## Views
 
@@ -154,7 +166,3 @@ Two tabs, sharing the canvas renderer:
 - The canvas drawing itself is verified manually (served bytes are checked in
   tests; pixels are eyeballed by running `visualize serve`).
 
-## Future child commands
-
-See NEXT_STEPS: a `visualize static` subcommand emitting a self-contained bundle,
-and session/statement filtering in the overlay.

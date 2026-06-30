@@ -58,6 +58,11 @@ TEST_CASE("server answers the map query API") {
         CHECK(j["meta"]["pageCount"].get<int>() >= 2);
         CHECK(j["objects"].is_array());
         CHECK(j["typeCounts"].is_array());
+        REQUIRE(j["objects"].size() >= 1);
+        CHECK(j["objects"][0].contains("tableName"));
+        CHECK(j["objects"][0].contains("startPage"));
+        CHECK(j["sessions"].is_array());
+        CHECK(j["sessions"].empty());  // no profile loaded
     }
     SUBCASE("pages range returns rows") {
         auto r = cli.Get("/api/pages?from=1&to=2");
@@ -111,11 +116,12 @@ TEST_CASE("server answers the map query API") {
 TEST_CASE("profile overlay endpoints reflect a loaded profile") {
     MapDb db(buildMapFixture());
     const std::string csv = tmpPath("viz.csv");
+    // Two leaves: (S,0) reads page 1 twice; (S,1) writes page 2 once.
     writeTextFile(csv,
                   "Session Name,Statement Index,Time Start,Time End,Page Number,Read or Write\n"
                   "S,0,1,2,1,Read\n"
                   "S,0,3,4,1,Read\n"
-                  "S,0,5,6,2,Write\n");
+                  "S,1,5,6,2,Write\n");
     db.loadProfile(csv);
 
     httplib::Server server;
@@ -130,21 +136,54 @@ TEST_CASE("profile overlay endpoints reflect a loaded profile") {
 
     httplib::Client cli("127.0.0.1", port);
 
-    auto pages = cli.Get("/api/profile/pages?from=1&to=10");
-    REQUIRE(pages);
-    auto pj = nlohmann::json::parse(pages->body);
-    REQUIRE(pj["pages"].size() == 2);
-    CHECK(pj["pages"][0]["pageNumber"] == 1);
-    CHECK(pj["pages"][0]["reads"] == 2);
+    SUBCASE("meta exposes the session/statement manifest") {
+        auto r = cli.Get("/api/meta");
+        REQUIRE(r);
+        auto j = nlohmann::json::parse(r->body);
+        CHECK(j["hasProfile"] == true);
+        REQUIRE(j["sessions"].size() == 1);
+        CHECK(j["sessions"][0]["session"] == "S");
+        CHECK(j["sessions"][0]["leaves"].size() == 2);
+        CHECK(j["sessions"][0]["leaves"][0]["statementIndex"] == 0);
+    }
 
-    auto hist = cli.Get("/api/profile/histogram?from=1&to=10&bins=2");
-    REQUIRE(hist);
-    auto hj = nlohmann::json::parse(hist->body);
-    CHECK(hj["bins"].size() == 2);
+    SUBCASE("profile pages aggregate across all leaves") {
+        auto pages = cli.Get("/api/profile/pages?from=1&to=10");
+        REQUIRE(pages);
+        auto pj = nlohmann::json::parse(pages->body);
+        REQUIRE(pj["pages"].size() == 2);
+        CHECK(pj["pages"][0]["pageNumber"] == 1);
+        CHECK(pj["pages"][0]["reads"] == 2);
+    }
 
-    auto page = cli.Get("/api/page/1");
-    auto pgj = nlohmann::json::parse(page->body);
-    CHECK(pgj["profile"]["reads"] == 2);
+    SUBCASE("sel filters profile pages to selected leaves") {
+        auto pages = cli.Get("/api/profile/pages?from=1&to=10&sel=0");
+        REQUIRE(pages);
+        auto pj = nlohmann::json::parse(pages->body);
+        REQUIRE(pj["pages"].size() == 1);
+        CHECK(pj["pages"][0]["pageNumber"] == 1);
+        CHECK(pj["pages"][0]["reads"] == 2);
+    }
+
+    SUBCASE("page detail respects the sel filter") {
+        auto all = nlohmann::json::parse(cli.Get("/api/page/1")->body);
+        CHECK(all["profile"]["reads"] == 2);
+        auto other = nlohmann::json::parse(cli.Get("/api/page/1?sel=1")->body);
+        CHECK(other["profile"]["reads"] == 0);
+    }
+
+    SUBCASE("profiled runs are recomputed to accessed spans") {
+        auto all = nlohmann::json::parse(cli.Get("/api/runs?from=1&to=10&profiled=1")->body);
+        REQUIRE(all["runs"].size() >= 1);
+        for (const auto& run : all["runs"]) {
+            CHECK(run["endPage"].get<int>() <= 2);  // only pages 1,2 accessed
+        }
+        // Restricting to leaf 0 leaves only page 1.
+        auto one = nlohmann::json::parse(cli.Get("/api/runs?from=1&to=10&profiled=1&sel=0")->body);
+        REQUIRE(one["runs"].size() == 1);
+        CHECK(one["runs"][0]["startPage"] == 1);
+        CHECK(one["runs"][0]["endPage"] == 1);
+    }
 
     server.stop();
     th.join();

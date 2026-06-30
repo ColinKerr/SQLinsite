@@ -1,12 +1,15 @@
 #include "visualize/map_db.hpp"
 
+#include <optional>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
 
 #include "visualize/profile_reader.hpp"
+#include "visualize/run_coalesce.hpp"
 
 using nlohmann::json;
 
@@ -52,6 +55,20 @@ json queryRows(sqlite3* db, const std::string& sql,
     return rows;
 }
 
+// Builds an " AND leafId IN (...)" fragment for the selected leaves, or empty
+// when nothing is selected (meaning "all leaves"). The ids are integers parsed
+// server-side, so inlining them is injection-safe.
+std::string leafInClause(const std::vector<int>& sel) {
+    if (sel.empty()) return {};
+    std::string s = " AND leafId IN (";
+    for (std::size_t i = 0; i < sel.size(); ++i) {
+        if (i) s += ',';
+        s += std::to_string(sel[i]);
+    }
+    s += ')';
+    return s;
+}
+
 bool tableExists(sqlite3* db, const char* name) {
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db,
@@ -86,23 +103,27 @@ MapDb::~MapDb() { sqlite3_close(db_); }
 
 void MapDb::loadProfile(const std::string& csvPath) {
     const ProfileAggregate agg = aggregateProfileFile(csvPath);
+    leaves_ = agg.leaves;
     sqlite3_exec(db_,
-                 "CREATE TEMP TABLE profile(pageNumber INTEGER PRIMARY KEY, "
+                 "CREATE TEMP TABLE profile(leafId INTEGER, pageNumber INTEGER, "
                  "reads INTEGER, writes INTEGER)",
                  nullptr, nullptr, nullptr);
     sqlite3_exec(db_, "BEGIN", nullptr, nullptr, nullptr);
     sqlite3_stmt* ins = nullptr;
-    sqlite3_prepare_v2(db_, "INSERT INTO profile VALUES (?,?,?)", -1, &ins,
+    sqlite3_prepare_v2(db_, "INSERT INTO profile VALUES (?,?,?,?)", -1, &ins,
                        nullptr);
-    for (const PageAccess& a : agg.pages) {
-        sqlite3_bind_int64(ins, 1, a.pageNumber);
-        sqlite3_bind_int64(ins, 2, a.reads);
-        sqlite3_bind_int64(ins, 3, a.writes);
+    for (const LeafPageAccess& a : agg.leafPages) {
+        sqlite3_bind_int(ins, 1, a.leafId);
+        sqlite3_bind_int64(ins, 2, a.pageNumber);
+        sqlite3_bind_int64(ins, 3, a.reads);
+        sqlite3_bind_int64(ins, 4, a.writes);
         sqlite3_step(ins);
         sqlite3_reset(ins);
     }
     sqlite3_finalize(ins);
     sqlite3_exec(db_, "COMMIT", nullptr, nullptr, nullptr);
+    sqlite3_exec(db_, "CREATE INDEX profile_page ON profile(pageNumber)", nullptr,
+                 nullptr, nullptr);
     hasProfile_ = true;
 }
 
@@ -110,14 +131,34 @@ std::string MapDb::metaJson() const {
     json meta = json::object();
     json rows = queryRows(db_, "SELECT * FROM meta LIMIT 1");
     if (!rows.empty()) meta = rows[0];
+
+    // Sessions tree for the profile checkbox control: each session lists its
+    // statement leaves (leafId + 0-based statement index), preserving CSV order.
+    json sessions = json::array();
+    json* current = nullptr;
+    std::string currentName;
+    for (const ProfileLeaf& leaf : leaves_) {
+        if (current == nullptr || leaf.sessionName != currentName) {
+            sessions.push_back({{"session", leaf.sessionName}, {"leaves", json::array()}});
+            current = &sessions.back();
+            currentName = leaf.sessionName;
+        }
+        (*current)["leaves"].push_back(
+            {{"leafId", leaf.leafId}, {"statementIndex", leaf.statementIndex}});
+    }
+
     json j = {
         {"meta", meta},
         {"objects",
-         queryRows(db_, "SELECT id,type,name,rootPage,pageCount FROM objects "
-                        "ORDER BY id")},
+         queryRows(db_,
+                   "SELECT id,type,name,tableName,rootPage,pageCount,"
+                   "COALESCE((SELECT MIN(pageNumber) FROM pages WHERE objectId=objects.id),"
+                   "rootPage) AS startPage "
+                   "FROM objects ORDER BY id")},
         {"typeCounts",
          queryRows(db_, "SELECT pageType,count FROM type_counts ORDER BY pageType")},
         {"hasProfile", hasProfile_},
+        {"sessions", sessions},
     };
     return j.dump();
 }
@@ -133,12 +174,49 @@ std::string MapDb::pagesJson(std::int64_t from, std::int64_t to,
     return j.dump();
 }
 
-std::string MapDb::runsJson(std::int64_t from, std::int64_t to) const {
-    json j = {{"runs", queryRows(db_,
-                                 "SELECT startPage,endPage,pageType,objectId FROM runs "
-                                 "WHERE startPage <= ? AND endPage >= ? ORDER BY startPage",
-                                 {to, from})}};
-    return j.dump();
+std::string MapDb::runsJson(std::int64_t from, std::int64_t to, bool profiled,
+                            const LeafFilter& sel) const {
+    if (!profiled || !hasProfile_) {
+        json j = {{"runs", queryRows(db_,
+                                     "SELECT startPage,endPage,pageType,objectId FROM runs "
+                                     "WHERE startPage <= ? AND endPage >= ? ORDER BY startPage",
+                                     {to, from})}};
+        return j.dump();
+    }
+
+    // Profile-filtered: a run is a contiguous span of same (pageType, objectId)
+    // pages that the selected leaves accessed at least once. Accessed pages are
+    // bounded by the profile, so we coalesce them in C++ then keep the runs that
+    // overlap [from, to].
+    const std::string sql =
+        "SELECT p.pageNumber, p.pageType, p.objectId FROM pages p "
+        "WHERE p.pageNumber IN (SELECT DISTINCT pageNumber FROM profile WHERE 1=1" +
+        leafInClause(sel) + ") ORDER BY p.pageNumber";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        fail(std::string("runs query failed: ") + sqlite3_errmsg(db_));
+    }
+    std::vector<PageMeta> pages;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        PageMeta m;
+        m.pageNumber = sqlite3_column_int64(stmt, 0);
+        m.pageType = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        if (sqlite3_column_type(stmt, 2) != SQLITE_NULL) {
+            m.objectId = sqlite3_column_int64(stmt, 2);
+        }
+        pages.push_back(std::move(m));
+    }
+    sqlite3_finalize(stmt);
+
+    json runs = json::array();
+    for (const CoalescedRun& r : coalesceRuns(pages)) {
+        if (r.startPage > to || r.endPage < from) continue;
+        runs.push_back({{"startPage", r.startPage},
+                        {"endPage", r.endPage},
+                        {"pageType", r.pageType},
+                        {"objectId", r.objectId ? json(*r.objectId) : json(nullptr)}});
+    }
+    return json({{"runs", std::move(runs)}}).dump();
 }
 
 std::string MapDb::objectPagesJson(std::int64_t objectId, std::int64_t from,
@@ -166,7 +244,7 @@ std::string MapDb::objectPagesJson(std::int64_t objectId, std::int64_t from,
     return json({{"pages", std::move(pages)}}).dump();
 }
 
-std::string MapDb::pageJson(std::int64_t pageNumber) const {
+std::string MapDb::pageJson(std::int64_t pageNumber, const LeafFilter& sel) const {
     json rows = queryRows(db_, "SELECT * FROM pages WHERE pageNumber=?",
                           {pageNumber});
     if (rows.empty()) return {};
@@ -184,54 +262,25 @@ std::string MapDb::pageJson(std::int64_t pageNumber) const {
                             "WHERE pageNumber=? ORDER BY targetPage",
                             {pageNumber});
     if (hasProfile_) {
-        json p = queryRows(db_, "SELECT reads,writes FROM profile WHERE pageNumber=?",
-                           {pageNumber});
+        json p = queryRows(
+            db_,
+            "SELECT COALESCE(SUM(reads),0) AS reads, COALESCE(SUM(writes),0) AS writes "
+            "FROM profile WHERE pageNumber=?" + leafInClause(sel),
+            {pageNumber});
         j["profile"] = p.empty() ? json({{"reads", 0}, {"writes", 0}}) : p[0];
     }
     return j.dump();
 }
 
-std::string MapDb::profilePagesJson(std::int64_t from, std::int64_t to) const {
+std::string MapDb::profilePagesJson(std::int64_t from, std::int64_t to,
+                                    const LeafFilter& sel) const {
     if (!hasProfile_) return R"({"pages":[]})";
-    json j = {{"pages", queryRows(db_,
-                                  "SELECT pageNumber,reads,writes FROM profile "
-                                  "WHERE pageNumber BETWEEN ? AND ? ORDER BY pageNumber",
-                                  {from, to})}};
+    json j = {{"pages", queryRows(
+                            db_,
+                            "SELECT pageNumber, SUM(reads) AS reads, SUM(writes) AS writes "
+                            "FROM profile WHERE pageNumber BETWEEN ? AND ?" +
+                                leafInClause(sel) +
+                                " GROUP BY pageNumber ORDER BY pageNumber",
+                            {from, to})}};
     return j.dump();
-}
-
-std::string MapDb::profileHistogramJson(std::int64_t from, std::int64_t to,
-                                        int bins) const {
-    if (bins < 1) bins = 1;
-    const std::int64_t span = to - from + 1;
-    const std::int64_t width = (span + bins - 1) / bins;  // ceil
-    std::vector<std::int64_t> reads(bins, 0), writes(bins, 0);
-
-    if (hasProfile_ && width > 0) {
-        sqlite3_stmt* stmt = nullptr;
-        sqlite3_prepare_v2(db_,
-                           "SELECT pageNumber,reads,writes FROM profile "
-                           "WHERE pageNumber BETWEEN ? AND ?",
-                           -1, &stmt, nullptr);
-        sqlite3_bind_int64(stmt, 1, from);
-        sqlite3_bind_int64(stmt, 2, to);
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
-            const std::int64_t pg = sqlite3_column_int64(stmt, 0);
-            int bin = static_cast<int>((pg - from) / width);
-            if (bin < 0) bin = 0;
-            if (bin >= bins) bin = bins - 1;
-            reads[bin] += sqlite3_column_int64(stmt, 1);
-            writes[bin] += sqlite3_column_int64(stmt, 2);
-        }
-        sqlite3_finalize(stmt);
-    }
-
-    json arr = json::array();
-    for (int b = 0; b < bins; ++b) {
-        arr.push_back({{"from", from + static_cast<std::int64_t>(b) * width},
-                       {"to", from + static_cast<std::int64_t>(b + 1) * width - 1},
-                       {"reads", reads[b]},
-                       {"writes", writes[b]}});
-    }
-    return json({{"bins", arr}, {"width", width}}).dump();
 }

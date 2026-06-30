@@ -2,6 +2,9 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
+
+#include "visualize/profile_reader.hpp"
 
 struct sqlite3;
 
@@ -23,20 +26,26 @@ public:
     // use runs instead.
     static constexpr std::int64_t kPageRangeCap = 2000000;
 
+    // Selected profile leaves (session/statement ids). Empty means "all".
+    using LeafFilter = std::vector<int>;
+
     std::string metaJson() const;
     // Sets tooLarge when (to-from+1) exceeds kPageRangeCap (response is empty).
     std::string pagesJson(std::int64_t from, std::int64_t to, bool& tooLarge) const;
-    std::string runsJson(std::int64_t from, std::int64_t to) const;
+    // Structural runs from the map; when profiled is set and a profile is loaded,
+    // runs are recomputed to the contiguous spans accessed by the selected leaves.
+    std::string runsJson(std::int64_t from, std::int64_t to, bool profiled,
+                         const LeafFilter& sel) const;
     // Pages owned by one object, by 0-based ordinal window [from, to] (Tables view).
     std::string objectPagesJson(std::int64_t objectId, std::int64_t from,
                                 std::int64_t to, bool& tooLarge) const;
     // Empty string if the page does not exist.
-    std::string pageJson(std::int64_t pageNumber) const;
-    std::string profilePagesJson(std::int64_t from, std::int64_t to) const;
-    std::string profileHistogramJson(std::int64_t from, std::int64_t to,
-                                     int bins) const;
+    std::string pageJson(std::int64_t pageNumber, const LeafFilter& sel) const;
+    std::string profilePagesJson(std::int64_t from, std::int64_t to,
+                                 const LeafFilter& sel) const;
 
 private:
     sqlite3* db_ = nullptr;
     bool hasProfile_ = false;
+    std::vector<ProfileLeaf> leaves_;  // profile session/statement manifest
 };

@@ -26,6 +26,34 @@ TEST_CASE("aggregates reads and writes per page number") {
     CHECK(agg.totalWrites == 1);
 }
 
+TEST_CASE("assigns session/statement leaves in first-seen order") {
+    const std::string csv =
+        "Session Name,Statement Index,Time Start,Time End,Page Number,Read or Write\n"
+        "S1,0,1,2,1,Read\n"
+        "S1,1,3,4,2,Write\n"
+        "S2,0,5,6,3,Read\n"
+        "S1,0,7,8,1,Read\n";  // back to an existing leaf
+
+    ProfileAggregate agg = aggregateProfileCsv(csv);
+    REQUIRE(agg.leaves.size() == 3);
+    CHECK(agg.leaves[0].leafId == 0);
+    CHECK(agg.leaves[0].sessionName == "S1");
+    CHECK(agg.leaves[0].statementIndex == 0);
+    CHECK(agg.leaves[1].sessionName == "S1");
+    CHECK(agg.leaves[1].statementIndex == 1);
+    CHECK(agg.leaves[2].sessionName == "S2");
+
+    // Per-(leaf,page): leaf 0 read page 1 twice.
+    bool found = false;
+    for (const LeafPageAccess& lp : agg.leafPages) {
+        if (lp.leafId == 0 && lp.pageNumber == 1) {
+            CHECK(lp.reads == 2);
+            found = true;
+        }
+    }
+    CHECK(found);
+}
+
 TEST_CASE("handles quoted session names containing commas") {
     const std::string csv =
         "Session Name,Statement Index,Time Start,Time End,Page Number,Read or Write\n"

@@ -3,7 +3,9 @@
 #include <cstdint>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <string>
+#include <vector>
 
 #include <httplib.h>
 
@@ -37,6 +39,23 @@ std::int64_t paramInt(const httplib::Request& req, const char* key,
     } catch (...) {
         return fallback;
     }
+}
+
+// Parses a comma-separated list of profile leaf ids (e.g. "0,2,3"). An absent
+// or empty `sel` yields an empty filter, which the data layer treats as "all".
+std::vector<int> paramLeaves(const httplib::Request& req) {
+    std::vector<int> ids;
+    if (!req.has_param("sel")) return ids;
+    std::stringstream ss(req.get_param_value("sel"));
+    std::string tok;
+    while (std::getline(ss, tok, ',')) {
+        if (tok.empty()) continue;
+        try {
+            ids.push_back(std::stoi(tok));
+        } catch (...) {
+        }
+    }
+    return ids;
 }
 
 }  // namespace
@@ -73,7 +92,9 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db) {
                                   httplib::Response& res) {
         const std::int64_t from = paramInt(req, "from", 1);
         const std::int64_t to = paramInt(req, "to", from);
-        res.set_content(db.runsJson(from, to), "application/json");
+        const bool profiled = req.has_param("profiled");
+        res.set_content(db.runsJson(from, to, profiled, paramLeaves(req)),
+                        "application/json");
     });
 
     server.Get("/api/object/pages", [&db](const httplib::Request& req,
@@ -94,7 +115,7 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db) {
     server.Get(R"(/api/page/(\d+))",
                [&db](const httplib::Request& req, httplib::Response& res) {
                    const std::int64_t n = std::stoll(req.matches[1].str());
-                   std::string body = db.pageJson(n);
+                   std::string body = db.pageJson(n, paramLeaves(req));
                    if (body.empty()) {
                        res.status = 404;
                        res.set_content(R"({"error":"no such page"})",
@@ -108,15 +129,7 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db) {
                                            httplib::Response& res) {
         const std::int64_t from = paramInt(req, "from", 1);
         const std::int64_t to = paramInt(req, "to", from);
-        res.set_content(db.profilePagesJson(from, to), "application/json");
-    });
-
-    server.Get("/api/profile/histogram", [&db](const httplib::Request& req,
-                                               httplib::Response& res) {
-        const std::int64_t from = paramInt(req, "from", 1);
-        const std::int64_t to = paramInt(req, "to", from);
-        const int bins = static_cast<int>(paramInt(req, "bins", 64));
-        res.set_content(db.profileHistogramJson(from, to, bins),
+        res.set_content(db.profilePagesJson(from, to, paramLeaves(req)),
                         "application/json");
     });
 }

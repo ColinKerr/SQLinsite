@@ -4,6 +4,7 @@
 #include <map>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 
@@ -62,33 +63,55 @@ ProfileAggregate aggregateProfileCsv(const std::string& csvText) {
     const auto rows = tokenizeCsv(csvText);
     std::map<std::int64_t, PageAccess> byPage;
 
+    // Leaf = (sessionName, statementIndex). Ids are assigned in first-seen order.
+    using LeafKey = std::pair<std::string, std::int64_t>;
+    std::map<LeafKey, int> leafIds;
+    std::map<std::pair<int, std::int64_t>, LeafPageAccess> byLeafPage;
+
     ProfileAggregate agg;
     for (std::size_t r = 0; r < rows.size(); ++r) {
         if (r == 0) continue;  // header
         const auto& fields = rows[r];
         if (fields.size() < 6) continue;
 
+        std::int64_t statementIndex = 0;
         std::int64_t pageNumber = 0;
         try {
+            statementIndex = std::stoll(fields[1]);
             pageNumber = std::stoll(fields[4]);
         } catch (...) {
             continue;
         }
         if (pageNumber <= 0) continue;
 
+        const LeafKey key{fields[0], statementIndex};
+        auto [it, inserted] = leafIds.try_emplace(key, static_cast<int>(agg.leaves.size()));
+        if (inserted) {
+            agg.leaves.push_back({it->second, fields[0], statementIndex});
+        }
+        const int leafId = it->second;
+
         PageAccess& a = byPage[pageNumber];
         a.pageNumber = pageNumber;
+        LeafPageAccess& lp = byLeafPage[{leafId, pageNumber}];
+        lp.leafId = leafId;
+        lp.pageNumber = pageNumber;
         if (fields[5] == "Read") {
             ++a.reads;
+            ++lp.reads;
             ++agg.totalReads;
         } else if (fields[5] == "Write") {
             ++a.writes;
+            ++lp.writes;
             ++agg.totalWrites;
         }
     }
 
     for (const auto& [num, access] : byPage) {
         agg.pages.push_back(access);
+    }
+    for (const auto& [key, lp] : byLeafPage) {
+        agg.leafPages.push_back(lp);
     }
     return agg;
 }
