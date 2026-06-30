@@ -592,13 +592,16 @@ async function navigateToObject(id) {
     if (band) { S.scroll.tables = Math.max(0, band.y); scheduleRender(); }
     return;
   }
-  // Pages view: bring the object's first block to the top-left corner. Prefer
-  // meta's startPage; fall back to querying the object's first page so this works
-  // regardless of what is currently loaded on the front-end.
-  let first = obj.startPage;
+  // Pages view: bring the object's first leaf block to the top-left corner. For a
+  // multi-page object that is its second block overall (the root/interior page is
+  // first); for a single-page object it is that page. Prefer meta's startLeafPage,
+  // falling back to the object's second page (then first) if it is absent.
+  let first = obj.startLeafPage || obj.startPage;
   if (!first) {
-    const d = await getJson(`/api/object/pages?objectId=${id}&from=0&to=0`);
-    first = (d && d.pages && d.pages.length) ? d.pages[0].pageNumber : null;
+    const d = await getJson(`/api/object/pages?objectId=${id}&from=0&to=1`);
+    const pages = (d && d.pages) || [];
+    first = pages.length > 1 ? pages[1].pageNumber
+          : pages.length ? pages[0].pageNumber : null;
   }
   if (first) scrollToBlock(first);
 }

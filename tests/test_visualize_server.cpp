@@ -61,6 +61,7 @@ TEST_CASE("server answers the map query API") {
         REQUIRE(j["objects"].size() >= 1);
         CHECK(j["objects"][0].contains("tableName"));
         CHECK(j["objects"][0].contains("startPage"));
+        CHECK(j["objects"][0].contains("startLeafPage"));
         CHECK(j["sessions"].is_array());
         CHECK(j["sessions"].empty());  // no profile loaded
     }

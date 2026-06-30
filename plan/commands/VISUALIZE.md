@@ -96,7 +96,7 @@ The right column is a **resizable** panel (drag its left edge; width persisted i
 - **Tables/indexes** — each object's color, name, and its **page count** (from
   `objects.pageCount`).
   - Tables are root nodes and indexes of that table are child nodes
-  - Each node should have the starting block and the object identifier so that clicking on the node will scroll to the first leaf block or the beginning of the object in block and table views respectively.
+  - Each node should have the starting block and the object identifier so that clicking on the node will scroll to the first **leaf** block or the beginning of the object in block and table views respectively.
 
 Counts give an at-a-glance size breakdown without scanning the canvas. Clicking a
 type or object can filter/highlight it (nice-to-have).

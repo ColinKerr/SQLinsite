@@ -153,7 +153,11 @@ std::string MapDb::metaJson() const {
          queryRows(db_,
                    "SELECT id,type,name,tableName,rootPage,pageCount,"
                    "COALESCE((SELECT MIN(pageNumber) FROM pages WHERE objectId=objects.id),"
-                   "rootPage) AS startPage "
+                   "rootPage) AS startPage,"
+                   "COALESCE((SELECT MIN(pageNumber) FROM pages WHERE objectId=objects.id "
+                   "AND pageType LIKE '%-leaf'),"
+                   "(SELECT MIN(pageNumber) FROM pages WHERE objectId=objects.id),"
+                   "rootPage) AS startLeafPage "
                    "FROM objects ORDER BY id")},
         {"typeCounts",
          queryRows(db_, "SELECT pageType,count FROM type_counts ORDER BY pageType")},
