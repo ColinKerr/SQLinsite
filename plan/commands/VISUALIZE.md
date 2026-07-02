@@ -101,15 +101,37 @@ The right column is a **resizable** panel (drag its left edge; width persisted i
 Counts give an at-a-glance size breakdown without scanning the canvas. Clicking a
 type or object can filter/highlight it (nice-to-have).
 
+### Top Bar
+
+The top bar should be organized in groups from left to right in this order:
+
+- App Info (left aligned)
+  - Application Name
+- View picker (left aligned)
+  - Pages button
+  - Tables button
+- Zoom controls (right aligned)
+  - Zoom %
+  - zoom out (-)
+  - zoom in (+)
+  - zoom fit (Fit)
+- Profile controls (right aligned)
+- Session information
+  - Map Information
+    - Total number of pages
+    - Number of pages access statements currently identified by profile controls
+
+
 ### Zoom & pan
 
-- Shift + Mouse wheel zooms `blockPx` (clamped), anchored at the cursor so the page under
+- ctrl + Mouse wheel zooms `blockPx` (clamped), anchored at the cursor so the page under
   the pointer stays put.
 - Vertical scroll / drag pans. The grid wraps to canvas width, so navigation is
   one-dimensional (page order).
 - Buttons/keys for zoom-to-fit and 1:1.
   - When zooming the block or run in the upper left hand corner of the view should remain in the upper left hand corner post change to zoom level.
-  - Zoom -, + and Fit buttons are in the Top bar.  The scale in pixels is drawn to the left of these buttons, also in the top bar.
+  - Zoom percentage, -, + and Fit buttons are in the Top bar in that order in the `Zoom controls` group.  
+    - The scale in percentage is calculated using the formula `current pixels`/`max pixels`.
 
 ### Hover & popups (level-of-detail aware)
 
@@ -130,8 +152,10 @@ When a profile is loaded:
 - **Per-block:** `/api/profile/pages` for the visible range; touched blocks get a
   read/write tint/badge, untouched blocks are drawn lightened.
 - **Zoomed out:** `/api/profile/histogram` runs are shaded like blocks in the per-block view.
-- A control in the top bar toggles reads | writes | total | off.
-- A control in the tob bar has check boxes for each session in the profile and child check boxes for each query in a session.
+- Control for profile visualization is in the Top bar `profile controls` section
+  - The control should be a custom drop down with two sections
+    - The first has two checkboxes one for reads and one for writes.
+    - THe second has checkboxes for each session in the profile and child checkboxes for each query in the session.
 
 ### View scroll bar
 

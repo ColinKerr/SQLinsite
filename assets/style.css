@@ -28,6 +28,10 @@ header {
 }
 header h1 { font-size: 16px; margin: 0; letter-spacing: .5px; }
 
+/* Top-bar groups (left → right): app info · view picker · zoom · profile */
+.bar-group { display: flex; gap: 8px; align-items: center; }
+.bar-spacer { flex: 1 1 auto; }
+
 nav .tab {
   background: transparent; color: var(--muted);
   border: 1px solid transparent; padding: 5px 12px;
@@ -35,13 +39,34 @@ nav .tab {
 }
 nav .tab.active { color: var(--ink); background: #30343d; }
 
-#controls { margin-left: auto; display: flex; gap: 12px; align-items: center; }
-#controls button {
+header button {
   background: #30343d; color: var(--ink); border: 1px solid #444;
   border-radius: 5px; padding: 3px 9px; cursor: pointer; min-width: 28px;
 }
-#controls select { background: #30343d; color: var(--ink); border: 1px solid #444; border-radius: 5px; padding: 3px 6px; }
+header button:hover { border-color: #5a6068; }
+#zoom-pct {
+  color: var(--muted); font-variant-numeric: tabular-nums;
+  min-width: 42px; text-align: right;
+}
 #summary { color: var(--muted); }
+
+/* Custom dropdown (Profile controls) */
+.dropdown { position: relative; }
+.dropdown-btn[aria-expanded="true"] { border-color: var(--accent); }
+.dropdown-panel {
+  position: absolute; right: 0; top: calc(100% + 6px);
+  min-width: 220px; max-height: 70vh; overflow: auto;
+  background: var(--panel); border: 1px solid #3a3f4a; border-radius: 7px;
+  padding: 8px 10px; z-index: 30;
+  box-shadow: 0 6px 22px rgba(0,0,0,.5);
+}
+.dd-section + .dd-section { margin-top: 8px; border-top: 1px solid #3a3f4a; padding-top: 8px; }
+.dd-title { font-size: 11px; text-transform: uppercase; color: var(--muted); margin-bottom: 5px; }
+.dd-section > label {
+  display: flex; align-items: center; gap: 6px; margin: 3px 0; cursor: pointer;
+  white-space: nowrap;
+}
+.dd-section input { accent-color: var(--accent); }
 
 main { flex: 1 1 auto; display: flex; min-height: 0; }
 

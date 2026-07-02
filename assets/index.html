@@ -8,24 +8,44 @@
 </head>
 <body>
   <header>
-    <h1>SQLinsite</h1>
-    <nav>
+    <!-- Groups: App info · View picker (left) — Zoom · Profile · Session info (right) -->
+    <div class="bar-group" id="app-info">
+      <h1>SQLinsite</h1>
+    </div>
+
+    <nav class="bar-group" id="view-picker">
       <button id="tab-pages" class="tab active">Pages</button>
       <button id="tab-tables" class="tab">Tables</button>
     </nav>
-    <div id="controls">
+
+    <div class="bar-spacer"></div>
+
+    <div class="bar-group" id="zoom-controls">
+      <span id="zoom-pct" title="Zoom level (current / max block size)">100%</span>
       <button id="zoom-out" title="Zoom out">&minus;</button>
       <button id="zoom-in" title="Zoom in">+</button>
       <button id="zoom-fit" title="Fit width">Fit</button>
-      <label>Overlay
-        <select id="metric">
-          <option value="none">none</option>
-          <option value="total">reads + writes</option>
-          <option value="reads">reads</option>
-          <option value="writes">writes</option>
-        </select>
-      </label>
-      <span id="summary"></span>
+    </div>
+
+    <div class="bar-group" id="profile-controls" hidden>
+      <div class="dropdown">
+        <button id="profile-toggle" class="dropdown-btn" aria-expanded="false">Overlay &#9662;</button>
+        <div id="profile-panel" class="dropdown-panel" hidden>
+          <div class="dd-section">
+            <div class="dd-title">Show</div>
+            <label><input type="checkbox" id="metric-reads"> reads</label>
+            <label><input type="checkbox" id="metric-writes"> writes</label>
+          </div>
+          <div class="dd-section">
+            <div class="dd-title">Sessions &amp; queries</div>
+            <div id="sessions"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bar-group" id="session-info">
+      <span id="summary" title="Map pages · page accesses identified by the current profile selection"></span>
     </div>
   </header>
 

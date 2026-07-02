@@ -15,6 +15,8 @@ const GLYPH = {
 const LOD_THRESHOLD = 4;   // px: below this, draw runs instead of pages
 const GAP = 1;
 const RANGE_CAP = 2000000;
+const MIN_BLOCK_PX = 1;
+const MAX_BLOCK_PX = 40;   // 100% zoom; the top-bar percentage is blockPx / MAX_BLOCK_PX
 
 // ---- state ----------------------------------------------------------------
 const S = {
@@ -465,7 +467,7 @@ function topLeftPage() { return Math.floor(S.scroll.pages / cell()) * colsFor() 
 // Re-zooms, keeping `anchorPage` pinned at viewport y `anchorY`. With no anchor,
 // the top-left page stays in the top-left corner across the zoom change.
 function setZoom(px, anchorPage, anchorY) {
-  px = Math.max(1, Math.min(40, px));
+  px = Math.max(MIN_BLOCK_PX, Math.min(MAX_BLOCK_PX, px));
   if (anchorPage == null && S.view === "pages") { anchorPage = topLeftPage(); anchorY = 0; }
   S.blockPx = px;
   if (S.view === "tables") rebuildBands();
@@ -528,19 +530,18 @@ function renderLegend() {
     }
   }
 
-  renderSessions(legend);
-
   legend.onclick = (e) => {
-    if (e.target.closest("#sessions")) return;  // checkbox handlers own this region
     const row = e.target.closest("[data-object-id]");
     if (row) navigateToObject(parseInt(row.dataset.objectId, 10));
   };
 }
 
-// Profile session/statement checkbox tree (each query = one leaf id).
-function renderSessions(legend) {
-  if (!S.hasProfile || !S.sessions.length) return;
-  let html = '<h3>Profile sessions</h3><div id="sessions">';
+// Profile session/statement checkbox tree (each query = one leaf id), rendered
+// into the Profile-controls dropdown in the top bar.
+function renderSessions() {
+  const host = document.getElementById("sessions");
+  if (!host || !S.hasProfile || !S.sessions.length) return;
+  let html = "";
   for (const s of S.sessions) {
     const ids = s.leaves.map((l) => l.leafId).join(",");
     html += `<div class="session"><label><input type="checkbox" class="ses" data-leaves="${ids}">` +
@@ -550,15 +551,15 @@ function renderSessions(legend) {
     }
     html += "</div></div>";
   }
-  legend.insertAdjacentHTML("beforeend", html + "</div>");
+  host.innerHTML = html;
 
-  legend.querySelectorAll("#sessions input.leaf").forEach((cb) =>
+  host.querySelectorAll("input.leaf").forEach((cb) =>
     cb.addEventListener("change", () => {
       const id = +cb.dataset.leaf;
       if (cb.checked) S.selLeaves.add(id); else S.selLeaves.delete(id);
       syncSessionChecks(); reloadProfile();
     }));
-  legend.querySelectorAll("#sessions input.ses").forEach((cb) =>
+  host.querySelectorAll("input.ses").forEach((cb) =>
     cb.addEventListener("change", () => {
       for (const id of cb.dataset.leaves.split(",").map(Number)) {
         if (cb.checked) S.selLeaves.add(id); else S.selLeaves.delete(id);
@@ -580,6 +581,29 @@ function syncSessionChecks() {
     cb.checked = on === ids.length;
     cb.indeterminate = on > 0 && on < ids.length;
   });
+}
+
+// Derives S.metric from the reads/writes checkboxes: both → total, one → that
+// metric, neither → none (overlay off). Overlay is applied at draw time.
+function applyMetricFromChecks() {
+  const r = document.getElementById("metric-reads").checked;
+  const w = document.getElementById("metric-writes").checked;
+  S.metric = (r && w) ? "total" : r ? "reads" : w ? "writes" : "none";
+  scheduleRender();
+}
+
+// Wires the custom Profile-controls dropdown (toggle, outside-click close, and
+// the reads/writes overlay checkboxes).
+function initProfileMenu() {
+  const toggle = document.getElementById("profile-toggle");
+  const panel = document.getElementById("profile-panel");
+  if (!toggle) return;
+  const setOpen = (open) => { panel.hidden = !open; toggle.setAttribute("aria-expanded", String(open)); };
+  toggle.addEventListener("click", (e) => { e.stopPropagation(); setOpen(panel.hidden); });
+  panel.addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("click", () => { if (!panel.hidden) setOpen(false); });
+  document.getElementById("metric-reads").addEventListener("change", applyMetricFromChecks);
+  document.getElementById("metric-writes").addEventListener("change", applyMetricFromChecks);
 }
 
 // Navigates the current view to the start of an object's blocks.
@@ -605,11 +629,23 @@ async function navigateToObject(id) {
   }
   if (first) scrollToBlock(first);
 }
+// Page accesses currently identified by the profile controls (session/query
+// selection filters profMap; the reads/writes checkboxes pick which are counted).
+function identifiedAccesses() {
+  const r = S.prefReads[S.prefReads.length - 1];
+  const w = S.prefWrites[S.prefWrites.length - 1];
+  return S.metric === "reads" ? r : S.metric === "writes" ? w
+       : S.metric === "total" ? r + w : 0;
+}
 function updateSummary() {
-  const m = S.meta.meta;
-  let text = `${m.pageCount.toLocaleString()} pages · ${m.pageSize}B · ${S.meta.objects.length} objects · ${S.blockPx}px`;
-  if (S.hasProfile) text += " · profile loaded";
+  // Session information → Map Information: total pages, and the number of page
+  // accesses currently identified by the profile controls.
+  let text = `${S.meta.meta.pageCount.toLocaleString()} pages`;
+  if (S.hasProfile) text += ` · ${identifiedAccesses().toLocaleString()} accesses`;
   document.getElementById("summary").textContent = text;
+  // Zoom scale shown as a percentage of the maximum block size.
+  document.getElementById("zoom-pct").textContent =
+    Math.round(100 * S.blockPx / MAX_BLOCK_PX) + "%";
 }
 
 // ---- events ---------------------------------------------------------------
@@ -619,10 +655,7 @@ function initEvents() {
   document.getElementById("zoom-in").onclick = () => setZoom(S.blockPx + 2, null);
   document.getElementById("zoom-out").onclick = () => setZoom(S.blockPx - 2, null);
   document.getElementById("zoom-fit").onclick = fitWidth;
-  document.getElementById("metric").onchange = (e) => {
-    S.metric = e.target.value;  // overlay is applied at draw time; just re-render
-    scheduleRender();
-  };
+  initProfileMenu();
   initMinimap();
 
   canvas.addEventListener("wheel", (e) => {
@@ -697,9 +730,12 @@ async function main() {
     const all = await getJson(`/api/profile/pages?from=1&to=${S.pageCount}${selParam()}`);
     if (all) buildProfile(all);
     S.metric = "total";
-    document.getElementById("metric").value = "total";
+    document.getElementById("profile-controls").hidden = false;
+    document.getElementById("metric-reads").checked = true;
+    document.getElementById("metric-writes").checked = true;
   }
   renderLegend();
+  renderSessions();
   initEvents();
   resizeCanvas();
 }
