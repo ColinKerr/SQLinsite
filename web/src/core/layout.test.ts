@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   cell, colsFor, pagesContentHeight, visiblePageRange, topLeftPage, scrollForPageAtY,
-  lowerBound, upperBound,
+  lowerBound, upperBound, bestFitBlockPx,
 } from "./layout.ts";
 
 describe("layout math", () => {
@@ -42,5 +42,20 @@ describe("layout math", () => {
     expect(upperBound(a, 5)).toBe(3);
     expect(lowerBound(a, 4)).toBe(2);
     expect(upperBound(a, 9)).toBe(5);
+  });
+
+  it("bestFitBlockPx picks the largest fitting zoom, else min", () => {
+    const h = (bp: number) => bp; // monotonic in blockPx
+    expect(bestFitBlockPx(10, h, 1, 40)).toBe(10);  // largest bp with bp ≤ 10
+    expect(bestFitBlockPx(100, h, 1, 40)).toBe(40); // everything fits → zoom in to max
+    expect(bestFitBlockPx(0.5, h, 1, 40)).toBe(1);  // nothing fits → min (zoomed out)
+  });
+
+  it("bestFitBlockPx result reveals whether it actually fits", () => {
+    const viewH = 200, cssW = 400;
+    const smallFits = bestFitBlockPx(viewH, (b) => pagesContentHeight(50, cssW, b));
+    expect(pagesContentHeight(50, cssW, smallFits) <= viewH).toBe(true); // fits → scroll to top
+    const hugeFit = bestFitBlockPx(viewH, (b) => pagesContentHeight(1_000_000, cssW, b));
+    expect(pagesContentHeight(1_000_000, cssW, hugeFit) > viewH).toBe(true); // can't fit → keep scroll
   });
 });

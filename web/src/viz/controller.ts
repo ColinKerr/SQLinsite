@@ -1,6 +1,6 @@
 import { fetchObjectPages, fetchPage, fetchPages, fetchRuns } from "../core/api.ts";
 import { BG, GAP, HEADER_H, LOD_THRESHOLD, RANGE_CAP } from "../core/constants.ts";
-import { cell, colsFor, pagesContentHeight, scrollForPageAtY, topLeftPage, visiblePageRange }
+import { bestFitBlockPx, cell, colsFor, pagesContentHeight, scrollForPageAtY, topLeftPage, visiblePageRange }
   from "../core/layout.ts";
 import { colorForObject, colorForPage, GLYPH } from "../core/palette.ts";
 import { overlayFill } from "../core/overlay.ts";
@@ -138,6 +138,20 @@ export class CanvasController {
 
   private pagesContentHeight() {
     return pagesContentHeight(this.s.pageCount, this.cssW, this.blockPx());
+  }
+
+  // Total height of the Tables layout at a hypothetical zoom (mirrors
+  // rebuildBands), so `fit()` can evaluate candidate zoom levels without mutating
+  // state.
+  private tablesHeightAt(bp: number): number {
+    const cols = colsFor(this.cssW, bp);
+    const c = cell(bp);
+    let y = 0;
+    for (const o of this.s.objects) {
+      const rows = Math.max(1, Math.ceil(o.pageCount / cols));
+      y += HEADER_H + rows * c + 10;
+    }
+    return y;
   }
 
   // ---- pages-view data (no-flash: keep old until new arrives) -------------
@@ -446,7 +460,29 @@ export class CanvasController {
     this.scheduleRender();
   }
   zoomBy(delta: number) { this.setZoom(this.blockPx() + delta); }
-  fitWidth() { this.setZoom(this.blockPx()); }
+
+  // Best-fit: pick the largest zoom at which the whole view fits vertically — the
+  // full file (Pages) or all object bands (Tables) — zooming in or out as needed,
+  // or the maximum zoom-out when it cannot fit. If everything fits, scroll to the
+  // top; if it cannot fit, leave the scroll position unchanged.
+  fit() {
+    if (this.cssW <= 0 || this.cssH <= 0) return;
+    const pages = this.s.view === "pages";
+    if (pages ? this.s.pageCount <= 0 : this.s.objects.length === 0) return;
+    const heightAt = pages
+      ? (bp: number) => pagesContentHeight(this.s.pageCount, this.cssW, bp)
+      : (bp: number) => this.tablesHeightAt(bp);
+    const best = bestFitBlockPx(this.cssH, heightAt);
+    const fits = heightAt(best) <= this.cssH;
+    if (fits && pages) {
+      this.setZoom(best, 1, 0);      // fits: page 1 at top-left
+    } else if (fits) {
+      this.scroll.tables = 0;        // fits: show tables from the top
+      this.setZoom(best);
+    } else {
+      this.setZoom(best);            // cannot fit: keep the current scroll position
+    }
+  }
 
   // Public: called from the Navigation panel legend.
   async navigateToObject(id: number) {

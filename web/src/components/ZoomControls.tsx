@@ -11,7 +11,7 @@ export function ZoomControls() {
       <span id="zoom-pct" title="Zoom level (current / max block size)">{pct}</span>
       <button id="zoom-out" title="Zoom out" onClick={() => controller?.zoomBy(-2)}>&minus;</button>
       <button id="zoom-in" title="Zoom in" onClick={() => controller?.zoomBy(2)}>+</button>
-      <button id="zoom-fit" title="Fit width" onClick={() => controller?.fitWidth()}>Fit</button>
+      <button id="zoom-fit" title="Fit the whole view" onClick={() => controller?.fit()}>Fit</button>
     </div>
   );
 }

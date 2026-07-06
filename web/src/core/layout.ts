@@ -1,8 +1,23 @@
-import { GAP } from "./constants.ts";
+import { GAP, MAX_BLOCK_PX, MIN_BLOCK_PX } from "./constants.ts";
 
 // Grid geometry, all pure functions of (blockPx, cssW/H, scroll, pageCount).
 
 export const cell = (blockPx: number) => blockPx + GAP;
+
+// Best-fit zoom: the largest blockPx in [min, max] at which the content fits in
+// viewH (`contentHeightAt(bp) <= viewH`), or `min` when nothing fits. Content
+// height is monotonic in blockPx, so a downward scan finds the largest fit.
+export function bestFitBlockPx(
+  viewH: number,
+  contentHeightAt: (bp: number) => number,
+  min: number = MIN_BLOCK_PX,
+  max: number = MAX_BLOCK_PX,
+): number {
+  for (let bp = max; bp >= min; bp--) {
+    if (contentHeightAt(bp) <= viewH) return bp;
+  }
+  return min;
+}
 
 export const colsFor = (cssW: number, blockPx: number) =>
   Math.max(1, Math.floor(cssW / cell(blockPx)));

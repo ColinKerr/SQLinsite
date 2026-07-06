@@ -140,6 +140,7 @@ The top bar should be organized in groups from left to right in this order:
   - When zooming the block or run in the upper left hand corner of the view should remain in the upper left hand corner post change to zoom level.
   - Zoom percentage, -, + and Fit buttons are in the Page Top Bar in that order in the `Zoom controls` group.  
     - The scale in percentage is calculated using the formula `current pixels`/`max pixels`.
+    - The Fit button best-fits the view: it zooms in or out to the largest level at which the whole view fits vertically — the entire db in the Pages view, or all table bands in the Tables view — or the maximum zoom-out if it cannot fit. When everything fits it scrolls to the top; when it cannot fit the scroll position is left unchanged.
 
 ### Hover & popups (level-of-detail aware)
 
