@@ -104,7 +104,7 @@ TEST_CASE("server answers the map query API") {
         auto idx = cli.Get("/");
         REQUIRE(idx);
         CHECK(idx->status == 200);
-        auto js = cli.Get("/static/app.js");
+        auto js = cli.Get("/static/sqlinsite.js");
         REQUIRE(js);
         CHECK(js->status == 200);
         CHECK(js->get_header_value("Content-Type").find("javascript") != std::string::npos);

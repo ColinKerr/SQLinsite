@@ -5,10 +5,10 @@
 #include <string>
 #include <vector>
 
-enum class AccessType { Read, Write };
+#include "profile/access_sink.hpp"
 
 // Buffered writer for the output CSV described in plan/CLI.md.
-class CsvWriter {
+class CsvWriter : public AccessSink {
 public:
     explicit CsvWriter(const std::string& path);
 
@@ -20,6 +20,13 @@ public:
                   std::int64_t timeEnd,
                   std::int64_t pageNumber,
                   AccessType access);
+
+    // AccessSink: forwards to writeRow.
+    void record(const std::string& sessionName, int statementIndex,
+                std::int64_t timeStart, std::int64_t timeEnd,
+                std::int64_t pageNumber, AccessType access) override {
+        writeRow(sessionName, statementIndex, timeStart, timeEnd, pageNumber, access);
+    }
 
     std::int64_t readCount() const { return reads_; }
     std::int64_t writeCount() const { return writes_; }

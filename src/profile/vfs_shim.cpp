@@ -5,7 +5,7 @@
 
 #include <sqlite3.h>
 
-#include "profile/csv_writer.hpp"
+#include "profile/access_sink.hpp"
 #include "profile/page_index.hpp"
 #include "profile/profiling_context.hpp"
 
@@ -43,8 +43,8 @@ void logAccess(const ShimFile* shim, sqlite3_int64 offset, AccessType access,
     }
     const std::int64_t pageNumber = pageNumberFor(offset, ctx.pageSize);
     const std::int64_t base = ctx.relativeTiming ? ctx.timeBaseline : 0;
-    ctx.out->writeRow(ctx.sessionName, ctx.statementIndex, start - base,
-                      end - base, pageNumber, access);
+    ctx.out->record(ctx.sessionName, ctx.statementIndex, start - base,
+                    end - base, pageNumber, access);
 }
 
 // --- IO methods: read/write are instrumented, the rest delegate. ---

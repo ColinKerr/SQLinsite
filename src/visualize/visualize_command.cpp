@@ -8,9 +8,11 @@
 #include <vector>
 
 #include <httplib.h>
+#include <nlohmann/json.hpp>
 
 #include "visualize/embedded_assets.hpp"
 #include "visualize/map_db.hpp"
+#include "visualize/query_engine.hpp"
 
 namespace {
 
@@ -60,7 +62,7 @@ std::vector<int> paramLeaves(const httplib::Request& req) {
 
 }  // namespace
 
-void configureVisualizeRoutes(httplib::Server& server, MapDb& db) {
+void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* engine) {
     server.Get("/", [](const httplib::Request&, httplib::Response& res) {
         serveAsset(res, "index.html");
     });
@@ -132,14 +134,64 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db) {
         res.set_content(db.profilePagesJson(from, to, paramLeaves(req)),
                         "application/json");
     });
+
+    if (engine == nullptr) return;  // live-query routes only with --db-file
+
+    server.Get("/api/schema", [engine, &db](const httplib::Request&, httplib::Response& res) {
+        res.set_content(engine->schemaJson(db.objectStats()), "application/json");
+    });
+
+    server.Post("/api/query/run", [engine](const httplib::Request& req, httplib::Response& res) {
+        const std::string body = engine->runJson(req.body);
+        if (body.rfind("{\"error\"", 0) == 0) res.status = 400;  // prefix match
+        res.set_content(body, "application/json");
+    });
+
+    server.Post("/api/query/explain", [engine](const httplib::Request& req, httplib::Response& res) {
+        res.set_content(engine->explainJson(req.body), "application/json");
+    });
+
+    server.Get(R"(/api/query/history)", [engine](const httplib::Request&, httplib::Response& res) {
+        res.set_content(engine->historyJson(), "application/json");
+    });
+
+    server.Get(R"(/api/query/history/(\d+))",
+               [engine](const httplib::Request& req, httplib::Response& res) {
+                   res.set_content(engine->historyEntryJson(std::stoi(req.matches[1].str())),
+                                   "application/json");
+               });
+
+    server.Get(R"(/api/query/(\d+)/rows)",
+               [engine](const httplib::Request& req, httplib::Response& res) {
+                   const int id = std::stoi(req.matches[1].str());
+                   const std::int64_t from = paramInt(req, "from", 0);
+                   const std::int64_t to = paramInt(req, "to", from);
+                   res.set_content(engine->rowsJson(id, from, to), "application/json");
+               });
+}
+
+// Reads the map's declared page size from /api/meta so the query engine can map
+// byte offsets to page numbers without an unmeasured read of the db file.
+int mapPageSize(const MapDb& db) {
+    try {
+        auto meta = nlohmann::json::parse(db.metaJson());
+        return meta.at("meta").value("pageSize", 0);
+    } catch (...) {
+        return 0;
+    }
 }
 
 int runVisualizeServe(const VisualizeOptions& options) {
     std::optional<MapDb> db;
+    std::optional<QueryEngine> engine;
     try {
         db.emplace(options.mapFile);
         if (!options.profileFile.empty()) {
             db->loadProfile(options.profileFile);
+        }
+        if (!options.dbFile.empty()) {
+            engine.emplace(options.dbFile, mapPageSize(*db), *db);
+            db->setHasDb(true);
         }
     } catch (const std::exception& e) {
         std::cerr << e.what() << '\n';
@@ -147,7 +199,7 @@ int runVisualizeServe(const VisualizeOptions& options) {
     }
 
     httplib::Server server;
-    configureVisualizeRoutes(server, *db);
+    configureVisualizeRoutes(server, *db, engine ? &*engine : nullptr);
 
     const char* host = "127.0.0.1";
     int port = options.port;

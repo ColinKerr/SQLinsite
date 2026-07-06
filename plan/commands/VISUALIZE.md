@@ -13,6 +13,7 @@ It runs in the foreground and prints its URL; stop it with Ctrl-C.
 - `--map-file` (required) — the **SQLite** map from `sqlinsite map`.
 - `--profile-file` (optional) — CSV from `sqlinsite profile`; enables the
   read/write overlay.
+- `--db-file` (optional) - The SQLite file mapped by the `map-file`.  File will be opened read-only.
 - `--port` (optional, default `8080`; `0` picks a free port).
 
 
@@ -26,8 +27,14 @@ It runs in the foreground and prints its URL; stop it with Ctrl-C.
 - **Profile:** if given, the CSV is aggregated once into an in-memory SQLite
   table `profile(pageNumber PRIMARY KEY, reads, writes)` so overlay queries are
   range/aggregate SQL joined on `pageNumber`.
-- **Assets:** front-end (`index.html`, `app.js`, `style.css`) embedded in the
-  binary via the CMake byte-array generator.
+- **Assets:** the React + TypeScript front-end (source in `web/`, bundled by
+  Vite) is built as part of the normal CMake build into `web_build/` (gitignored,
+  never committed) and embedded into the binary by a build-time byte-array
+  generator. The build emits `index.html`, `sqlinsite.js`, `sqlinsite.css` plus
+  Monaco's editor worker and SQL chunk, each served from `/static/<name>`.
+- **Live query (`--db-file`):** `QueryEngine` runs user SQL on a fresh read-only
+  connection through the profiling VFS; runs are serialized (the VFS context is
+  process-global) and cached with an in-memory history.
 
 ### Endpoints
 
@@ -36,15 +43,25 @@ All page ranges are inclusive and 1-based.
 | Method/Path | Returns |
 |---|---|
 | `GET /` , `GET /static/*` | embedded assets |
-| `GET /api/meta` | `meta` row + `objects` list (id, type, name, rootPage, **pageCount**, colorIndex) + **`typeCounts`** (pages per page type, from `type_counts`) |
+| `GET /api/meta` | `meta` row + `objects` list (id, type, name, tableName, rootPage, **pageCount**, startPage, startLeafPage) + **`typeCounts`** + `hasProfile`, `hasDb`, and the profile `sessions` manifest |
 | `GET /api/pages?from&to` | per-page rows `{pageNumber, pageType, objectId}` in range (per-block LOD). Rejects with 413 if the range exceeds a server cap; the client must use `/api/runs` instead. |
-| `GET /api/runs?from&to` | runs overlapping the range `{startPage, endPage, pageType, objectId}` (zoomed-out LOD) |
+| `GET /api/runs?from&to[&profiled&sel]` | runs overlapping the range `{startPage, endPage, pageType, objectId}` (zoomed-out LOD); with `profiled` they are recomputed to the accessed spans for the selected leaves |
+| `GET /api/object/pages?objectId&from&to` | pages of one object by 0-based ordinal window (Tables view) |
 | `GET /api/page/:n` | full single-page detail: `pages` row + its `pointers`, `cells`, `ptrmap` entries, and profile `{reads,writes}` |
-| `GET /api/profile/pages?from&to` | `{pageNumber, reads, writes}` for touched pages in range (per-block overlay) |
-| `GET /api/profile/histogram?from&to&bins` | `bins` equal buckets across the range, each `{reads, writes}` summed (zoomed-out overlay) |
+| `GET /api/profile/pages?from&to[&sel]` | `{pageNumber, reads, writes}` for touched pages in range, filtered to the selected session/query leaves |
 
-Per-object (Tables view) variants accept `&objectId=` to scope `pages` / `runs`
-to a single object's page sequence.
+Overlay queries accept `&sel=` (comma-separated leaf ids) to scope the profile to
+the selected sessions/queries.
+
+**Live query (only when `--db-file` is supplied):**
+
+| Method/Path | Returns |
+|---|---|
+| `GET /api/schema` | schema tree (tables/views → columns/indexes/triggers) joined to map page counts |
+| `POST /api/query/run` (body = SQL) | `{queryId, columns[with provenance], rowCount, truncated, pageCount, accesses, profile}` (400 on SQL error) |
+| `GET /api/query/:id/rows?from&to` | a row window `{columns, rows, rowPages, rowCount}` (per-cell page, or null) |
+| `POST /api/query/explain` (body = SQL) | `{queryPlan, explain}` |
+| `GET /api/query/history[/:id]` | past runs (list, or one run's metadata for restore) |
 
 ## Definitions
 
@@ -151,7 +168,9 @@ When a profile is loaded:
 
 - **Per-block:** `/api/profile/pages` for the visible range; touched blocks get a
   read/write tint/badge, untouched blocks are drawn lightened.
-- **Zoomed out:** `/api/profile/histogram` runs are shaded like blocks in the per-block view.
+- **Zoomed out:** each run is shaded like the blocks in the per-block view (by its
+  brightest accessed page on the same scale); unaccessed runs are darkened, never
+  omitted (so there are no bare-background stripes).
 - Control for profile visualization is in the Top bar `profile controls` section
   - The control should be a custom drop down with two sections
     - The first has two checkboxes one for reads and one for writes.
@@ -170,6 +189,7 @@ Two tabs, sharing the canvas renderer:
 - **Tables** — one band per object, each rendering that object's pages (via the
   `objectId`-scoped endpoints) with the same renderer and LOD. Large tables get
   the same run-based zoomed-out treatment.
+- **Query** - This view is only active when the mapped SQLite db file is passed in via the `--db-file` parameter.  See VISUALIZE_LIVE_QUERY_VIEW.md for more details about this view.
 
 ## Behavior & edge cases
 
@@ -182,11 +202,17 @@ Two tabs, sharing the canvas renderer:
 
 ## Tests
 
-- **Server (C++):** open a small generated map file, start on an ephemeral port,
-  and assert `/api/meta`, `/api/pages`, `/api/runs`, `/api/page/:n`,
-  `/api/profile/*` return correct JSON for known fixtures; the per-block range
-  cap returns 413; static assets serve with correct content types.
-- **Pure logic:** run coalescing and range→bucket math are unit-tested.
-- The canvas drawing itself is verified manually (served bytes are checked in
-  tests; pixels are eyeballed by running `visualize serve`).
+- **Server (C++, doctest):** open a small generated map file, start on an
+  ephemeral port, and assert `/api/meta`, `/api/pages`, `/api/runs`,
+  `/api/page/:n`, `/api/profile/*` return correct JSON for known fixtures; the
+  per-block range cap returns 413; static assets serve with correct content
+  types. With a `--db-file`, assert `/api/schema` and `/api/query/*` (run, rows,
+  explain, history), `hasDb`, and row→page mapping (single-table cells resolve;
+  expressions/aggregates stay unresolved).
+- **Pure logic (C++):** run coalescing, the `AggregatingSink`, and the rowid
+  query augmentation are unit-tested.
+- **Front-end (TypeScript, Vitest):** the `core/` modules (palette, overlay,
+  layout/zoom math, profile aggregates, api) and the query store (windowed row
+  loading, history restore) are unit-tested. Canvas pixels are eyeballed by
+  running `visualize serve` (served bytes are checked in tests).
 

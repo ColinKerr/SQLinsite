@@ -1,12 +1,20 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "visualize/profile_reader.hpp"
 
 struct sqlite3;
+
+// Per-object page totals used by the live-query schema panel.
+struct MapObjStat {
+    std::int64_t pageCount = 0;
+    std::int64_t accessedPages = 0;  // distinct pages touched by the loaded profile
+};
 
 // Opens a `sqlinsite map` SQLite file read-only and answers the visualize
 // query API. Optionally holds an in-memory profile table for overlays.
@@ -21,6 +29,17 @@ public:
 
     // Aggregates a profile CSV into a temp table for overlay queries.
     void loadProfile(const std::string& csvPath);
+
+    // Reported in /api/meta so the front-end can enable the live Query view.
+    void setHasDb(bool v) { hasDb_ = v; }
+
+    // Per-object page/accessed counts keyed by object name (for /api/schema).
+    std::map<std::string, MapObjStat> objectStats() const;
+
+    // rowid → leaf page for every row of a rowid table (for row→page mapping in
+    // the live-query results). One scan of the table's cells; empty if unknown.
+    std::unordered_map<std::int64_t, std::int64_t> rowidLeafPages(
+        const std::string& tableName) const;
 
     // Largest page range /api/pages will serialize; beyond this the client must
     // use runs instead.
@@ -47,5 +66,6 @@ public:
 private:
     sqlite3* db_ = nullptr;
     bool hasProfile_ = false;
+    bool hasDb_ = false;
     std::vector<ProfileLeaf> leaves_;  // profile session/statement manifest
 };

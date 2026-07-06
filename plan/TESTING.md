@@ -59,7 +59,28 @@
   `/api/object/pages`, `/api/profile/*`) returns correct JSON; the per-block
   range cap returns 413 and a missing page 404; static assets serve with correct
   content types.
-- Profile aggregation (CSV → per-page reads/writes) is unit-tested directly.
+- Profile aggregation (CSV → per-page reads/writes) and run coalescing are
+  unit-tested directly.
+
+## Live query tests
+
+- `AggregatingSink` aggregates reads/writes per page (unit test).
+- `augmentWithRowids` prepends `"table".rowid` for plain selects and refuses
+  DISTINCT / GROUP BY / non-select queries (unit test).
+- `QueryEngine` against a db + map fixture: run captures columns/rows and a
+  cold-cache profile; row slices paginate; bad SQL errors; explain returns both
+  plans; history lists newest-first; the schema tree joins to map counts; and
+  row→page resolves single-table cells while leaving expressions/aggregates null.
+- HTTP: with a `--db-file`, `/api/meta` reports `hasDb`, `/api/query/run` returns
+  results (400 on bad SQL), and `/api/schema` returns the tree.
+
+## Front-end tests (Vitest)
+
+Run with `cd web && npm test`. The framework-agnostic `web/src/core/*` modules
+(palette, overlay tint/darken, layout/zoom math, profile aggregates, `selParam`)
+and the query store (windowed row loading, `loadMoreRows` growth, history restore
+without re-running) are unit-tested. Canvas rendering is verified by running
+`visualize serve` and looking.
 
 ## Manual smoke test
 

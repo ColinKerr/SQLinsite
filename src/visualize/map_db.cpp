@@ -162,9 +162,53 @@ std::string MapDb::metaJson() const {
         {"typeCounts",
          queryRows(db_, "SELECT pageType,count FROM type_counts ORDER BY pageType")},
         {"hasProfile", hasProfile_},
+        {"hasDb", hasDb_},
         {"sessions", sessions},
     };
     return j.dump();
+}
+
+std::map<std::string, MapObjStat> MapDb::objectStats() const {
+    std::map<std::string, MapObjStat> out;
+    const char* sql = hasProfile_
+        ? "SELECT name, pageCount, "
+          "(SELECT COUNT(*) FROM pages p WHERE p.objectId=objects.id "
+          " AND p.pageNumber IN (SELECT DISTINCT pageNumber FROM profile)) AS accessed "
+          "FROM objects"
+        : "SELECT name, pageCount, 0 AS accessed FROM objects";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return out;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        if (name == nullptr) continue;
+        out[name] = MapObjStat{sqlite3_column_int64(stmt, 1), sqlite3_column_int64(stmt, 2)};
+    }
+    sqlite3_finalize(stmt);
+    return out;
+}
+
+std::unordered_map<std::int64_t, std::int64_t> MapDb::rowidLeafPages(
+    const std::string& tableName) const {
+    std::unordered_map<std::int64_t, std::int64_t> out;
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(
+            db_,
+            // Table-interior cells also carry a rowid (the divider key), so the
+            // page type must be constrained to leaf pages — the interior page is
+            // a routing node, not where the row's data lives.
+            "SELECT c.rowid, c.pageNumber FROM cells c "
+            "JOIN pages p ON p.pageNumber = c.pageNumber "
+            "WHERE c.rowid IS NOT NULL AND p.pageType = 'table-leaf' AND p.objectId = "
+            "(SELECT id FROM objects WHERE name=? AND type='table')",
+            -1, &stmt, nullptr) != SQLITE_OK) {
+        return out;
+    }
+    sqlite3_bind_text(stmt, 1, tableName.c_str(), -1, SQLITE_TRANSIENT);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        out[sqlite3_column_int64(stmt, 0)] = sqlite3_column_int64(stmt, 1);
+    }
+    sqlite3_finalize(stmt);
+    return out;
 }
 
 std::string MapDb::pagesJson(std::int64_t from, std::int64_t to,

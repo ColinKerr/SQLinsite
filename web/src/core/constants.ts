@@ -1,0 +1,7 @@
+export const LOD_THRESHOLD = 4; // px: below this, draw runs instead of pages
+export const GAP = 1;
+export const RANGE_CAP = 2_000_000;
+export const MIN_BLOCK_PX = 1;
+export const MAX_BLOCK_PX = 40; // 100% zoom; the top-bar % is blockPx / MAX_BLOCK_PX
+export const HEADER_H = 22; // tables-view band header height
+export const BG = "#1b1d23"; // canvas background
