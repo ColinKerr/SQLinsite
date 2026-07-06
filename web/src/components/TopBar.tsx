@@ -1,9 +1,7 @@
 import { ViewPicker } from "./ViewPicker.tsx";
-import { ZoomControls } from "./ZoomControls.tsx";
-import { ProfileControls } from "./ProfileControls.tsx";
-import { SessionInfo } from "./SessionInfo.tsx";
 
-// Groups: App info · View picker (left) — Zoom · Profile · Session info (right).
+// Top bar: app info + the view picker (left aligned). Page-specific controls
+// (zoom, profile, session info) live in the Page Top Bar, shown per Page View.
 export function TopBar() {
   return (
     <header>
@@ -11,10 +9,6 @@ export function TopBar() {
         <h1>SQLinsite</h1>
       </div>
       <ViewPicker />
-      <div className="bar-spacer" />
-      <ZoomControls />
-      <ProfileControls />
-      <SessionInfo />
     </header>
   );
 }

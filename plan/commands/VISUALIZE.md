@@ -66,7 +66,8 @@ the selected sessions/queries.
 ## Definitions
 
 - `run` - a contiguous set of blocks of the same type, for the same object and marked as accessed at least once by the currently loaded profile settings.
-- Top bar - A fixed bar at the top of the app that contains the name of the app, buttons for each view and other controls as specified in this document.
+- Top bar - A fixed bar at the top of the app that contains the name of the app and the view picker (a button for each view).
+- Page Top Bar - A secondary bar shown only for the Page Views (Pages and Tables) that contains the zoom controls, profile controls, and session/map information.
 - View - The main content window of the app that shows details about the blocks or data in the mapped SQLite file
 - Navigation Panel - A resizable bar on the right hand side of the screen that contains navigation controls as specified in this document.
 
@@ -114,9 +115,7 @@ The right column is a **resizable** panel (drag its left edge; width persisted i
   `objects.pageCount`).
   - Tables are root nodes and indexes of that table are child nodes
   - Each node should have the starting block and the object identifier so that clicking on the node will scroll to the first **leaf** block or the beginning of the object in block and table views respectively.
-
-Counts give an at-a-glance size breakdown without scanning the canvas. Clicking a
-type or object can filter/highlight it (nice-to-have).
+  - Each node should have a count of pages associated with that node
 
 ### Top Bar
 
@@ -127,16 +126,8 @@ The top bar should be organized in groups from left to right in this order:
 - View picker (left aligned)
   - Pages button
   - Tables button
-- Zoom controls (right aligned)
-  - Zoom %
-  - zoom out (-)
-  - zoom in (+)
-  - zoom fit (Fit)
-- Profile controls (right aligned)
-- Session information
-  - Map Information
-    - Total number of pages
-    - Number of pages access statements currently identified by profile controls
+  - Query button
+
 
 
 ### Zoom & pan
@@ -147,7 +138,7 @@ The top bar should be organized in groups from left to right in this order:
   one-dimensional (page order).
 - Buttons/keys for zoom-to-fit and 1:1.
   - When zooming the block or run in the upper left hand corner of the view should remain in the upper left hand corner post change to zoom level.
-  - Zoom percentage, -, + and Fit buttons are in the Top bar in that order in the `Zoom controls` group.  
+  - Zoom percentage, -, + and Fit buttons are in the Page Top Bar in that order in the `Zoom controls` group.  
     - The scale in percentage is calculated using the formula `current pixels`/`max pixels`.
 
 ### Hover & popups (level-of-detail aware)
@@ -171,10 +162,10 @@ When a profile is loaded:
 - **Zoomed out:** each run is shaded like the blocks in the per-block view (by its
   brightest accessed page on the same scale); unaccessed runs are darkened, never
   omitted (so there are no bare-background stripes).
-- Control for profile visualization is in the Top bar `profile controls` section
+- Control for profile visualization is in the Page Top Bar `profile controls` section
   - The control should be a custom drop down with two sections
     - The first has two checkboxes one for reads and one for writes.
-    - THe second has checkboxes for each session in the profile and child checkboxes for each query in the session.
+    - The second has checkboxes for each session in the profile and child checkboxes for each query in the session.
 
 ### View scroll bar
 
@@ -182,14 +173,30 @@ Each view should have a scroll bar that is a scaled image of the entire view.  C
 
 ## Views
 
-Two tabs, sharing the canvas renderer:
+All views must handle billions of pages and or rows.  Pages and Tables tabs sharing a canvas renderer.
 
-- **Pages** — the whole file as one grid ordered by page number (physical
-  layout). This is the view that must scale to billions of pages.
-- **Tables** — one band per object, each rendering that object's pages (via the
-  `objectId`-scoped endpoints) with the same renderer and LOD. Large tables get
-  the same run-based zoomed-out treatment.
+- **Page Views** - Views where the content are blocks each representing a page. These views share a 'Page Top Bar' described below.
+  - **Pages** — the whole file as one grid ordered by page number (physical
+    layout). This is the view that must scale to billions of pages.
+  - **Tables** — one band per object, each rendering that object's pages (via the
+    `objectId`-scoped endpoints) with the same renderer and LOD. Large tables get
+    the same run-based zoomed-out treatment.
 - **Query** - This view is only active when the mapped SQLite db file is passed in via the `--db-file` parameter.  See VISUALIZE_LIVE_QUERY_VIEW.md for more details about this view.
+
+### Page Top Bar
+
+The page top bar should be contained within the 'view' area and not extend into the navigation panel.
+
+- Zoom controls (right aligned)
+  - Zoom %
+  - zoom out (-)
+  - zoom in (+)
+  - zoom fit (Fit)
+- Profile controls (right aligned)
+- Session information
+  - Map Information
+    - Total number of pages
+    - Number of unique pages accessed by statements currently selected by profile controls
 
 ## Behavior & edge cases
 
