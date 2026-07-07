@@ -24,6 +24,9 @@ beforeEach(() => {
         { page: 6, kind: "child", pageType: "table-leaf", objectId: 1, hasChildren: 0 },
       ] });
     }
+    if (u.startsWith("/api/tree/path?page=5")) {
+      return jsonResp({ path: [{ page: 2, edgeKind: null }, { page: 5, edgeKind: "child" }] });
+    }
     if (u.startsWith("/api/page/5/content")) return jsonResp({ pageNumber: 5, regions: [] });
     return jsonResp({});
   }));
@@ -45,6 +48,15 @@ describe("tree store", () => {
     expect(useTree.getState().expanded.has(t.key)).toBe(true);
     // The regression: children come from the response's `children` key, not `pages`.
     expect(useTree.getState().childrenByKey[t.key].map((n) => n.page)).toEqual([5, 6]);
+  });
+
+  it("revealPage selects the page and expands its ancestor path", async () => {
+    await useTree.getState().loadRoots();
+    await useTree.getState().revealPage(5);
+    const s = useTree.getState();
+    expect(s.selectedPage).toBe(5);
+    expect(s.expanded.has("r:2")).toBe(true);              // ancestor expanded
+    expect(s.childrenByKey["r:2"].map((n) => n.page)).toContain(5); // children loaded
   });
 
   it("toggle collapses an already-expanded node", async () => {

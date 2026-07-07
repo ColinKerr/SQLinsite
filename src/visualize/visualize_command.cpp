@@ -152,6 +152,9 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
         res.set_content(db.treeOtherJson(paramInt(req, "after", 0), paramInt(req, "limit", 1000)),
                         "application/json");
     });
+    server.Get("/api/tree/path", [&db](const httplib::Request& req, httplib::Response& res) {
+        res.set_content(db.treePathJson(paramInt(req, "page", 0)), "application/json");
+    });
 
     // Page detail with decoded values (only with --db-file).
     if (content != nullptr) {

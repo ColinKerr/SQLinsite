@@ -77,6 +77,9 @@ public:
     // Pages under "All other pages": not page 1, not a root, not freelist, and
     // with no incoming pointer. Keyset-paginated by page number.
     std::string treeOtherJson(std::int64_t after, std::int64_t limit) const;
+    // Ancestor chain from a b-tree root down to `page`, so the tree can expand to
+    // it: `{path:[{page, edgeKind}]}` root-first (edgeKind null for the root).
+    std::string treePathJson(std::int64_t page) const;
 
 private:
     sqlite3* db_ = nullptr;

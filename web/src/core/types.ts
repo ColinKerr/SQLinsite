@@ -136,6 +136,8 @@ export interface TreeChild {
   hasChildren: number | boolean;
 }
 export interface TreePagesResponse { pages: TreeChild[]; }
+export interface TreePathNode { page: number; edgeKind: string | null; }
+export interface TreePathResponse { path: TreePathNode[]; }
 
 export interface PageColumn {
   serialType: number;

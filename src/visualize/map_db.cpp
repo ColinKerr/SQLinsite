@@ -413,6 +413,24 @@ std::string MapDb::treeRootsJson() const {
     return json{{"roots", std::move(roots)}}.dump();
 }
 
+std::string MapDb::treePathJson(std::int64_t page) const {
+    // Walk parent pointers from `page` up to a root in one recursive CTE. Each row
+    // carries its own incoming edge kind (null for the root, which has no parent);
+    // the depth bound guards against cycles in a malformed map.
+    const std::string kinds = kChildKinds;
+    const std::string sql =
+        "WITH RECURSIVE anc(page, edgeKind, depth) AS ("
+        " SELECT ?1, (SELECT kind FROM pointers WHERE toPage=?1 AND kind IN " + kinds + " LIMIT 1), 0"
+        " UNION ALL"
+        " SELECT p.fromPage,"
+        "        (SELECT kind FROM pointers WHERE toPage=p.fromPage AND kind IN " + kinds + " LIMIT 1),"
+        "        anc.depth+1"
+        " FROM anc JOIN pointers p ON p.toPage=anc.page AND p.kind IN " + kinds +
+        " WHERE anc.depth<10000"
+        ") SELECT page, edgeKind FROM anc ORDER BY depth DESC";
+    return json{{"path", queryRows(db_, sql, {page})}}.dump();
+}
+
 std::string MapDb::treeChildrenJson(std::int64_t page) const {
     const std::string sql =
         "SELECT ptr.toPage AS page, ptr.kind AS kind, p.pageType AS pageType, "

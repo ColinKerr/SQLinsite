@@ -45,6 +45,19 @@ export function BTreeTree() {
     [roots, childrenByKey, expanded],
   );
 
+  // When the selection changes (e.g. via a page-detail pointer link that reveals
+  // and expands the node), scroll it into view if it's off-screen.
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (el == null || selectedPage == null) return;
+    const idx = flat.findIndex((f) => f.node.page === selectedPage);
+    if (idx < 0) return;
+    const y = idx * ROW_H;
+    if (y < el.scrollTop || y > el.scrollTop + el.clientHeight - ROW_H) {
+      el.scrollTop = Math.max(0, y - el.clientHeight / 2);
+    }
+  }, [selectedPage, flat]);
+
   if (!roots) return <div className="results-msg muted">Loading tree…</div>;
 
   const total = flat.length;

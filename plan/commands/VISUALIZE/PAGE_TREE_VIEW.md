@@ -25,4 +25,18 @@ The b-tree tree is on the left hand side and has a similar width to the 'Navigat
 
 ## Page Detail View
 
-Shows the full contents of the page node selected in the b-tree tree.  A horizontal schematic view of the page that includes all header, cell, key and pointer information.  Pointers to other pages are clickable links.  The schematic approximately represents the byte size of each portion of the page, including free bytes.  Below the schematic view the full contents of the page is displayed, including contents of the headers, cell pointer array.  The data is shown in a tabular view below the schematic view that is color coded to the schematic view.  A key bar describes the color coding; it is fixed at the bottom of the page detail view and does not scroll with the schematic and table content above it.
+Shows the full contents of the page node selected in the b-tree tree.  
+
+If pointer to another page exists in the header or cell records it is shown as a clickable control matching the node in the b-tree tree.  Clicking on the control navigates to the Page Detail View for that page and expands and selects the node in the b-tree tree.
+
+### Horizontal Schematic View
+
+A fixed section of the Page Detail View including the page number, header info and schematic view.
+
+The horizontal schematic view of the page that includes all header, cell, key and pointer information.  The schematic approximately represents the byte size of each portion of the page, including free bytes.  Clicking on the sections of the schematic scrolls to the detailed data shown in the Full Page Contents area.
+
+### Full Page Contents
+
+An area below the schematic view where the full contents of the page is displayed, including contents of the headers, cell pointer array and cells.  The data is shown in a tabular view below the schematic view that is color coded to the schematic view.  
+
+A key bar describes the color coding; it is fixed at the bottom of the page detail view and does not scroll with the schematic and table content above it.

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
-  fetchPageContent, fetchTreeChildren, fetchTreeFreelist, fetchTreeOther, fetchTreeRoots,
+  fetchPageContent, fetchTreeChildren, fetchTreeFreelist, fetchTreeOther, fetchTreePath,
+  fetchTreeRoots,
 } from "../core/api.ts";
 import type { PageContent } from "../core/types.ts";
 import { childNode, moreNode, rootNode, type TreeNode } from "../core/treeModel.ts";
@@ -20,6 +21,7 @@ export interface TreeState {
   toggle(node: TreeNode): Promise<void>;
   loadMore(node: TreeNode): Promise<void>; // a "more" loader row
   selectPage(page: number): Promise<void>;
+  revealPage(page: number): Promise<void>; // select + expand the tree down to it
 }
 
 // Fetches a node's children (page b-tree children, or a window of the freelist /
@@ -96,5 +98,32 @@ export const useTree = create<TreeState>((set, get) => ({
     const content = await fetchPageContent(page);
     // Ignore if the selection changed while fetching.
     if (get().selectedPage === page) set({ content, contentLoading: false });
+  },
+
+  // Select `page` and expand the tree down to its node (following the ancestor
+  // path from a b-tree root). Freelist/other targets just select (path degrades).
+  async revealPage(page) {
+    void get().selectPage(page);
+    const r = await fetchTreePath(page);
+    const path = r?.path ?? [];
+    const root = path.length ? get().roots?.find((n) => n.kind === "page" && n.page === path[0].page) : undefined;
+    if (!root) return;
+    const expanded = new Set(get().expanded);
+    let key = root.key;
+    let node: TreeNode = root;
+    for (let i = 1; i < path.length; i++) {
+      let kids = get().childrenByKey[key];
+      if (!kids) {
+        kids = await fetchChildren(node);
+        const loadedKey = key;
+        set((s) => ({ childrenByKey: { ...s.childrenByKey, [loadedKey]: kids! } }));
+      }
+      expanded.add(key);
+      const next = kids.find((k) => k.key === `${key}>${path[i].edgeKind}:${path[i].page}`);
+      if (!next) break;
+      key = next.key;
+      node = next;
+    }
+    set({ expanded });
   },
 }));
