@@ -122,19 +122,82 @@ export function PageDetail() {
   );
 }
 
-// A per-page byte count for an overflowing value: "N bytes" (white) for the leaf
-// portion, or "N bytes → [pN]" (in that page's color, with its clickable control)
-// for an overflow page.
-function Segment({ seg, leafPage, column, forceBytes, onNav }:
-                  { seg: PageSegment; leafPage: number; column: PageColumn; forceBytes: boolean; onNav: (p: number) => void }) {
+
+/**
+ * Component to display the type of a PageColumn, including segments which come from overflow pages.
+ * 
+ * @param column - The PageColumn to render the type of.
+ * @param leafPage - The page number of the leaf page for the row the column belongs to.
+ * @param onNav - Callback to navigate to a page when a PageCard is clicked.
+ * @returns 
+ */
+function TypeSegments({ column, leafPage, onNav }:
+                  { column: PageColumn; leafPage: number; onNav: (p: number) => void }) {
+  return (
+    <span>
+      {column.serialName}
+      {column.segments && (
+        column.segments.length === 1 ?
+          <PageCard page={column.segments[0].page} pageType="overflow" colorByNumber onClick={onNav} /> :
+          <span className="pd-bytes">{column.segments.map((s, k) => (
+            <span key={k}>{" "}{s.page === leafPage
+              ? <span className="pd-seg-leaf">{s.bytes} B</span>
+              : <span key={k}>{k > 0 ? ", " : ""}<Segment seg={s} leafPage={leafPage} column={column} forTypeColumn={true} onNav={onNav} /></span>}</span>
+          ))}</span>
+      )}
+    </span>
+  )
+}
+
+/**
+ * Component to display the value of a PageColumn, including segments which come from overflow pages.
+ * 
+ * @param column - The PageColumn to render the value of.
+ * @param leafPage - The page number of the leaf page for the row the column belongs to.
+ * @param onNav - Callback to navigate to a page when a PageCard is clicked. 
+ */
+function ValueSegments({ column, leafPage, onNav }:
+                  { column: PageColumn; leafPage: number; onNav: (p: number) => void }) {
+  return (
+    !column.segments ? 
+      <span className="pd-cvaltext">{valueText(column)}</span>
+      : column.type === "blob" ? 
+      (
+        <span className="pd-cvaltext">BLOB {column.segments.map((s, k) => (
+            <span key={k}>{k > 0 ? ", " : ""}<Segment seg={s} leafPage={leafPage} column={column} forTypeColumn={false} onNav={onNav} /></span>
+          ))}
+        </span>
+      ) : (
+        <span className="pd-cvaltext">
+          {column.segments.map((s, k) =>
+            <span key={k}>
+              <Segment seg={s} leafPage={leafPage} column={column} forTypeColumn={false} onNav={onNav} />
+            </span>
+          )}
+        </span>
+      )
+  );
+}
+
+/**
+ * Component to display a single PageSegment.
+ * 
+ * @param seg - The PageSegment to render.
+ * @param leafPage - The page number of the leaf page for the row.
+ * @param column - The column containing this segment.
+ * @param forTypeColumn - If true, display the type of the segment.
+ * @param onNav - Callback to navigate to a page when a PageCard is clicked.
+ */
+function Segment({ seg, leafPage, column, forTypeColumn, onNav }:
+                  { seg: PageSegment; leafPage: number; column: PageColumn; forTypeColumn: boolean; onNav: (p: number) => void }) {
   
-  const text = forceBytes || column.type == "blob" ? `${seg.bytes} B` : column.type === "int" || column.type === "real" ? valueText(column) : seg.text;
+  const text = forTypeColumn || column.type == "blob" ? `${seg.bytes} B` : column.type === "int" || column.type === "real" ? valueText(column) : seg.text;
   if (seg.page === leafPage)
     return <span className="pd-seg-leaf">{text}</span>;
   
   return (
-    <span className="pd-seg-ovf" style={{ background: colorForPageNumber(seg.page) }} title={!forceBytes ? `overflow page ${seg.page}` : undefined}>
-      {forceBytes ? 
+    <span className="pd-seg-ovf" style={{ background: colorForPageNumber(seg.page) }} title={!forTypeColumn ? `overflow page ${seg.page}` : undefined}>
+      {forTypeColumn ? 
         <span>
           {text}
           <span> → </span>
@@ -162,31 +225,10 @@ function CellData({ cell, onNav, typeOf, leafPage }:
               <tr key={i}>
                 <td className="muted">{i}</td>
                 <td className="pd-ctype">
-                  {c.serialType} <span className="muted">({c.serialName})</span>
-                  {c.segments && (
-                    <span className="pd-bytes">{c.segments.map((s, k) => (
-                      <span key={k}>{" "}{s.page === leafPage
-                        ? <span className="pd-seg-leaf">{s.bytes} B</span>
-                        : <span key={k}>{k > 0 ? ", " : ""}<Segment seg={s} leafPage={leafPage} column={c} forceBytes={true} onNav={onNav} /></span>}</span>
-                    ))}</span>
-                  )}
+                  <TypeSegments column={c} leafPage={leafPage} onNav={onNav} />
                 </td>
                 <td className="pd-cval">
-                  {!c.segments ? (
-                    <span className="pd-cvaltext">{valueText(c)}</span>
-                  ) : c.type === "blob" ? (
-                    <span className="pd-cvaltext">BLOB ({c.segments.map((s, k) => (
-                      <span key={k}>{k > 0 ? ", " : ""}<Segment seg={s} leafPage={leafPage} column={c} forceBytes={false} onNav={onNav} /></span>
-                    ))})</span>
-                  ) : (
-                    <span className="pd-cvaltext">
-                      {c.segments.map((s, k) =>
-                        <span key={k}>
-                          <Segment seg={s} leafPage={leafPage} column={c} forceBytes={false} onNav={onNav} />
-                        </span>
-                      )}
-                    </span>
-                  )}
+                  <ValueSegments column={c} leafPage={leafPage} onNav={onNav} />
                 </td>
               </tr>
             ))}
