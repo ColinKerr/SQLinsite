@@ -349,7 +349,7 @@ std::string MapDb::pageType(std::int64_t page) const {
 std::string MapDb::treeRootsJson() const {
     json roots = json::array();
 
-    // Page 1.
+    // sqlite_schema — page 1 is its b-tree root.
     {
         const std::string sql =
             "SELECT 1 AS page, pageType, "
@@ -357,7 +357,7 @@ std::string MapDb::treeRootsJson() const {
             std::string(kChildKinds) + ") AS hasChildren FROM pages WHERE pageNumber=1";
         json r = queryRows(db_, sql);
         if (!r.empty()) {
-            roots.push_back({{"kind", "page"}, {"label", "Page 1"}, {"page", 1},
+            roots.push_back({{"kind", "page"}, {"label", "sqlite_schema"}, {"page", 1},
                              {"pageType", r[0]["pageType"]},
                              {"objectId", nullptr}, {"hasChildren", r[0]["hasChildren"]}});
         }
@@ -391,9 +391,24 @@ std::string MapDb::treeRootsJson() const {
                          {"hasChildren", true}});
     }
 
-    // All other pages (virtual).
-    roots.push_back({{"kind", "other"}, {"label", "All other pages"}, {"page", nullptr},
-                     {"pageType", nullptr}, {"objectId", nullptr}, {"hasChildren", true}});
+    // Lock-byte page — only exists in databases larger than 1 GiB.
+    json lb = queryRows(db_, "SELECT pageNumber AS page FROM pages WHERE pageType='lock-byte' LIMIT 1");
+    if (!lb.empty()) {
+        roots.push_back({{"kind", "page"}, {"label", "Lock-Byte"}, {"page", lb[0]["page"]},
+                         {"pageType", "lock-byte"}, {"objectId", nullptr}, {"hasChildren", false}});
+    }
+
+    // All other pages (virtual) — only when at least one such page exists.
+    json other = queryRows(
+        db_,
+        "SELECT EXISTS(SELECT 1 FROM pages WHERE pageNumber>1 "
+        "AND pageType NOT IN ('freelist-trunk','freelist-leaf','lock-byte') "
+        "AND pageNumber NOT IN (SELECT rootPage FROM objects) "
+        "AND pageNumber NOT IN (SELECT toPage FROM pointers)) AS ex");
+    if (!other.empty() && other[0]["ex"].get<int>() != 0) {
+        roots.push_back({{"kind", "other"}, {"label", "All other pages"}, {"page", nullptr},
+                         {"pageType", nullptr}, {"objectId", nullptr}, {"hasChildren", true}});
+    }
 
     return json{{"roots", std::move(roots)}}.dump();
 }
@@ -427,7 +442,7 @@ std::string MapDb::treeOtherJson(std::int64_t after, std::int64_t limit) const {
             std::string(kChildKinds) + ") AS hasChildren "
         "FROM pages "
         "WHERE pageNumber>1 AND pageNumber>? "
-        "AND pageType NOT IN ('freelist-trunk','freelist-leaf') "
+        "AND pageType NOT IN ('freelist-trunk','freelist-leaf','lock-byte') "
         "AND pageNumber NOT IN (SELECT rootPage FROM objects) "
         "AND pageNumber NOT IN (SELECT toPage FROM pointers) "
         "ORDER BY pageNumber LIMIT ?";

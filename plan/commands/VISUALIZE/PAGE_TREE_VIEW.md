@@ -10,11 +10,12 @@ The view is split into two resizable areas vertically.  On the left hand side is
 
 The root nodes of this tree are:
 
-- Page 1
+- 'sqlite_schema' root node.  Page 1 for the sqlite file serves as the root node.
 - Each table b-tree in the file is a root node.  The root page for that table serves as the root node.
 - Each index b-tree in the file is a root node.  The root page for that index serves as the root node.
 - The freelist.  The root page is a virtual node whose children are the freelist trunk pages.
-- All other pages.  Pages not covered in the root node descriptions above are grouped together under this root node for review, the final implementation will properly categorize these pages.
+- Lock-Byte root node.  Only shown if the Lock-Byte page exists.  The Lock-Byte page serves as the root node.
+- All other pages.  Only shown if pages exist that are not covered in the root node descriptions above are grouped together under this root node for review, the final implementation will properly categorize these pages.
 
 Each page node it's child pages as child nodes.  If a page node points to overflow pages they are shown as children.
 
