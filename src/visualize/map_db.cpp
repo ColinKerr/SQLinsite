@@ -332,3 +332,104 @@ std::string MapDb::profilePagesJson(std::int64_t from, std::int64_t to,
                             {from, to})}};
     return j.dump();
 }
+
+namespace {
+// A page's tree children are its b-tree children, its overflow pages, and (for a
+// freelist trunk) its freelist-leaf pages. Interior freelist-next / ptrmap-parent
+// edges are not tree edges.
+constexpr const char* kChildKinds = "('child','overflow','freelist-leaf')";
+}  // namespace
+
+std::string MapDb::pageType(std::int64_t page) const {
+    json r = queryRows(db_, "SELECT pageType FROM pages WHERE pageNumber=?", {page});
+    if (r.empty() || !r[0]["pageType"].is_string()) return {};
+    return r[0]["pageType"].get<std::string>();
+}
+
+std::string MapDb::treeRootsJson() const {
+    json roots = json::array();
+
+    // Page 1.
+    {
+        const std::string sql =
+            "SELECT 1 AS page, pageType, "
+            "EXISTS(SELECT 1 FROM pointers WHERE fromPage=1 AND kind IN " +
+            std::string(kChildKinds) + ") AS hasChildren FROM pages WHERE pageNumber=1";
+        json r = queryRows(db_, sql);
+        if (!r.empty()) {
+            roots.push_back({{"kind", "page"}, {"label", "Page 1"}, {"page", 1},
+                             {"pageType", r[0]["pageType"]},
+                             {"objectId", nullptr}, {"hasChildren", r[0]["hasChildren"]}});
+        }
+    }
+
+    // Each table / index b-tree (tables first).
+    json objs = queryRows(
+        db_,
+        "SELECT o.id AS objectId, o.type AS type, o.name AS name, o.rootPage AS page, "
+        "(SELECT pageType FROM pages WHERE pageNumber=o.rootPage) AS pageType, "
+        "EXISTS(SELECT 1 FROM pointers WHERE fromPage=o.rootPage AND kind IN " +
+            std::string(kChildKinds) + ") AS hasChildren "
+        // rootPage=1 is sqlite_schema, already represented by the Page 1 root.
+        "FROM objects o WHERE o.type IN ('table','index') AND o.rootPage<>1 "
+        "ORDER BY CASE o.type WHEN 'table' THEN 0 ELSE 1 END, o.name");
+    for (json& o : objs) {
+        roots.push_back({
+            {"kind", "page"},
+            {"label", o["name"].get<std::string>() + " (" + o["type"].get<std::string>() + ")"},
+            {"page", o["page"]}, {"pageType", o["pageType"]},
+            {"objectId", o["objectId"]}, {"hasChildren", o["hasChildren"]},
+        });
+    }
+
+    // Freelist (virtual) — present when any trunk exists.
+    json fl = queryRows(db_,
+                        "SELECT EXISTS(SELECT 1 FROM pages WHERE pageType='freelist-trunk') AS ex");
+    if (!fl.empty() && fl[0]["ex"].get<int>() != 0) {
+        roots.push_back({{"kind", "freelist"}, {"label", "Freelist"}, {"page", nullptr},
+                         {"pageType", "freelist-trunk"}, {"objectId", nullptr},
+                         {"hasChildren", true}});
+    }
+
+    // All other pages (virtual).
+    roots.push_back({{"kind", "other"}, {"label", "All other pages"}, {"page", nullptr},
+                     {"pageType", nullptr}, {"objectId", nullptr}, {"hasChildren", true}});
+
+    return json{{"roots", std::move(roots)}}.dump();
+}
+
+std::string MapDb::treeChildrenJson(std::int64_t page) const {
+    const std::string sql =
+        "SELECT ptr.toPage AS page, ptr.kind AS kind, p.pageType AS pageType, "
+        "p.objectId AS objectId, "
+        "EXISTS(SELECT 1 FROM pointers c WHERE c.fromPage=ptr.toPage AND c.kind IN " +
+            std::string(kChildKinds) + ") AS hasChildren "
+        "FROM pointers ptr JOIN pages p ON p.pageNumber=ptr.toPage "
+        "WHERE ptr.fromPage=? AND ptr.kind IN " + std::string(kChildKinds) + " "
+        "ORDER BY CASE ptr.kind WHEN 'child' THEN 0 WHEN 'overflow' THEN 1 ELSE 2 END, ptr.toPage";
+    return json{{"children", queryRows(db_, sql, {page})}}.dump();
+}
+
+std::string MapDb::treeFreelistJson(std::int64_t after, std::int64_t limit) const {
+    const std::string sql =
+        "SELECT pageNumber AS page, pageType, "
+        "EXISTS(SELECT 1 FROM pointers WHERE fromPage=pages.pageNumber AND kind='freelist-leaf') "
+        "AS hasChildren "
+        "FROM pages WHERE pageType='freelist-trunk' AND pageNumber>? "
+        "ORDER BY pageNumber LIMIT ?";
+    return json{{"pages", queryRows(db_, sql, {after, limit})}}.dump();
+}
+
+std::string MapDb::treeOtherJson(std::int64_t after, std::int64_t limit) const {
+    const std::string sql =
+        "SELECT pageNumber AS page, pageType, objectId, "
+        "EXISTS(SELECT 1 FROM pointers WHERE fromPage=pages.pageNumber AND kind IN " +
+            std::string(kChildKinds) + ") AS hasChildren "
+        "FROM pages "
+        "WHERE pageNumber>1 AND pageNumber>? "
+        "AND pageType NOT IN ('freelist-trunk','freelist-leaf') "
+        "AND pageNumber NOT IN (SELECT rootPage FROM objects) "
+        "AND pageNumber NOT IN (SELECT toPage FROM pointers) "
+        "ORDER BY pageNumber LIMIT ?";
+    return json{{"pages", queryRows(db_, sql, {after, limit})}}.dump();
+}

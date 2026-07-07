@@ -22,6 +22,7 @@ add_executable(sqlinsite_tests
   test_run_coalesce.cpp
   test_query_augment.cpp
   test_cell_page_map.cpp
+  test_page_content.cpp
   test_query_engine.cpp
   test_visualize_server.cpp
 )

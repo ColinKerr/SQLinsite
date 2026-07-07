@@ -25,7 +25,7 @@ export class CanvasController {
   private miniW = 0;
   private miniH = 0;
 
-  private scroll: Record<View, number> = { pages: 0, tables: 0, query: 0 };
+  private scroll: Record<View, number> = { pages: 0, tables: 0, query: 0, tree: 0 };
   private selected = 0;
 
   private pagesCache: {

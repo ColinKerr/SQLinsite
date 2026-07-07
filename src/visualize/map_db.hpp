@@ -63,6 +63,21 @@ public:
     std::string profilePagesJson(std::int64_t from, std::int64_t to,
                                  const LeafFilter& sel) const;
 
+    // The map's page-type string for a page, or "" if the page is unknown.
+    std::string pageType(std::int64_t page) const;
+
+    // Page Tree view (b-tree structure). All lazy/windowed so nothing enumerates
+    // the whole file. Children follow the map's pointer graph.
+    // Roots: Page 1, each table/index b-tree, the Freelist, and All other pages.
+    std::string treeRootsJson() const;
+    // Child page nodes of `page` (b-tree children, overflow, freelist-leaf).
+    std::string treeChildrenJson(std::int64_t page) const;
+    // Freelist trunk pages (children of the Freelist root), keyset-paginated.
+    std::string treeFreelistJson(std::int64_t after, std::int64_t limit) const;
+    // Pages under "All other pages": not page 1, not a root, not freelist, and
+    // with no incoming pointer. Keyset-paginated by page number.
+    std::string treeOtherJson(std::int64_t after, std::int64_t limit) const;
+
 private:
     sqlite3* db_ = nullptr;
     bool hasProfile_ = false;

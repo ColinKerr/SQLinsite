@@ -272,3 +272,81 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .simple-table { border-collapse: collapse; font-size: 12px; }
 .simple-table th, .simple-table td { border: 1px solid #2a2e37; padding: 2px 8px; text-align: left; }
 .simple-table th { background: #1f2229; }
+
+/* ---- Page Tree view ------------------------------------------------------ */
+#tree-split { flex: 1 1 auto; display: flex; min-width: 0; min-height: 0; }
+.tv-pane { display: flex; min-width: 0; min-height: 0; overflow: hidden; }
+#tv-divider { flex: 0 0 6px; cursor: col-resize; background: #000; }
+#tv-divider:hover { background: var(--accent); }
+
+.btree { flex: 1 1 auto; display: flex; flex-direction: column; width: 100%; min-height: 0;
+  font-size: 12px; border-right: 1px solid #000; }
+.btree-head { padding: 6px 10px; background: #1f2229; border-bottom: 1px solid #000;
+  color: var(--muted); text-transform: uppercase; font-size: 11px; flex: 0 0 auto; }
+.btree-body { flex: 1 1 auto; overflow: auto; min-height: 0; }
+.tn-row { display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap;
+  padding-right: 8px; }
+.tn-row:hover { background: #262a32; }
+.tn-sel { background: #30343d; }
+.tn-exp { flex: 0 0 12px; text-align: center; color: var(--muted); font-size: 10px; }
+.tn-glyph { flex: 0 0 auto; width: 15px; height: 15px; border-radius: 3px; color: #000;
+  font-size: 9px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.tn-label { overflow: hidden; text-overflow: ellipsis; }
+.tn-tag { color: var(--muted); font-size: 10px; }
+.tn-more { color: var(--accent); }
+
+/* Key bar fixed at the bottom of the b-tree area (does not scroll). */
+.btree-legend { flex: 0 0 auto; border-top: 1px solid #000; background: #1f2229;
+  padding: 6px 8px; display: flex; flex-wrap: wrap; gap: 3px 8px; font-size: 10px; color: var(--muted); }
+.bk-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.bk-glyph { flex: 0 0 auto; width: 14px; height: 14px; border-radius: 3px; color: #e8e8e8;
+  font-size: 9px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+
+.page-detail { display: flex; flex-direction: column; width: 100%; min-height: 0; overflow: hidden;
+  font-size: 12px; }
+.pd-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column;
+  gap: 8px; padding: 8px 10px; }
+.pd-head { font-weight: 600; }
+.pd-head .pd-desc { display: block; color: var(--muted); font-weight: 400; margin-top: 2px; }
+
+.pd-headerfields { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.pd-field { color: var(--muted); font-family: ui-monospace, monospace; }
+.pd-field b { color: var(--ink); font-weight: 600; }
+
+/* Graphical page representation (pointer target). */
+.pgcard { display: inline-flex; align-items: center; gap: 4px; background: #262a32;
+  border: 1px solid #3a3f4a; border-radius: 4px; padding: 1px 5px 1px 2px; cursor: pointer;
+  color: var(--ink); font: inherit; vertical-align: middle; }
+.pgcard:hover { border-color: var(--accent); }
+.pgcard-glyph { width: 14px; height: 14px; border-radius: 3px; color: #000; font-size: 9px;
+  font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.pgcard-num { font-variant-numeric: tabular-nums; }
+
+.pd-schematic { display: flex; flex-direction: row; width: 100%; height: 40px; flex: 0 0 auto;
+  border: 1px solid #000; border-radius: 3px; overflow: hidden; }
+.pd-block { height: 100%; min-width: 1px; border-right: 1px solid rgba(0,0,0,.4); }
+.pd-block.hi { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pd-table { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pd-row { padding: 2px 3px; border-radius: 3px; }
+.pd-row.hi { background: #262a32; }
+.pd-rowhead { display: flex; align-items: center; gap: 8px; }
+.pd-swatch { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 2px; }
+.pd-rkind { flex: 0 0 150px; }
+.pd-range { flex: 0 0 160px; font-variant-numeric: tabular-nums; }
+
+.pd-cell { margin: 3px 0 3px 18px; display: flex; flex-direction: column; gap: 4px; }
+.pd-cellmeta { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.pd-kv { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+.pd-coltable { border-collapse: collapse; width: 100%; }
+.pd-coltable th { text-align: left; color: var(--muted); font-weight: 400; border-bottom: 1px solid #2a2e37; padding: 1px 8px; }
+.pd-coltable td { border-bottom: 1px solid #23262e; padding: 1px 8px; vertical-align: top; }
+.pd-ctype { white-space: nowrap; font-family: ui-monospace, monospace; }
+.pd-cval { font-family: ui-monospace, monospace; }
+.pd-cvaltext { display: inline-block; max-width: 100%; max-height: 96px; overflow: auto;
+  white-space: pre-wrap; word-break: break-word; vertical-align: top; }
+.pd-ovf { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; color: var(--accent); }
+
+/* Fixed key bar pinned to the bottom of the detail pane (does not scroll). */
+.pd-legend { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 4px 12px;
+  border-top: 1px solid #000; background: #1f2229; padding: 6px 10px; }
+.pd-leg { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }

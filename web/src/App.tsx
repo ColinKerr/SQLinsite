@@ -6,6 +6,7 @@ import { useViz } from "./state/store.ts";
 import { TopBar } from "./components/TopBar.tsx";
 import { CanvasStage } from "./components/CanvasStage.tsx";
 import { QueryLayout } from "./components/QueryLayout.tsx";
+import { PageTreeView } from "./components/PageTreeView.tsx";
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -35,7 +36,9 @@ export default function App() {
   return (
     <ControllerProvider>
       <TopBar />
-      {view === "query" ? <QueryLayout /> : <CanvasStage />}
+      {view === "query" ? <QueryLayout />
+        : view === "tree" ? <PageTreeView />
+        : <CanvasStage />}
     </ControllerProvider>
   );
 }

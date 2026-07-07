@@ -17,6 +17,11 @@ export function ViewPicker() {
           Query
         </button>
       )}
+      {hasDb && (
+        <button className={"tab" + (view === "tree" ? " active" : "")} onClick={() => setView("tree")}>
+          Tree
+        </button>
+      )}
     </nav>
   );
 }

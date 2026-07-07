@@ -12,6 +12,7 @@
 
 #include "visualize/embedded_assets.hpp"
 #include "visualize/map_db.hpp"
+#include "visualize/page_content.hpp"
 #include "visualize/query_engine.hpp"
 
 namespace {
@@ -62,7 +63,8 @@ std::vector<int> paramLeaves(const httplib::Request& req) {
 
 }  // namespace
 
-void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* engine) {
+void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* engine,
+                              PageContent* content) {
     server.Get("/", [](const httplib::Request&, httplib::Response& res) {
         serveAsset(res, "index.html");
     });
@@ -135,6 +137,39 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
                         "application/json");
     });
 
+    // Page Tree view (b-tree structure from the map; lazy/windowed).
+    server.Get("/api/tree/roots", [&db](const httplib::Request&, httplib::Response& res) {
+        res.set_content(db.treeRootsJson(), "application/json");
+    });
+    server.Get("/api/tree/children", [&db](const httplib::Request& req, httplib::Response& res) {
+        res.set_content(db.treeChildrenJson(paramInt(req, "page", 0)), "application/json");
+    });
+    server.Get("/api/tree/freelist", [&db](const httplib::Request& req, httplib::Response& res) {
+        res.set_content(db.treeFreelistJson(paramInt(req, "after", 0), paramInt(req, "limit", 1000)),
+                        "application/json");
+    });
+    server.Get("/api/tree/other", [&db](const httplib::Request& req, httplib::Response& res) {
+        res.set_content(db.treeOtherJson(paramInt(req, "after", 0), paramInt(req, "limit", 1000)),
+                        "application/json");
+    });
+
+    // Page detail with decoded values (only with --db-file).
+    if (content != nullptr) {
+        server.Get(R"(/api/page/(\d+)/content)",
+                   [&db, content](const httplib::Request& req, httplib::Response& res) {
+                       const std::int64_t n = std::stoll(req.matches[1].str());
+                       const std::string type = db.pageType(n);
+                       std::string body = type.empty() ? std::string()
+                           : content->pageJson(n, type, [&db](std::int64_t p) { return db.pageType(p); });
+                       if (body.empty()) {
+                           res.status = 404;
+                           res.set_content(R"({"error":"no such page"})", "application/json");
+                           return;
+                       }
+                       res.set_content(body, "application/json");
+                   });
+    }
+
     if (engine == nullptr) return;  // live-query routes only with --db-file
 
     server.Get("/api/schema", [engine, &db](const httplib::Request&, httplib::Response& res) {
@@ -184,6 +219,7 @@ int mapPageSize(const MapDb& db) {
 int runVisualizeServe(const VisualizeOptions& options) {
     std::optional<MapDb> db;
     std::optional<QueryEngine> engine;
+    std::optional<PageContent> content;
     try {
         db.emplace(options.mapFile);
         if (!options.profileFile.empty()) {
@@ -191,6 +227,7 @@ int runVisualizeServe(const VisualizeOptions& options) {
         }
         if (!options.dbFile.empty()) {
             engine.emplace(options.dbFile, mapPageSize(*db), *db);
+            content.emplace(PageContent::open(options.dbFile));
             db->setHasDb(true);
         }
     } catch (const std::exception& e) {
@@ -199,7 +236,8 @@ int runVisualizeServe(const VisualizeOptions& options) {
     }
 
     httplib::Server server;
-    configureVisualizeRoutes(server, *db, engine ? &*engine : nullptr);
+    configureVisualizeRoutes(server, *db, engine ? &*engine : nullptr,
+                             content ? &*content : nullptr);
 
     const char* host = "127.0.0.1";
     int port = options.port;

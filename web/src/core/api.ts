@@ -1,5 +1,6 @@
 import type {
-  Meta, ObjectPagesResponse, PageDetail, PagesResponse, ProfilePagesResponse, RunsResponse,
+  Meta, ObjectPagesResponse, PageContent, PageDetail, PagesResponse, ProfilePagesResponse,
+  RunsResponse, TreeChild, TreePagesResponse, TreeRoot,
 } from "./types.ts";
 
 export async function getJson<T>(url: string): Promise<T | null> {
@@ -27,3 +28,13 @@ export const fetchObjectPages = (objectId: number, from: number, to: number) =>
 export const fetchPage = (n: number) => getJson<PageDetail>(`/api/page/${n}`);
 export const fetchProfilePages = (from: number, to: number, sel: string) =>
   getJson<ProfilePagesResponse>(`/api/profile/pages?from=${from}&to=${to}${sel}`);
+
+// Page Tree view.
+export const fetchTreeRoots = () => getJson<{ roots: TreeRoot[] }>("/api/tree/roots");
+export const fetchTreeChildren = (page: number) =>
+  getJson<{ children: TreeChild[] }>(`/api/tree/children?page=${page}`);
+export const fetchTreeFreelist = (after: number, limit: number) =>
+  getJson<TreePagesResponse>(`/api/tree/freelist?after=${after}&limit=${limit}`);
+export const fetchTreeOther = (after: number, limit: number) =>
+  getJson<TreePagesResponse>(`/api/tree/other?after=${after}&limit=${limit}`);
+export const fetchPageContent = (n: number) => getJson<PageContent>(`/api/page/${n}/content`);

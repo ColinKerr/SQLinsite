@@ -1,7 +1,7 @@
 // Shapes returned by the visualize server API (see plan/commands/VISUALIZE.md).
 
 export type Metric = "none" | "reads" | "writes" | "total";
-export type View = "pages" | "tables" | "query";
+export type View = "pages" | "tables" | "query" | "tree";
 
 export interface ObjectInfo {
   id: number;
@@ -116,6 +116,62 @@ export interface Schema { tables: SchemaTable[]; views: SchemaView[]; }
 export interface Pointer {
   toPage: number;
   kind: string;
+  pageType?: string; // target page's type (for symbology), when known
+}
+
+// ---- page tree view --------------------------------------------------------
+export interface TreeRoot {
+  kind: "page" | "freelist" | "other";
+  label: string;
+  page: number | null;
+  pageType: string | null;
+  objectId: number | null;
+  hasChildren: number | boolean;
+}
+export interface TreeChild {
+  page: number;
+  kind: string; // edge kind: child | overflow | freelist-leaf
+  pageType: string;
+  objectId: number | null;
+  hasChildren: number | boolean;
+}
+export interface TreePagesResponse { pages: TreeChild[]; }
+
+export interface PageColumn {
+  serialType: number;
+  serialName: string;
+  type: "null" | "int" | "real" | "text" | "blob";
+  value: unknown;
+  bytes?: number;
+  truncated?: boolean;
+  fromOverflow?: boolean;      // this column's bytes (partly) live in overflow pages
+  overflowPages?: number[];    // the overflow pages holding them
+}
+export interface PageRegion {
+  offset: number;
+  length: number;
+  kind: string; // db-header|page-header|cellptr-array|cell|free|reserved|overflow-header|payload|freelist-header|freelist-array|...
+  cellIndex?: number;
+}
+export interface PageCell {
+  cellIndex: number;
+  offset: number;
+  size: number;
+  rowid?: number;
+  leftChild?: number;
+  overflowPage?: number;
+  payloadBytes?: number;
+  columns?: PageColumn[];
+}
+export interface PageContent {
+  pageNumber: number;
+  pageType: string;
+  pageSize: number;
+  usableSize: number;
+  header: Record<string, unknown>;
+  regions: PageRegion[];
+  cells: PageCell[];
+  pointers: Pointer[];
 }
 export interface PageDetail {
   pageNumber: number;

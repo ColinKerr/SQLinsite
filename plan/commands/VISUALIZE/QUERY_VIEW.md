@@ -1,13 +1,6 @@
-# Live Query Visualization
+# Query Visualization
 
-> **Status:** implemented. Enable with `sqlinsite visualize serve --map-file <map> --db-file <db>`.
-> Front-end: `web/src/components/{SchemaPanel,QueryEditor,ResultsView,ResultsTable,QueryCanvas}.tsx`
-> and `web/src/state/queryStore.ts`. Back-end: `src/visualize/query_engine.*` (runs, history,
-> schema, row→page) and `src/visualize/query_augment.*`. Row→page mapping is best-effort and
-> per-column (see ARCHITECTURE.md → "Live query view"): a cell shows its leaf page when the
-> column resolves to a single source table, and is left blank otherwise.
-
-The goal of this view is to let the user profile one or more queries interactively then review the profile results AND the data returned by the queries.
+The goal of this view is to let the user profile a query interactively then review the profile results AND the data returned by the queries.
 
 For this mode the navigation Panel is replaced with the 'schema panel'.  The schema panel is a tree showing the schemas in the SQLite file.  The view is is a new control called the 'query and data viewer' is split horizontally into two parts separated by a resizable divider.  On top, taking up 1/3rd of the view vertically is a text editor for entering a SQL query called the 'query editor'.  The bottom 2/3rds of the view is called 'results view' and can show one of four tabs, the default tab is a table control that shows results of the query called 'results table', the next two tabs are the pages and tables view that show the profile results of the last executed query or selection from the schema tree view.  The final tab is a hidden tab just to show the results from the 'Explain' button in the 'query control bar', it is called 'explain results'.
 

@@ -97,6 +97,7 @@ add_library(sqlinsite_core STATIC
   src/visualize/map_db.cpp
   src/visualize/query_augment.cpp
   src/visualize/cell_page_map.cpp
+  src/visualize/page_content.cpp
   src/visualize/query_engine.cpp
   src/visualize/visualize_command.cpp
   ${SQLINSITE_EMBEDDED_ASSETS}
