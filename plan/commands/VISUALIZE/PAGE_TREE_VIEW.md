@@ -8,7 +8,8 @@ The view is split into two resizable areas vertically.  On the left hand side is
 
 ## b-tree tree
 
-The root nodes of this tree are:
+
+### Root nodes
 
 - 'sqlite_schema' root node.  Page 1 for the sqlite file serves as the root node.
 - Each table b-tree in the file is a root node.  The root page for that table serves as the root node.
@@ -17,11 +18,21 @@ The root nodes of this tree are:
 - Lock-Byte root node.  Only shown if the Lock-Byte page exists.  The Lock-Byte page serves as the root node.
 - All other pages.  Only shown if pages exist that are not covered in the root node descriptions above are grouped together under this root node for review, the final implementation will properly categorize these pages.
 
+### Child nodes and expansion
+
 Each page node it's child pages as child nodes.  If a page node points to overflow pages they are shown as children.
+
+Nodes with children have arrows indicating that they can be expanded.  Clicking on the arrow expands/collapses the nodes children, clicking anywhere else on the node selects the node.  The arrow points to the right when collapsed and down when expanded.
+
+### Tree Key
+
+A key describing the page-type symbology.  Fixed at the bottom of the b-tree area and does not scroll.  Entries in the key are arranged in two or three columns depending on the width of the b-tree tree.
+
+### Styling
 
 Page nodes are styled by page type and include a pop over with a text description of their type and basic details about the page.
 
-The b-tree tree is on the left hand side and has a similar width to the 'Navigation Panel' in other views.  A key describing the page-type symbology is fixed at the bottom of the b-tree area and does not scroll; the tree itself fills the entire remaining vertical space above the key.
+The b-tree tree is on the left hand side and has a similar width to the 'Navigation Panel' in other views.  The tree key is fixed at the bottom and the tree itself fills the entire remaining vertical space above the key.
 
 ## Page Detail View
 

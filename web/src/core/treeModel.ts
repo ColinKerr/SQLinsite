@@ -1,8 +1,8 @@
-import type { TreeChild, TreeRoot } from "./types.ts";
+import type { PageBasics, TreeChild, TreeRoot } from "./types.ts";
 
 // A node in the b-tree tree. `page` is null for the virtual roots and for the
 // "load more" loader rows.
-export interface TreeNode {
+export interface TreeNode extends PageBasics {
   key: string;
   kind: "page" | "freelist" | "other" | "more";
   label: string;
@@ -15,6 +15,11 @@ export interface TreeNode {
   loaderParent?: string;
   loaderKind?: "freelist" | "other";
   after?: number;
+}
+
+// The subset of PageBasics fields, copied verbatim onto a node.
+function basics(x: PageBasics): PageBasics {
+  return { cellCount: x.cellCount, freeBytes: x.freeBytes, rowidMin: x.rowidMin, rowidMax: x.rowidMax };
 }
 
 export interface FlatNode {
@@ -35,7 +40,8 @@ export function rootNode(r: TreeRoot): TreeNode {
              pageType: null, hasChildren: true };
   }
   return { key: `r:${r.page}`, kind: "page", label: r.label, page: r.page,
-           pageType: r.pageType, objectId: r.objectId, hasChildren: truthy(r.hasChildren) };
+           pageType: r.pageType, objectId: r.objectId, hasChildren: truthy(r.hasChildren),
+           ...basics(r) };
 }
 
 // A page child under `parentKey`; `edge` overrides the API's edge kind (used for
@@ -51,6 +57,7 @@ export function childNode(parentKey: string, c: TreeChild, edge?: string): TreeN
     objectId: c.objectId,
     edgeKind,
     hasChildren: truthy(c.hasChildren),
+    ...basics(c),
   };
 }
 

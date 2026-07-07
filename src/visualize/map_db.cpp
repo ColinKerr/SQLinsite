@@ -338,6 +338,16 @@ namespace {
 // freelist trunk) its freelist-leaf pages. Interior freelist-next / ptrmap-parent
 // edges are not tree edges.
 constexpr const char* kChildKinds = "('child','overflow','freelist-leaf')";
+
+// Page-detail columns surfaced on tree nodes for the hover popover.
+constexpr const char* kDetailCols = "cellCount, freeBytes, rowidMin, rowidMax";
+
+// Copies the page-detail columns from a query row onto a tree node.
+void mergeDetails(json& node, const json& row) {
+    for (const char* k : {"cellCount", "freeBytes", "rowidMin", "rowidMax"}) {
+        node[k] = row.contains(k) ? row[k] : json(nullptr);
+    }
+}
 }  // namespace
 
 std::string MapDb::pageType(std::int64_t page) const {
@@ -352,14 +362,16 @@ std::string MapDb::treeRootsJson() const {
     // sqlite_schema — page 1 is its b-tree root.
     {
         const std::string sql =
-            "SELECT 1 AS page, pageType, "
+            "SELECT 1 AS page, pageType, " + std::string(kDetailCols) + ", "
             "EXISTS(SELECT 1 FROM pointers WHERE fromPage=1 AND kind IN " +
             std::string(kChildKinds) + ") AS hasChildren FROM pages WHERE pageNumber=1";
         json r = queryRows(db_, sql);
         if (!r.empty()) {
-            roots.push_back({{"kind", "page"}, {"label", "sqlite_schema"}, {"page", 1},
-                             {"pageType", r[0]["pageType"]},
-                             {"objectId", nullptr}, {"hasChildren", r[0]["hasChildren"]}});
+            json node = {{"kind", "page"}, {"label", "sqlite_schema"}, {"page", 1},
+                         {"pageType", r[0]["pageType"]},
+                         {"objectId", nullptr}, {"hasChildren", r[0]["hasChildren"]}};
+            mergeDetails(node, r[0]);
+            roots.push_back(std::move(node));
         }
     }
 
@@ -367,19 +379,23 @@ std::string MapDb::treeRootsJson() const {
     json objs = queryRows(
         db_,
         "SELECT o.id AS objectId, o.type AS type, o.name AS name, o.rootPage AS page, "
-        "(SELECT pageType FROM pages WHERE pageNumber=o.rootPage) AS pageType, "
+        "p.pageType AS pageType, p.cellCount AS cellCount, p.freeBytes AS freeBytes, "
+        "p.rowidMin AS rowidMin, p.rowidMax AS rowidMax, "
         "EXISTS(SELECT 1 FROM pointers WHERE fromPage=o.rootPage AND kind IN " +
             std::string(kChildKinds) + ") AS hasChildren "
+        "FROM objects o LEFT JOIN pages p ON p.pageNumber=o.rootPage "
         // rootPage=1 is sqlite_schema, already represented by the Page 1 root.
-        "FROM objects o WHERE o.type IN ('table','index') AND o.rootPage<>1 "
+        "WHERE o.type IN ('table','index') AND o.rootPage<>1 "
         "ORDER BY CASE o.type WHEN 'table' THEN 0 ELSE 1 END, o.name");
     for (json& o : objs) {
-        roots.push_back({
+        json node = {
             {"kind", "page"},
             {"label", o["name"].get<std::string>() + " (" + o["type"].get<std::string>() + ")"},
             {"page", o["page"]}, {"pageType", o["pageType"]},
             {"objectId", o["objectId"]}, {"hasChildren", o["hasChildren"]},
-        });
+        };
+        mergeDetails(node, o);
+        roots.push_back(std::move(node));
     }
 
     // Freelist (virtual) — present when any trunk exists.
@@ -392,10 +408,13 @@ std::string MapDb::treeRootsJson() const {
     }
 
     // Lock-byte page — only exists in databases larger than 1 GiB.
-    json lb = queryRows(db_, "SELECT pageNumber AS page FROM pages WHERE pageType='lock-byte' LIMIT 1");
+    json lb = queryRows(db_, "SELECT pageNumber AS page, " + std::string(kDetailCols) +
+                                 " FROM pages WHERE pageType='lock-byte' LIMIT 1");
     if (!lb.empty()) {
-        roots.push_back({{"kind", "page"}, {"label", "Lock-Byte"}, {"page", lb[0]["page"]},
-                         {"pageType", "lock-byte"}, {"objectId", nullptr}, {"hasChildren", false}});
+        json node = {{"kind", "page"}, {"label", "Lock-Byte"}, {"page", lb[0]["page"]},
+                     {"pageType", "lock-byte"}, {"objectId", nullptr}, {"hasChildren", false}};
+        mergeDetails(node, lb[0]);
+        roots.push_back(std::move(node));
     }
 
     // All other pages (virtual) — only when at least one such page exists.
@@ -434,7 +453,8 @@ std::string MapDb::treePathJson(std::int64_t page) const {
 std::string MapDb::treeChildrenJson(std::int64_t page) const {
     const std::string sql =
         "SELECT ptr.toPage AS page, ptr.kind AS kind, p.pageType AS pageType, "
-        "p.objectId AS objectId, "
+        "p.objectId AS objectId, p.cellCount AS cellCount, p.freeBytes AS freeBytes, "
+        "p.rowidMin AS rowidMin, p.rowidMax AS rowidMax, "
         "EXISTS(SELECT 1 FROM pointers c WHERE c.fromPage=ptr.toPage AND c.kind IN " +
             std::string(kChildKinds) + ") AS hasChildren "
         "FROM pointers ptr JOIN pages p ON p.pageNumber=ptr.toPage "
@@ -445,7 +465,7 @@ std::string MapDb::treeChildrenJson(std::int64_t page) const {
 
 std::string MapDb::treeFreelistJson(std::int64_t after, std::int64_t limit) const {
     const std::string sql =
-        "SELECT pageNumber AS page, pageType, "
+        "SELECT pageNumber AS page, pageType, " + std::string(kDetailCols) + ", "
         "EXISTS(SELECT 1 FROM pointers WHERE fromPage=pages.pageNumber AND kind='freelist-leaf') "
         "AS hasChildren "
         "FROM pages WHERE pageType='freelist-trunk' AND pageNumber>? "
@@ -455,7 +475,7 @@ std::string MapDb::treeFreelistJson(std::int64_t after, std::int64_t limit) cons
 
 std::string MapDb::treeOtherJson(std::int64_t after, std::int64_t limit) const {
     const std::string sql =
-        "SELECT pageNumber AS page, pageType, objectId, "
+        "SELECT pageNumber AS page, pageType, objectId, " + std::string(kDetailCols) + ", "
         "EXISTS(SELECT 1 FROM pointers WHERE fromPage=pages.pageNumber AND kind IN " +
             std::string(kChildKinds) + ") AS hasChildren "
         "FROM pages "

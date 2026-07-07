@@ -280,7 +280,7 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 #tv-divider:hover { background: var(--accent); }
 
 .btree { flex: 1 1 auto; display: flex; flex-direction: column; width: 100%; min-height: 0;
-  font-size: 12px; border-right: 1px solid #000; }
+  font-size: 12px; border-right: 1px solid #000; container: btree / inline-size; }
 .btree-head { padding: 6px 10px; background: #1f2229; border-bottom: 1px solid #000;
   color: var(--muted); text-transform: uppercase; font-size: 11px; flex: 0 0 auto; }
 .btree-body { flex: 1 1 auto; overflow: auto; min-height: 0; }
@@ -288,17 +288,27 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
   padding-right: 8px; }
 .tn-row:hover { background: #262a32; }
 .tn-sel { background: #30343d; }
-.tn-exp { flex: 0 0 12px; text-align: center; color: var(--muted); font-size: 10px; }
+.tn-exp { flex: 0 0 14px; text-align: center; color: var(--muted); line-height: 1; }
+/* Expand/collapse chevron: sized to match the node text, points right when
+   collapsed, rotates to face down when expanded. */
+.tn-arrow { display: inline-block; font-size: 16px; transition: transform 0.12s ease; }
+.tn-arrow.open { transform: rotate(90deg); }
 .tn-glyph { flex: 0 0 auto; width: 15px; height: 15px; border-radius: 3px; color: #000;
   font-size: 9px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
 .tn-label { overflow: hidden; text-overflow: ellipsis; }
 .tn-tag { color: var(--muted); font-size: 10px; }
 .tn-more { color: var(--accent); }
 
-/* Key bar fixed at the bottom of the b-tree area (does not scroll). */
+/* Key bar fixed at the bottom of the b-tree area (does not scroll). Entries are
+   laid out in 2 columns, or 3 when the tree pane is wide enough. */
 .btree-legend { flex: 0 0 auto; border-top: 1px solid #000; background: #1f2229;
-  padding: 6px 8px; display: flex; flex-wrap: wrap; gap: 3px 8px; font-size: 10px; color: var(--muted); }
-.bk-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  padding: 6px 8px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 10px; font-size: 10px; color: var(--muted); }
+@container btree (min-width: 400px) {
+  .btree-legend { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.bk-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
 .bk-glyph { flex: 0 0 auto; width: 14px; height: 14px; border-radius: 3px; color: #e8e8e8;
   font-size: 9px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
 

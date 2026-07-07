@@ -7,6 +7,17 @@ import { pageTypeDesc } from "../core/pageTypes.ts";
 const ROW_H = 22;
 const INDENT = 14;
 
+// Hover popover text: the page-type description plus basic page details.
+function nodeTitle(node: TreeNode): string {
+  if (!node.pageType) return node.label;
+  const parts = [
+    node.cellCount != null ? `${node.cellCount} cells` : null,
+    node.freeBytes != null ? `${node.freeBytes} bytes free` : null,
+    node.rowidMin != null && node.rowidMax != null ? `rowids ${node.rowidMin}–${node.rowidMax}` : null,
+  ].filter(Boolean);
+  return `${node.label} — ${pageTypeDesc(node.pageType)}` + (parts.length ? "\n" + parts.join(" · ") : "");
+}
+
 // Page types shown in the key at the bottom of the tree (glyph symbology).
 const KEY_TYPES = [
   "table-leaf", "table-interior", "index-leaf", "index-interior", "overflow",
@@ -64,10 +75,10 @@ export function BTreeTree() {
   const start = Math.max(0, Math.floor(scrollTop / ROW_H) - 5);
   const end = Math.min(total, start + Math.ceil(height / ROW_H) + 10);
 
+  // Clicking the row body selects the node; expand/collapse is the arrow's job.
   const onRowClick = (node: TreeNode) => {
     if (node.kind === "more") { void loadMore(node); return; }
     if (node.page != null) void selectPage(node.page);
-    if (node.hasChildren) void toggle(node);
   };
 
   const rows = [];
@@ -79,10 +90,11 @@ export function BTreeTree() {
            style={{ position: "absolute", top: i * ROW_H, height: ROW_H, left: 0, right: 0,
                     paddingLeft: 6 + depth * INDENT }}
            onClick={() => onRowClick(node)}
-           title={node.pageType ? `${node.label} — ${pageTypeDesc(node.pageType)}` : node.label}>
+           title={nodeTitle(node)}>
         <span className="tn-exp" onClick={(e) => { e.stopPropagation();
                     if (node.kind === "more") void loadMore(node); else if (node.hasChildren) void toggle(node); }}>
-          {node.kind === "more" ? "" : node.hasChildren ? (isOpen ? "▾" : "▸") : ""}
+          {node.kind !== "more" && node.hasChildren &&
+            <span className={"tn-arrow" + (isOpen ? " open" : "")}>›</span>}
         </span>
         {node.kind === "more" ? (
           <span className="tn-more">{loading.has(node.loaderParent ?? "") ? "Loading…" : "Load more…"}</span>

@@ -120,7 +120,14 @@ export interface Pointer {
 }
 
 // ---- page tree view --------------------------------------------------------
-export interface TreeRoot {
+// Basic per-page details surfaced on tree nodes for the hover popover.
+export interface PageBasics {
+  cellCount?: number | null;
+  freeBytes?: number | null;
+  rowidMin?: number | null;
+  rowidMax?: number | null;
+}
+export interface TreeRoot extends PageBasics {
   kind: "page" | "freelist" | "other";
   label: string;
   page: number | null;
@@ -128,7 +135,7 @@ export interface TreeRoot {
   objectId: number | null;
   hasChildren: number | boolean;
 }
-export interface TreeChild {
+export interface TreeChild extends PageBasics {
   page: number;
   kind: string; // edge kind: child | overflow | freelist-leaf
   pageType: string;
