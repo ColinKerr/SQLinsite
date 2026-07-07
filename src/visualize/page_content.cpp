@@ -223,12 +223,25 @@ std::string PageContent::pageJson(std::int64_t n, const std::string& pageType,
             const std::uint64_t colEnd = pos + need;
             if (need > 0 && colEnd > localBytes) {  // this column spills into overflow
                 cj["fromOverflow"] = true;
-                const std::uint64_t s = pos > localBytes ? pos - localBytes : 0;
-                const std::uint64_t e = colEnd - localBytes;
-                json ops = json::array();
-                for (std::uint64_t idx = s / chunk; idx <= (e - 1) / chunk; ++idx)
-                    if (idx < ovPages.size()) ops.push_back(ovPages[idx]);
-                cj["overflowPages"] = ops;
+                const bool isText = st >= 13 && (st % 2) == 1;
+                // Break the column's bytes into per-page segments: the leaf portion
+                // (page n), then each overflow page the value crosses.
+                json segs = json::array();
+                auto pushSeg = [&](std::int64_t pg, std::uint64_t from, std::uint64_t to) {
+                    json seg = {{"page", pg}, {"bytes", to - from}};
+                    if (isText && to <= buf.size()) seg["text"] = std::string(buf.begin() + from, buf.begin() + to);
+                    segs.push_back(std::move(seg));
+                };
+                if (pos < localBytes) pushSeg(n, pos, std::min(colEnd, localBytes));
+                std::uint64_t ob = std::max<std::uint64_t>(pos, localBytes);  // payload offset in overflow
+                while (ob < colEnd) {
+                    const std::uint64_t idx = (ob - localBytes) / chunk;
+                    const std::uint64_t pageEnd = localBytes + (idx + 1) * chunk;
+                    const std::uint64_t segEnd = std::min(colEnd, pageEnd);
+                    pushSeg(idx < ovPages.size() ? ovPages[idx] : 0, ob, segEnd);
+                    ob = segEnd;
+                }
+                cj["segments"] = std::move(segs);
             }
             cols.push_back(std::move(cj));
             pos += need;
@@ -348,5 +361,7 @@ std::string PageContent::pageJson(std::int64_t n, const std::string& pageType,
         {"cells", std::move(cells)},
         {"pointers", std::move(pointers)},
     };
-    return out.dump();
+    // Replace invalid UTF-8 (a value/segment can end mid code point at a page or
+    // cap boundary) rather than throwing.
+    return out.dump(-1, ' ', false, json::error_handler_t::replace);
 }

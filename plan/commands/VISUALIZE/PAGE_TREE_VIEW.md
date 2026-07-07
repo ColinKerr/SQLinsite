@@ -50,4 +50,16 @@ The horizontal schematic view of the page that includes all header, cell, key an
 
 An area below the schematic view where the full contents of the page is displayed, including contents of the headers, cell pointer array and cells.  The data is shown in a tabular view below the schematic view that is color coded to the schematic view.  
 
+#### Values from overflow pages
+
+When a cell/record overflows into overflow pages show the data from the overflow pages in the full page contents for the leaf page.  
+
+Depending on the type and how data is split it should be handled in one of the following ways
+- If an entire value comes from an overflow page the value is written followed by '-> overflow [clickable page control]'.  The value and the clickable page control should be colored the same.
+- If a value spans multiple pages it is color coded to match the following rules
+  - The portion from the leaf page is white
+  - If the value is variable length the type area should include the total number of bytes then a colored segment with the number of bytes from each overflow page followed by a clickable page control for each overflow.  
+    - If the type is a string, the portion of the value from each overflow page shares the color giving to the clickable page control for that page.
+    - If the type is a BLOB the number of bytes in each page are shown as such: `BLOB (42 bytes, 3000 bytes -> p32, 2700 bytes -> p33)` where 42 bytes are in the leaf page and 3000 bytes are in overflow page 32 and 2700 bytes are in overflow page 33.
+
 A key bar describes the color coding; it is fixed at the bottom of the page detail view and does not scroll with the schematic and table content above it.

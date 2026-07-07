@@ -146,6 +146,8 @@ export interface TreePagesResponse { pages: TreeChild[]; }
 export interface TreePathNode { page: number; edgeKind: string | null; }
 export interface TreePathResponse { path: TreePathNode[]; }
 
+// A slice of an overflowing value's bytes on one page (leaf or an overflow page).
+export interface PageSegment { page: number; bytes: number; text?: string; }
 export interface PageColumn {
   serialType: number;
   serialName: string;
@@ -154,7 +156,7 @@ export interface PageColumn {
   bytes?: number;
   truncated?: boolean;
   fromOverflow?: boolean;      // this column's bytes (partly) live in overflow pages
-  overflowPages?: number[];    // the overflow pages holding them
+  segments?: PageSegment[];    // per-page byte/text breakdown when it overflows
 }
 export interface PageRegion {
   offset: number;

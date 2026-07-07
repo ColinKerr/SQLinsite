@@ -1,8 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 import { useTree } from "../state/treeStore.ts";
-import type { PageCell, PageColumn } from "../core/types.ts";
+import type { PageCell, PageColumn, PageSegment } from "../core/types.ts";
 import { regionColor, regionLabel, pageTypeDesc } from "../core/pageTypes.ts";
-import { colorForPage, GLYPH } from "../core/palette.ts";
+import { colorForPage, colorForPageNumber, GLYPH } from "../core/palette.ts";
 
 function valueText(c: PageColumn): string {
   if (c.type === "null") return "NULL";
@@ -14,11 +14,15 @@ function valueText(c: PageColumn): string {
 // A small graphical page representation matching a b-tree tree node: type glyph +
 // color + page number. Clicking navigates to that page and expands+selects it in
 // the tree.
-function PageCard({ page, pageType, label, onClick }:
-                  { page: number; pageType?: string; label?: string; onClick: (p: number) => void }) {
+function PageCard({ page, pageType, label, colorByNumber, onClick }:
+                  { page: number; pageType?: string; label?: string; colorByNumber?: boolean;
+                    onClick: (p: number) => void }) {
+  // `colorByNumber` gives each page a distinct color (used for overflow value
+  // segments so the control matches its coloured slice of the value).
+  const glyphBg = colorByNumber ? colorForPageNumber(page) : colorForPage(null, pageType ?? "");
   return (
     <button className="pgcard" onClick={() => onClick(page)} title={pageType ? pageTypeDesc(pageType) : `page ${page}`}>
-      <span className="pgcard-glyph" style={{ background: colorForPage(null, pageType ?? "") }}>
+      <span className="pgcard-glyph" style={{ background: glyphBg }}>
         {pageType ? (GLYPH[pageType] ?? "·") : "·"}
       </span>
       <span className="pgcard-num">{label ?? `p${page}`}</span>
@@ -100,7 +104,7 @@ export function PageDetail() {
                   <span className="pd-rkind">{regionLabel(r.kind)}{r.cellIndex != null ? ` #${r.cellIndex}` : ""}</span>
                   <span className="pd-range muted">{r.offset}–{r.offset + r.length} ({r.length}B)</span>
                 </div>
-                {cell && <CellData cell={cell} onNav={revealPage} typeOf={pointerType} />}
+                {cell && <CellData cell={cell} onNav={revealPage} typeOf={pointerType} leafPage={content.pageNumber} />}
               </div>
             );
           })}
@@ -118,8 +122,31 @@ export function PageDetail() {
   );
 }
 
-function CellData({ cell, onNav, typeOf }:
-                  { cell: PageCell; onNav: (p: number) => void; typeOf: (p: number) => string | undefined }) {
+// A per-page byte count for an overflowing value: "N bytes" (white) for the leaf
+// portion, or "N bytes → [pN]" (in that page's color, with its clickable control)
+// for an overflow page.
+function Segment({ seg, leafPage, column, forceBytes, onNav }:
+                  { seg: PageSegment; leafPage: number; column: PageColumn; forceBytes: boolean; onNav: (p: number) => void }) {
+  
+  const text = forceBytes || column.type == "blob" ? `${seg.bytes} B` : column.type === "int" || column.type === "real" ? valueText(column) : seg.text;
+  if (seg.page === leafPage)
+    return <span className="pd-seg-leaf">{text}</span>;
+  
+  return (
+    <span className="pd-seg-ovf" style={{ background: colorForPageNumber(seg.page) }} title={!forceBytes ? `overflow page ${seg.page}` : undefined}>
+      {forceBytes ? 
+        <span>
+          {text}
+          <span> → </span>
+          <PageCard page={seg.page} pageType="overflow" colorByNumber onClick={onNav} />
+        </span> : text}
+    </span>
+  );
+}
+
+function CellData({ cell, onNav, typeOf, leafPage }:
+                  { cell: PageCell; onNav: (p: number) => void;
+                    typeOf: (p: number) => string | undefined; leafPage: number }) {
   return (
     <div className="pd-cell">
       <div className="pd-cellmeta">
@@ -134,15 +161,30 @@ function CellData({ cell, onNav, typeOf }:
             {cell.columns.map((c, i) => (
               <tr key={i}>
                 <td className="muted">{i}</td>
-                <td className="pd-ctype">{c.serialType} <span className="muted">({c.serialName})</span></td>
+                <td className="pd-ctype">
+                  {c.serialType} <span className="muted">({c.serialName})</span>
+                  {c.segments && (
+                    <span className="pd-bytes">{c.segments.map((s, k) => (
+                      <span key={k}>{" "}{s.page === leafPage
+                        ? <span className="pd-seg-leaf">{s.bytes} B</span>
+                        : <span key={k}>{k > 0 ? ", " : ""}<Segment seg={s} leafPage={leafPage} column={c} forceBytes={true} onNav={onNav} /></span>}</span>
+                    ))}</span>
+                  )}
+                </td>
                 <td className="pd-cval">
-                  <span className="pd-cvaltext">{valueText(c)}</span>
-                  {c.fromOverflow && (
-                    <span className="pd-ovf" title="stored in overflow page(s)">
-                      ⇢ overflow
-                      {(c.overflowPages ?? []).map((p) => (
-                        <PageCard key={p} page={p} pageType="overflow" onClick={onNav} />
-                      ))}
+                  {!c.segments ? (
+                    <span className="pd-cvaltext">{valueText(c)}</span>
+                  ) : c.type === "blob" ? (
+                    <span className="pd-cvaltext">BLOB ({c.segments.map((s, k) => (
+                      <span key={k}>{k > 0 ? ", " : ""}<Segment seg={s} leafPage={leafPage} column={c} forceBytes={false} onNav={onNav} /></span>
+                    ))})</span>
+                  ) : (
+                    <span className="pd-cvaltext">
+                      {c.segments.map((s, k) =>
+                        <span key={k}>
+                          <Segment seg={s} leafPage={leafPage} column={c} forceBytes={false} onNav={onNav} />
+                        </span>
+                      )}
                     </span>
                   )}
                 </td>

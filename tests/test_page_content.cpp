@@ -77,8 +77,17 @@ TEST_CASE("page content decodes every page type without throwing") {
                     // full from the overflow pages and flagged fromOverflow.
                     if (col.value("type", "") == "text" && col.value("fromOverflow", false)) {
                         sawOverflowValue = true;
-                        CHECK(col["overflowPages"].is_array());
-                        CHECK(col["overflowPages"].size() >= 1);
+                        // Per-page byte/text segments; at least one is an overflow page.
+                        REQUIRE(col["segments"].is_array());
+                        CHECK(col["segments"].size() >= 1);
+                        bool sawOvSeg = false;
+                        std::size_t segBytes = 0;
+                        for (const auto& seg : col["segments"]) {
+                            segBytes += seg["bytes"].get<std::size_t>();
+                            if (seg["page"].get<std::int64_t>() != n) sawOvSeg = true;
+                        }
+                        CHECK(sawOvSeg);
+                        CHECK(segBytes == col["bytes"].get<std::size_t>()); // segments cover the value
                         // "in full": the assembled value length matches its byte size.
                         CHECK(col["value"].get<std::string>().size() == col["bytes"].get<std::size_t>());
                     }
