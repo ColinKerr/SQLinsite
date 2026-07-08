@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SchemaPanel } from "./SchemaPanel.tsx";
 import { useQuery } from "../state/queryStore.ts";
 import { useViz } from "../state/store.ts";
+import { useTree } from "../state/treeStore.ts";
 
 function jsonResp(body: unknown) {
   return { ok: true, json: async () => body } as Response;
@@ -10,7 +11,8 @@ function jsonResp(body: unknown) {
 
 beforeEach(() => {
   useQuery.setState({ schema: { tables: [], views: [] }, selectedCell: null });
-  useViz.setState({ view: "query", pendingPage: null });
+  useViz.setState({ view: "query" });
+  useTree.setState({ selectedPage: null, roots: null, expanded: new Set(), childrenByKey: {} });
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     const u = String(url);
     if (u === "/api/schema") return jsonResp({ tables: [], views: [] });
@@ -48,8 +50,8 @@ describe("cell details panel", () => {
     await waitFor(() => expect(screen.getAllByText(/overflow/).length).toBe(2));
 
     fireEvent.click(link3);
-    expect(useViz.getState().view).toBe("pages");
-    expect(useViz.getState().pendingPage).toBe(3);
+    expect(useViz.getState().view).toBe("tree");
+    expect(useTree.getState().selectedPage).toBe(3);
   });
 
   it("closes when the ✕ button is clicked", async () => {

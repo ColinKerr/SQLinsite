@@ -59,6 +59,15 @@ describe("tree store", () => {
     expect(s.childrenByKey["r:2"].map((n) => n.page)).toContain(5); // children loaded
   });
 
+  it("revealPage loads roots first if the tree has not mounted (e.g. from Query view)", async () => {
+    expect(useTree.getState().roots).toBeNull();
+    await useTree.getState().revealPage(5);
+    const s = useTree.getState();
+    expect(s.roots).not.toBeNull();                        // roots loaded on demand
+    expect(s.selectedPage).toBe(5);
+    expect(s.expanded.has("r:2")).toBe(true);              // ancestor still expanded
+  });
+
   it("toggle collapses an already-expanded node", async () => {
     await useTree.getState().loadRoots();
     const t = useTree.getState().roots!.find((r) => r.page === 2)!;

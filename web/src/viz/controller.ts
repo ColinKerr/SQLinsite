@@ -64,7 +64,7 @@ export class CanvasController {
     ro.observe(this.stage);
     this.cleanups.push(() => ro.disconnect());
 
-    this.cleanups.push(this.store.subscribe(() => { this.consumePending(); this.scheduleRender(); }));
+    this.cleanups.push(this.store.subscribe(() => { this.scheduleRender(); }));
 
     this.addListener(this.canvas, "wheel", this.onWheel as EventListener, { passive: false });
     this.addListener(this.canvas, "mousemove", this.onMouseMove as EventListener);
@@ -75,16 +75,6 @@ export class CanvasController {
     this.initMinimap();
 
     this.resize();
-    this.consumePending();
-  }
-
-  // Honors a cross-view navigation request (e.g. clicking a page badge in the
-  // Query results): scroll the Pages view to the requested page, then clear it.
-  private consumePending() {
-    const n = this.s.pendingPage;
-    if (n == null || this.s.view !== "pages") return;
-    this.store.getState().clearPendingPage();
-    this.goToPage(n);
   }
 
   unmount() {

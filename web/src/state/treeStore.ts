@@ -104,6 +104,9 @@ export const useTree = create<TreeState>((set, get) => ({
   // path from a b-tree root). Freelist/other targets just select (path degrades).
   async revealPage(page) {
     void get().selectPage(page);
+    // The tree view may not have mounted yet (e.g. revealed from the Query view),
+    // so ensure the roots exist before walking the ancestor path.
+    if (!get().roots) await get().loadRoots();
     const r = await fetchTreePath(page);
     const path = r?.path ?? [];
     const root = path.length ? get().roots?.find((n) => n.kind === "page" && n.page === path[0].page) : undefined;

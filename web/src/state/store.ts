@@ -22,7 +22,6 @@ export interface VizState {
   leafCount: number;
   profile: Profile;
   legendWidth: number;
-  pendingPage: number | null; // page to scroll to once the Pages canvas mounts
 
   initFromMeta(meta: Meta, allRuns: Run[], profile: Profile): void;
   setView(v: View): void;
@@ -31,8 +30,6 @@ export interface VizState {
   setLeaves(next: Set<number>): void;
   setLegendWidth(w: number): void;
   reloadProfile(): Promise<void>;
-  requestPage(n: number): void;     // switch to Pages view and scroll to page n
-  clearPendingPage(): void;
 }
 
 const creator: StateCreator<VizState> = (set, get) => ({
@@ -51,7 +48,6 @@ const creator: StateCreator<VizState> = (set, get) => ({
   leafCount: 0,
   profile: Profile.empty(),
   legendWidth: 240,
-  pendingPage: null,
 
   initFromMeta(meta, allRuns, profile) {
     const objById = new Map(meta.objects.map((o) => [o.id, o] as const));
@@ -77,8 +73,6 @@ const creator: StateCreator<VizState> = (set, get) => ({
   setMetric: (m) => set({ metric: m }),
   setLeaves: (next) => set({ selLeaves: new Set(next) }),
   setLegendWidth: (w) => set({ legendWidth: w }),
-  requestPage: (n) => set({ view: "pages", pendingPage: n }),
-  clearPendingPage: () => set({ pendingPage: null }),
 
   async reloadProfile() {
     const s = get();

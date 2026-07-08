@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { PageDetail, SchemaColumn, SchemaTable, SchemaView } from "../core/types.ts";
 import { useViz } from "../state/store.ts";
 import { useQuery } from "../state/queryStore.ts";
+import { useTree } from "../state/treeStore.ts";
 import { fetchPage } from "../core/api.ts";
 import { colorForPageNumber } from "../core/palette.ts";
 import { formatCellText } from "../core/columnFit.ts";
@@ -91,8 +92,12 @@ function ViewNode({ v }: { v: SchemaView }) {
 function CellDetailsPanel() {
   const selectedCell = useQuery((s) => s.selectedCell);
   const setSelectedCell = useQuery((s) => s.setSelectedCell);
-  const requestPage = useViz((s) => s.requestPage);
+  const setView = useViz((s) => s.setView);
+  const revealPage = useTree((s) => s.revealPage);
   const [details, setDetails] = useState<Record<number, PageDetail | null>>({});
+
+  // Open the b-tree tree view and expand+select the node for this page.
+  const goToPage = (p: number) => { setView("tree"); void revealPage(p); };
 
   const pages = selectedCell?.pages ?? [];
   useEffect(() => {
@@ -126,7 +131,7 @@ function CellDetailsPanel() {
         return (
           <div className="cd-page" key={p}>
             <span className="cd-swatch" style={{ background: colorForPageNumber(p) }} />
-            <button className="cd-link" onClick={() => requestPage(p)}>Go to page {p}</button>
+            <button className="cd-link" onClick={() => goToPage(p)}>Go to page {p}</button>
             {d && (
               <span className="cd-meta">
                 {d.pageType}
