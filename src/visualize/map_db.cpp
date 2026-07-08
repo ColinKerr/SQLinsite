@@ -356,6 +356,21 @@ std::string MapDb::pageType(std::int64_t page) const {
     return r[0]["pageType"].get<std::string>();
 }
 
+std::int64_t MapDb::overflowOwner(std::int64_t page) const {
+    // Walk overflow pointers up to the first non-overflow page (the owner). One
+    // recursive CTE; the depth bound guards against cycles in a malformed map.
+    const std::string sql =
+        "WITH RECURSIVE up(pg, depth) AS ("
+        " SELECT ?1, 0"
+        " UNION ALL"
+        " SELECT p.fromPage, up.depth+1 FROM up JOIN pointers p "
+        "  ON p.toPage=up.pg AND p.kind='overflow' WHERE up.depth<10000"
+        ") SELECT up.pg FROM up JOIN pages ON pages.pageNumber=up.pg "
+        "WHERE pages.pageType<>'overflow' ORDER BY up.depth LIMIT 1";
+    json r = queryRows(db_, sql, {page});
+    return r.empty() ? 0 : r[0]["pg"].get<std::int64_t>();
+}
+
 std::string MapDb::treeRootsJson() const {
     json roots = json::array();
 

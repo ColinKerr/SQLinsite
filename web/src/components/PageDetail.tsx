@@ -55,6 +55,9 @@ export function PageDetail() {
   const cellByIndex = (i?: number) => content.cells.find((c) => c.cellIndex === i);
   const typeName = content.header["typeName"] as string | undefined;
   const pointerType = (toPage: number) => content.pointers.find((p) => p.toPage === toPage)?.pageType;
+  // For an overflow page shown via its owner, the owner's leaf is the "leaf" for
+  // segment colouring (its slice renders white).
+  const leafPage = content.ownerPage ?? content.pageNumber;
   const scrollToRegion = (i: number) =>
     rowRefs.current[i]?.scrollIntoView({ block: "start", behavior: "smooth" });
 
@@ -64,6 +67,8 @@ export function PageDetail() {
       <div className="pd-fixed">
         <div className="pd-head">
           Page {content.pageNumber} · <span className="muted">{content.pageType}</span>
+          {content.ownerPage != null &&
+            <span className="pd-owner">owned by <PageCard page={content.ownerPage} onClick={revealPage} /></span>}
           <span className="pd-desc">{pageTypeDesc(content.pageType)}</span>
         </div>
 
@@ -94,7 +99,7 @@ export function PageDetail() {
       <div className="pd-scroll">
         <div className="pd-table">
           {content.regions.map((r, i) => {
-            const cell = r.kind === "cell" ? cellByIndex(r.cellIndex) : undefined;
+            const cell = r.cellIndex != null ? cellByIndex(r.cellIndex) : undefined;
             return (
               <div key={i} ref={(el) => { rowRefs.current[i] = el; }}
                    className={"pd-row" + (hover === i ? " hi" : "")}
@@ -104,7 +109,7 @@ export function PageDetail() {
                   <span className="pd-rkind">{regionLabel(r.kind)}{r.cellIndex != null ? ` #${r.cellIndex}` : ""}</span>
                   <span className="pd-range muted">{r.offset}–{r.offset + r.length} ({r.length}B)</span>
                 </div>
-                {cell && <CellData cell={cell} onNav={revealPage} typeOf={pointerType} leafPage={content.pageNumber} />}
+                {cell && <CellData cell={cell} onNav={revealPage} typeOf={pointerType} leafPage={leafPage} />}
               </div>
             );
           })}

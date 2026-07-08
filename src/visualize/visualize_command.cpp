@@ -162,8 +162,61 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
                    [&db, content](const httplib::Request& req, httplib::Response& res) {
                        const std::int64_t n = std::stoll(req.matches[1].str());
                        const std::string type = db.pageType(n);
-                       std::string body = type.empty() ? std::string()
-                           : content->pageJson(n, type, [&db](std::int64_t p) { return db.pageType(p); });
+                       auto typeOf = [&db](std::int64_t p) { return db.pageType(p); };
+                       std::string body = type.empty() ? std::string() : content->pageJson(n, type, typeOf);
+                       // Interpret an overflow page through its owning leaf/interior
+                       // page: show the owning cell's decoded record for this page.
+                       if (!body.empty() && type == "overflow") {
+                           const std::int64_t owner = db.overflowOwner(n);
+                           if (owner > 0) {
+                               try {
+                                   nlohmann::json ovf = nlohmann::json::parse(body);
+                                   nlohmann::json own = nlohmann::json::parse(
+                                       content->pageJson(owner, db.pageType(owner), typeOf));
+                                   nlohmann::json owningCell;  // the cell whose value reaches this page
+                                   for (const auto& cell : own.value("cells", nlohmann::json::array())) {
+                                       bool match = false;
+                                       for (const auto& col : cell.value("columns", nlohmann::json::array()))
+                                           for (const auto& seg : col.value("segments", nlohmann::json::array()))
+                                               if (seg.value("page", std::int64_t{0}) == n) match = true;
+                                       if (match) { owningCell = cell; break; }
+                                   }
+                                   ovf["ownerPage"] = owner;
+                                   if (!owningCell.is_null()) {
+                                       // Restrict the owning cell to just the data that
+                                       // physically lives on THIS overflow page: keep only
+                                       // columns with a segment on page n, reduced to that
+                                       // page's slice.
+                                       nlohmann::json cols = nlohmann::json::array();
+                                       for (const auto& col :
+                                            owningCell.value("columns", nlohmann::json::array())) {
+                                           nlohmann::json seg;
+                                           for (const auto& s : col.value("segments", nlohmann::json::array()))
+                                               if (s.value("page", std::int64_t{0}) == n) { seg = s; break; }
+                                           if (seg.is_null()) continue;
+                                           nlohmann::json c = col;
+                                           c.erase("segments");
+                                           c.erase("fromOverflow");
+                                           c["bytes"] = seg.value("bytes", 0);
+                                           if (col.value("type", std::string()) == "text") {
+                                               c["value"] = seg.value("text", std::string());
+                                               c["truncated"] = false;
+                                           }
+                                           cols.push_back(std::move(c));
+                                       }
+                                       owningCell["columns"] = std::move(cols);
+                                       const std::int64_t ci = owningCell.value("cellIndex", std::int64_t{-1});
+                                       ovf["cells"] = nlohmann::json::array({owningCell});
+                                       for (auto& region : ovf["regions"])
+                                           if (region.value("kind", std::string()) == "payload")
+                                               region["cellIndex"] = ci;
+                                   }
+                                   body = ovf.dump(-1, ' ', false,
+                                                   nlohmann::json::error_handler_t::replace);
+                               } catch (...) {
+                               }
+                           }
+                       }
                        if (body.empty()) {
                            res.status = 404;
                            res.set_content(R"({"error":"no such page"})", "application/json");

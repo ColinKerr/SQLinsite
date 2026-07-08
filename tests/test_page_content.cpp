@@ -102,3 +102,33 @@ TEST_CASE("page content decodes every page type without throwing") {
     CHECK(sawSerialName);
     CHECK(sawOverflowValue);
 }
+
+TEST_CASE("overflow page is owned by the leaf whose value chains through it") {
+    const Fixture fx = buildFixture();
+    MapDb map(fx.mapPath);
+    PageContent pc = PageContent::open(fx.dbPath);
+    auto typeOf = [&](std::int64_t p) { return map.pageType(p); };
+
+    const auto meta = json::parse(map.metaJson());
+    const std::int64_t pageCount = meta["meta"].value("pageCount", 0);
+
+    std::int64_t overflowPage = 0;
+    for (std::int64_t n = 1; n <= pageCount; ++n) {
+        if (map.pageType(n) == "overflow") { overflowPage = n; break; }
+    }
+    REQUIRE(overflowPage > 0);
+
+    // The owner is a non-overflow page (the table leaf holding the 6000-char row).
+    const std::int64_t owner = map.overflowOwner(overflowPage);
+    REQUIRE(owner > 0);
+    CHECK(map.pageType(owner) != "overflow");
+
+    // The owner has a cell whose value has a segment on this overflow page.
+    const auto own = json::parse(pc.pageJson(owner, map.pageType(owner), typeOf));
+    bool owningCellReaches = false;
+    for (const auto& cell : own.value("cells", json::array()))
+        for (const auto& col : cell.value("columns", json::array()))
+            for (const auto& seg : col.value("segments", json::array()))
+                if (seg.value("page", std::int64_t{0}) == overflowPage) owningCellReaches = true;
+    CHECK(owningCellReaches);
+}

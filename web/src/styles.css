@@ -321,6 +321,7 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
   gap: 8px; padding: 8px 10px; }
 .pd-head { font-weight: 600; }
 .pd-head .pd-desc { display: block; color: var(--muted); font-weight: 400; margin-top: 2px; }
+.pd-owner { margin-left: 8px; font-weight: 400; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
 
 .pd-headerfields { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .pd-field { color: var(--muted); font-family: ui-monospace, monospace; }

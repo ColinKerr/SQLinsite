@@ -66,6 +66,10 @@ public:
     // The map's page-type string for a page, or "" if the page is unknown.
     std::string pageType(std::int64_t page) const;
 
+    // For an overflow page, the leaf/interior page that owns its cell (walks the
+    // overflow chain back to the first non-overflow page). 0 if none/not overflow.
+    std::int64_t overflowOwner(std::int64_t page) const;
+
     // Page Tree view (b-tree structure). All lazy/windowed so nothing enumerates
     // the whole file. Children follow the map's pointer graph.
     // Roots: Page 1, each table/index b-tree, the Freelist, and All other pages.

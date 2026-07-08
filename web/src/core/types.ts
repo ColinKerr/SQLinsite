@@ -183,6 +183,7 @@ export interface PageContent {
   regions: PageRegion[];
   cells: PageCell[];
   pointers: Pointer[];
+  ownerPage?: number; // for an overflow page: the leaf/interior page that owns its cell
 }
 export interface PageDetail {
   pageNumber: number;

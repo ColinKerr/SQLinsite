@@ -62,4 +62,8 @@ Depending on the type and how data is split it should be handled in one of the f
     - If the type is a string, the portion of the value from each overflow page shares the color giving to the clickable page control for that page.
     - If the type is a BLOB the number of bytes in each page are shown as such: `BLOB (42 bytes, 3000 bytes -> p32, 2700 bytes -> p33)` where 42 bytes are in the leaf page and 3000 bytes are in overflow page 32 and 2700 bytes are in overflow page 33.
 
+If an overflow page is selected in the b-tree tree the leaf or internal page that owns the overflow page should be used to interpret the data in the overflow page to show the Full Page Contents of the overflow page. The owning page is shown as a clickable page control ("owned by [p_owner]"). The Full Page Contents shows only the data that physically lives on this overflow page: the owning cell restricted to the column value slices carried by this page (a column with no bytes on this page is omitted, and a column that overflows onto this page shows only its slice — its byte count for a BLOB, its text fragment for a string).
+
+### Page View Detail Key
+
 A key bar describes the color coding; it is fixed at the bottom of the page detail view and does not scroll with the schematic and table content above it.
