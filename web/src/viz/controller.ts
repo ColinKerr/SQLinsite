@@ -27,6 +27,7 @@ export class CanvasController {
 
   private scroll: Record<View, number> = { pages: 0, tables: 0, query: 0, tree: 0 };
   private selected = 0;
+  private lastSelectedObject: number | null = null;
 
   private pagesCache: {
     lod: "pages" | "runs" | null; from: number; to: number;
@@ -64,7 +65,15 @@ export class CanvasController {
     ro.observe(this.stage);
     this.cleanups.push(() => ro.disconnect());
 
-    this.cleanups.push(this.store.subscribe(() => { this.scheduleRender(); }));
+    // Scroll to the history-selected object when it changes (e.g. Back/Forward or
+    // a Navigation-panel click), and re-render on any store change.
+    this.lastSelectedObject = this.s.selectedObject;
+    this.cleanups.push(this.store.subscribe(() => {
+      const o = this.s.selectedObject;
+      if (o != null && o !== this.lastSelectedObject) { void this.navigateToObject(o); }
+      this.lastSelectedObject = o;
+      this.scheduleRender();
+    }));
 
     this.addListener(this.canvas, "wheel", this.onWheel as EventListener, { passive: false });
     this.addListener(this.canvas, "mousemove", this.onMouseMove as EventListener);
@@ -75,6 +84,11 @@ export class CanvasController {
     this.initMinimap();
 
     this.resize();
+    // Restore the selected object after the first layout (bands/cols are ready).
+    if (this.s.selectedObject != null) {
+      const id = this.s.selectedObject;
+      requestAnimationFrame(() => { void this.navigateToObject(id); });
+    }
   }
 
   unmount() {

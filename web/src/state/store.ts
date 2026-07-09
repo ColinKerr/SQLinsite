@@ -22,6 +22,7 @@ export interface VizState {
   leafCount: number;
   profile: Profile;
   legendWidth: number;
+  selectedObject: number | null; // Navigation-panel object id (for history nav)
 
   initFromMeta(meta: Meta, allRuns: Run[], profile: Profile): void;
   setView(v: View): void;
@@ -29,6 +30,7 @@ export interface VizState {
   setMetric(m: Metric): void;
   setLeaves(next: Set<number>): void;
   setLegendWidth(w: number): void;
+  setSelectedObject(id: number | null): void;
   reloadProfile(): Promise<void>;
 }
 
@@ -48,6 +50,7 @@ const creator: StateCreator<VizState> = (set, get) => ({
   leafCount: 0,
   profile: Profile.empty(),
   legendWidth: 240,
+  selectedObject: null,
 
   initFromMeta(meta, allRuns, profile) {
     const objById = new Map(meta.objects.map((o) => [o.id, o] as const));
@@ -73,6 +76,7 @@ const creator: StateCreator<VizState> = (set, get) => ({
   setMetric: (m) => set({ metric: m }),
   setLeaves: (next) => set({ selLeaves: new Set(next) }),
   setLegendWidth: (w) => set({ legendWidth: w }),
+  setSelectedObject: (id) => set({ selectedObject: id }),
 
   async reloadProfile() {
     const s = get();

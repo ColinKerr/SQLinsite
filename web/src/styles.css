@@ -48,6 +48,31 @@ header button, .page-top-bar button {
   border-radius: 5px; padding: 3px 9px; cursor: pointer; min-width: 28px;
 }
 header button:hover, .page-top-bar button:hover { border-color: #5a6068; }
+
+/* History navigator: right-aligned Back/Forward split buttons + dropdowns. */
+.hist-nav { margin-left: auto; }
+.split-btn { position: relative; display: inline-flex; }
+.split-btn .split-main {
+  border-top-right-radius: 0; border-bottom-right-radius: 0; font-size: 15px; line-height: 1;
+}
+.split-btn .split-caret {
+  border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: none;
+  min-width: 0; padding: 3px 5px; font-size: 10px;
+}
+header button.split-main:disabled, header button.split-caret:disabled {
+  opacity: .4; cursor: default; border-color: #444;
+}
+.hist-menu {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 20;
+  background: var(--panel); border: 1px solid #444; border-radius: 6px; padding: 4px;
+  min-width: 170px; max-height: 320px; overflow-y: auto; box-shadow: 0 6px 20px rgba(0,0,0,.4);
+}
+.hist-item {
+  display: block; width: 100%; min-width: 0; text-align: left; white-space: nowrap;
+  background: transparent; border: none; color: var(--ink);
+  padding: 5px 8px; border-radius: 4px; cursor: pointer;
+}
+.hist-item:hover { background: #30343d; }
 #zoom-pct {
   color: var(--muted); font-variant-numeric: tabular-nums;
   min-width: 42px; text-align: right;

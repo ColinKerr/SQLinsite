@@ -3,6 +3,7 @@ import { fetchMeta, fetchProfilePages, fetchRuns } from "./core/api.ts";
 import { Profile } from "./core/profile.ts";
 import { ControllerProvider } from "./state/ControllerContext.tsx";
 import { useViz } from "./state/store.ts";
+import { initHistory, useHistory } from "./state/historyStore.ts";
 import { TopBar } from "./components/TopBar.tsx";
 import { CanvasStage } from "./components/CanvasStage.tsx";
 import { QueryLayout } from "./components/QueryLayout.tsx";
@@ -26,6 +27,11 @@ export default function App() {
         profile = new Profile(data ?? { pages: [] });
       }
       initFromMeta(meta, runs?.runs ?? [], profile);
+      // History navigation: subscribe to nav changes, seed the stack from
+      // localStorage, then restore the position from the URL (or the last one).
+      initHistory();
+      useHistory.getState().hydrate();
+      useHistory.getState().restoreFromUrl();
       setReady(true);
     })();
   }, [initFromMeta]);

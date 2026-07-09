@@ -84,6 +84,9 @@ The top bar should be organized in groups from left to right in this order:
   - Tables button
   - Query button
   - Page Tree button
+- History navigator (right aligned)
+  - Back button
+  - Forwards button
 
 ## Views
 
@@ -98,6 +101,14 @@ All views must handle billions of pages and or rows.  Pages and Tables tabs shar
 -- **Live Views** These views are only active when the mapped SQLite db file is passed in via the `--db-file` parameter.
 - **Query** - Execute queries and see results and how they map to pages in the db.  See QUERY_VIEW.md for more details.
 - **Page Tree** - Shows the b-trees that make up the SQLite db and lets you drill down into the details of each individual page.
+
+## History navigator
+
+The view and the selected node in the navigation panel are added to the URL when opening a view or selecting a node in navigation panel.  A history of prior selected view+node are stored in local storage.
+
+### UI
+
+The user interacts with the history via two split buttons, Back and Forward.  The main portion of each button has a back or forward arrow icon.  The secondary portion of the split button opens a drop down with history in that direction.
 
 ## Behavior & edge cases
 

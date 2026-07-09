@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { colorForObject, GLYPH, STRUCTURAL } from "../core/palette.ts";
 import type { ObjectInfo } from "../core/types.ts";
-import { useController } from "../state/ControllerContext.tsx";
 import { useViz } from "../state/store.ts";
 
 function ObjectRow({ o, child, onClick }: { o: ObjectInfo; child?: boolean; onClick: (id: number) => void }) {
@@ -22,7 +21,6 @@ export function NavigationPanel() {
   const meta = useViz((s) => s.meta);
   const objects = useViz((s) => s.objects);
   const legendWidth = useViz((s) => s.legendWidth);
-  const controller = useController();
   if (!meta) return null;
 
   const counts = new Map((meta.typeCounts || []).map((t) => [t.pageType, t.count] as const));
@@ -35,7 +33,9 @@ export function NavigationPanel() {
     (indexesByTable.get(key) ?? indexesByTable.set(key, []).get(key)!).push(o);
   }
   const claimed = new Set<number>();
-  const go = (id: number) => void controller?.navigateToObject(id);
+  // Record the selection; the canvas controller subscribes to `selectedObject`
+  // and scrolls to it (which also drives history navigation).
+  const go = (id: number) => useViz.getState().setSelectedObject(id);
 
   const rows: ReactNode[] = [];
   for (const o of objects) {
