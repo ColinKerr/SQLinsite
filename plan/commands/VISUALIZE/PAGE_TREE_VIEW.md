@@ -71,11 +71,11 @@ If an overflow page is selected in the b-tree tree the leaf or internal page tha
 Table interior pages have a different layout than Table leaf pages because their cells hold no data and only point to child table interior or table leaf cells.  Cell records are displayed in a table control called the 'Table Interior Cell control' with the following headings:
 
 - 'Cell (record)' - The Cell number.
-- 'Row Ids' - The range of row Ids of the Left Child page.  Includes the row ids from the page referenced by the Left Child's right most pointer.
-  - If only one row id is referenced so as a single id rather than a range
 - 'Row Count' - The number of rows included in the range shown in 'Row Ids'
 - 'Bytes' - The start and stop bytes plus the total number of bytes in the format `start-stop (total B)` e.g. `42-53 (11B)`
-- 'Left Child' - The clickable page control for the page pointed to by the cell
+- 'Page' - The clickable page control for the page pointed to by the cell
+- 'Row Ids' - The range of row Ids of the Page (left child).  Includes the row ids from the page referenced by the Left Child's right most pointer.
+  - If only one row id is referenced so as a single id rather than a range
 
 Hovering over a row in the table highlights the corresponding cell in the Schematic View and vice versa.  Clicking a cell in the Schematic View scrolls and highlights the corresponding row in the Table Interior cell control.
 

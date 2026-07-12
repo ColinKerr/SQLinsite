@@ -42,7 +42,7 @@ function renderControl(setHover = vi.fn()) {
 describe("Table Interior Cell control", () => {
   it("renders the five columns, a row per divider cell, and a rightmost row", () => {
     renderControl();
-    for (const h of ["Cell (record)", "Row Ids", "Row Count", "Bytes", "Left Child"])
+    for (const h of ["Cell (record)", "Row Count", "Bytes", "Page", "Row Ids"])
       expect(screen.getByRole("columnheader", { name: h })).toBeInTheDocument();
 
     const rows = screen.getAllByRole("row");
