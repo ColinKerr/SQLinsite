@@ -1,12 +1,34 @@
-import type { RefObject } from "react";
+import { useMemo, type RefObject } from "react";
+import { type ColumnDef, flexRender, getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import type { PageContent } from "../core/types.ts";
 import { PageCard } from "./PageDetail.tsx";
+
+// One control row: a divider cell, or the synthetic final "rightmost" pointer row.
+interface IntRow {
+  kind: "cell" | "rightmost";
+  label: string;                    // cell number, or "rightmost"
+  count?: number;
+  ranges?: [number, number][];
+  bytesText: string;
+  page?: number;                    // left-child (or rightmost-pointer) page
+  regionIndex: number;              // schematic region this row links to (-1 if none)
+}
+
+// Per-column <td> class (the header/value markup itself comes from the column defs).
+const TD_CLASS: Record<string, string> = { cell: "muted", bytes: "muted", rowids: "int-rowids" };
+
+const bytes = (offset: number, len: number) => `${offset}–${offset + len} (${len}B)`;
+// Rowids aren't contiguous (deletions leave gaps): render the runs as a mix of
+// ranges "s–e" and single ids "s", e.g. "1–4, 6, 11–60".
+const rowRanges = (ranges?: [number, number][]) =>
+  ranges && ranges.length ? ranges.map(([s, e]) => (s === e ? `${s}` : `${s}–${e}`)).join(", ") : "—";
 
 // The "Table Interior Cell control": table-interior pages hold no record data —
 // each divider cell is just a rowid + a child pointer — so they render as a table
 // of Cell (record) / Row Count / Bytes / Page / Row Ids rows (plus a final row for
-// the header's rightmost pointer). Rows link to the Horizontal Schematic: hover
-// highlights the matching cell block and a schematic click highlights the row.
+// the header's rightmost pointer). Headless TanStack Table drives the column model;
+// rows link to the Horizontal Schematic (hover highlights the matching cell block,
+// and a schematic click highlights/scrolls to the row).
 export function TableInteriorCells({ content, hover, setHover, rowRefs, onNav, pointerType }: {
   content: PageContent;
   hover: number | null;
@@ -15,25 +37,48 @@ export function TableInteriorCells({ content, hover, setHover, rowRefs, onNav, p
   onNav: (p: number) => void;
   pointerType: (toPage: number) => string | undefined;
 }) {
-  const regionOf = (cellIndex: number) =>
-    content.regions.findIndex((r) => r.cellIndex === cellIndex);
-  const bytes = (offset: number, len: number) => `${offset}–${offset + len} (${len}B)`;
-  // Rowids aren't contiguous (deletions leave gaps): render the runs as a mix of
-  // ranges "s–e" and single ids "s", e.g. "1–4, 6, 11–60".
-  const rowRanges = (ranges?: [number, number][]) =>
-    ranges && ranges.length ? ranges.map(([s, e]) => (s === e ? `${s}` : `${s}–${e}`)).join(", ") : "—";
+  const data = useMemo<IntRow[]>(() => {
+    const regionOf = (cellIndex: number) =>
+      content.regions.findIndex((r) => r.cellIndex === cellIndex);
+    const rows: IntRow[] = content.cells.map((c) => ({
+      kind: "cell",
+      label: String(c.cellIndex),
+      count: c.rowidCount,
+      ranges: c.rowidRanges,
+      bytesText: bytes(c.offset, c.size),
+      page: c.leftChild,
+      regionIndex: regionOf(c.cellIndex),
+    }));
+    const rightmost = content.header["rightmostPointer"] as number | undefined;
+    if (rightmost != null && rightmost > 0) {
+      const ph = content.regions.find((r) => r.kind === "page-header");
+      rows.push({
+        kind: "rightmost",
+        label: "rightmost",
+        count: content.rightmostRowids?.count,
+        ranges: content.rightmostRowids?.ranges,
+        bytesText: ph ? bytes(ph.offset + ph.length - 4, 4) : "—",
+        page: rightmost,
+        regionIndex: content.regions.findIndex((r) => r.kind === "page-header"),
+      });
+    }
+    return rows;
+  }, [content]);
 
-  const rightmost = content.header["rightmostPointer"] as number | undefined;
-  const ph = content.regions.find((r) => r.kind === "page-header");
-  const phIndex = content.regions.findIndex((r) => r.kind === "page-header");
+  const columns = useMemo<ColumnDef<IntRow>[]>(() => [
+    { id: "cell", header: "Cell (record)", cell: ({ row }) => row.original.label },
+    { id: "count", header: "Row Count", cell: ({ row }) => row.original.count ?? "—" },
+    { id: "bytes", header: "Bytes", cell: ({ row }) => row.original.bytesText },
+    {
+      id: "page", header: "Page",
+      cell: ({ row }) => row.original.page != null
+        ? <PageCard page={row.original.page} pageType={pointerType(row.original.page)} onClick={onNav} />
+        : null,
+    },
+    { id: "rowids", header: "Row Ids", cell: ({ row }) => rowRanges(row.original.ranges) },
+  ], [onNav, pointerType]);
 
-  // A row bound to schematic region `ri`: hover/pin highlight + scroll target.
-  const rowProps = (ri: number, extra = "") => ({
-    ref: (el: HTMLTableRowElement | null) => { if (ri >= 0) rowRefs.current![ri] = el; },
-    className: extra + (hover === ri ? " hi" : ""),
-    onMouseEnter: () => setHover(ri),
-    onMouseLeave: () => setHover(null),
-  });
+  const table = useReactTable({ data, columns, getCoreRowModel: getCoreRowModel() });
 
   return (
     <table className="pd-intcell">
@@ -43,31 +88,31 @@ export function TableInteriorCells({ content, hover, setHover, rowRefs, onNav, p
         </caption>
       )}
       <thead>
-        <tr><th>Cell (record)</th><th>Row Count</th><th>Bytes</th><th>Page</th><th>Row Ids</th></tr>
+        {table.getHeaderGroups().map((hg) => (
+          <tr key={hg.id}>
+            {hg.headers.map((h) => (
+              <th key={h.id}>{flexRender(h.column.columnDef.header, h.getContext())}</th>
+            ))}
+          </tr>
+        ))}
       </thead>
       <tbody>
-        {content.cells.map((c) => {
-          const ri = regionOf(c.cellIndex);
+        {table.getRowModel().rows.map((row) => {
+          const ri = row.original.regionIndex;
+          const base = row.original.kind === "rightmost" ? "int-rightmost" : "int-row";
           return (
-            <tr key={c.cellIndex} {...rowProps(ri, "int-row")}>
-              <td className="muted">{c.cellIndex}</td>
-              <td>{c.rowidCount ?? "—"}</td>
-              <td className="muted">{bytes(c.offset, c.size)}</td>
-              <td>{c.leftChild != null &&
-                <PageCard page={c.leftChild} pageType={pointerType(c.leftChild)} onClick={onNav} />}</td>
-              <td className="int-rowids">{rowRanges(c.rowidRanges)}</td>
+            <tr key={row.id}
+                ref={(el) => { if (ri >= 0) rowRefs.current![ri] = el; }}
+                className={base + (hover === ri ? " hi" : "")}
+                onMouseEnter={() => setHover(ri)} onMouseLeave={() => setHover(null)}>
+              {row.getVisibleCells().map((cell) => (
+                <td key={cell.id} className={TD_CLASS[cell.column.id]}>
+                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                </td>
+              ))}
             </tr>
           );
         })}
-        {rightmost != null && rightmost > 0 && (
-          <tr {...rowProps(phIndex, "int-rightmost")}>
-            <td className="muted">rightmost</td>
-            <td>{content.rightmostRowids?.count ?? "—"}</td>
-            <td className="muted">{ph ? bytes(ph.offset + ph.length - 4, 4) : "—"}</td>
-            <td><PageCard page={rightmost} pageType={pointerType(rightmost)} onClick={onNav} /></td>
-            <td className="int-rowids">{rowRanges(content.rightmostRowids?.ranges)}</td>
-          </tr>
-        )}
       </tbody>
     </table>
   );

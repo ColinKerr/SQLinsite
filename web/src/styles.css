@@ -267,15 +267,20 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .query-canvas { flex: 1 1 auto; display: flex; min-width: 0; }
 
 .results-table { display: flex; flex-direction: column; width: 100%; min-height: 0; font-size: 12px; position: relative; }
-.rt-header { overflow: hidden; background: #1f2229; border-bottom: 1px solid #000; flex: 0 0 auto; }
-.rt-header-inner { display: grid; }
-.rt-th { font-weight: 600; position: relative; }
-.rt-th-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+/* Single scroll container; header row is sticky-top, the `#` column sticky-left. */
 .rt-body { flex: 1 1 auto; overflow: auto; min-height: 0; }
-.rt-cell { position: relative; padding: 3px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-right: 1px solid #2a2e37; }
+.rt-header-row { position: sticky; top: 0; z-index: 3; background: #1f2229; border-bottom: 1px solid #000; }
+.rt-th { font-weight: 600; background: #1f2229; }
+.rt-th-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.rt-cell { box-sizing: border-box; position: absolute; top: 0; padding: 3px 8px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; border-right: 1px solid #2a2e37; }
 .rt-idx { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
-.rt-row:nth-child(even) { background: rgba(255,255,255,.02); }
-.rt-sel { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* Frozen `#` column: sticky-left (not top — it scrolls vertically with its row)
+   with a solid backing so center cells scroll under it. */
+.rt-pin { position: sticky; left: 0; top: auto; z-index: 2; background: #16181d; }
+.rt-pin-head { z-index: 5; background: #1f2229; }
+.rt-even { background: rgba(255,255,255,.02); }
+.rt-sel { outline: 1px solid var(--accent); outline-offset: -1px; z-index: 1; }
 .rt-segs { position: absolute; inset: 0; display: flex; pointer-events: none; }
 .rt-seg { flex: 1 1 0; min-width: 0; }
 .rt-val { position: relative; z-index: 1; }
@@ -342,10 +347,8 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 /* Fixed top: page number, header info, schematic (does not scroll). */
 .pd-fixed { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px;
   padding: 8px 10px 8px; border-bottom: 1px solid #000; }
-/* No top padding: it must not sit above a sticky table header (rows would peek
-   through that strip). The top gap lives on the scrolling content instead. */
 .pd-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column;
-  gap: 8px; padding: 0 10px 8px; }
+  gap: 8px; padding: 0 10px 8px; scroll-padding-top: 32px; }
 .pd-head { font-weight: 600; }
 .pd-head .pd-desc { display: block; color: var(--muted); font-weight: 400; margin-top: 2px; }
 .pd-owner { margin-left: 8px; font-weight: 400; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
@@ -367,7 +370,7 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
   border: 1px solid #000; border-radius: 3px; overflow: hidden; }
 .pd-block { height: 100%; min-width: 1px; border-right: 1px solid rgba(0,0,0,.4); cursor: pointer; }
 .pd-block.hi { outline: 2px solid var(--accent); outline-offset: -2px; }
-.pd-table { min-width: 0; display: flex; flex-direction: column; gap: 2px; padding-top: 8px; }
+.pd-table { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .pd-row { padding: 2px 3px; border-radius: 3px; }
 .pd-row.hi { background: #262a32; }
 .pd-rowhead { display: flex; align-items: center; gap: 8px; }
@@ -384,13 +387,11 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .pd-ctype { white-space: nowrap; font-family: ui-monospace, monospace; }
 .pd-cval { font-family: ui-monospace, monospace; }
 
-/* Table Interior Cell control: divider cells as Cell/Row-Ids/Bytes/Left-Child.
-   `separate` borders (not `collapse`) + z-index keep the sticky header painting
-   above the scrolling rows instead of being overlapped by them. */
+
 .pd-intcell { border-collapse: separate; border-spacing: 0; width: 100%;
   font-family: ui-monospace, monospace; }
 .pd-intcell th { text-align: left; color: var(--muted); font-weight: 400;
-  padding: 2px 8px; position: sticky; top: 0; z-index: 3; background: var(--panel);
+  padding: 2px 8px; position: sticky; top: 0; background: var(--panel);
   box-shadow: inset 0 -1px 0 #2a2e37; }
 .pd-intcell td { border-bottom: 1px solid #23262e; padding: 2px 8px; white-space: nowrap; }
 .pd-intcell tr.int-row, .pd-intcell tr.int-rightmost { cursor: default; }

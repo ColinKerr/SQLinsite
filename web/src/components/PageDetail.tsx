@@ -94,6 +94,28 @@ export function PageDetail() {
                  title={`${regionLabel(r.kind)} — ${r.length} bytes @ ${r.offset}`} />
           ))}
         </div>
+        <div className="pd-head">
+          {(() => {
+            const out: ReactNode[] = [];
+            content.regions.forEach((r, i) => {
+              if (r.kind === "cell") {
+                return;
+              }
+              out.push(
+                <div key={i} ref={(el) => { rowRefs.current[i] = el; }}
+                     className={"pd-row" + (hover === i ? " hi" : "")}
+                     onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
+                  <div className="pd-rowhead">
+                    <span className="pd-swatch" style={{ background: regionColor(r.kind) }} />
+                    <span className="pd-rkind">{regionLabel(r.kind)}</span>
+                    <span className="pd-range muted">{r.offset}–{r.offset + r.length} ({r.length}B)</span>
+                  </div>
+                </div>,
+              );
+            });
+            return out;
+          })()}
+        </div>
       </div>
 
       {/* Full Page Contents (scrolls). Table-interior pages render their divider
@@ -116,19 +138,21 @@ export function PageDetail() {
                 }
                 return;
               }
-              const cell = r.cellIndex != null ? cellByIndex(r.cellIndex) : undefined;
-              out.push(
-                <div key={i} ref={(el) => { rowRefs.current[i] = el; }}
-                     className={"pd-row" + (hover === i ? " hi" : "")}
-                     onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
-                  <div className="pd-rowhead">
-                    <span className="pd-swatch" style={{ background: regionColor(r.kind) }} />
-                    <span className="pd-rkind">{regionLabel(r.kind)}{r.cellIndex != null ? ` #${r.cellIndex}` : ""}</span>
-                    <span className="pd-range muted">{r.offset}–{r.offset + r.length} ({r.length}B)</span>
-                  </div>
-                  {cell && <CellData cell={cell} onNav={revealPage} typeOf={pointerType} leafPage={leafPage} />}
-                </div>,
-              );
+              else if (!isInterior && r.kind === "cell"){
+                const cell = r.cellIndex != null ? cellByIndex(r.cellIndex) : undefined;
+                out.push(
+                  <div key={i} ref={(el) => { rowRefs.current[i] = el; }}
+                      className={"pd-row" + (hover === i ? " hi" : "")}
+                      onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
+                    <div className="pd-rowhead">
+                      <span className="pd-swatch" style={{ background: regionColor(r.kind) }} />
+                      <span className="pd-rkind">{regionLabel(r.kind)}{r.cellIndex != null ? ` #${r.cellIndex}` : ""}</span>
+                      <span className="pd-range muted">{r.offset}–{r.offset + r.length} ({r.length}B)</span>
+                    </div>
+                    {cell && <CellData cell={cell} onNav={revealPage} typeOf={pointerType} leafPage={leafPage} />}
+                  </div>,
+                );
+              }
             });
             return out;
           })()}
