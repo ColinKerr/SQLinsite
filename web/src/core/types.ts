@@ -173,6 +173,11 @@ export interface PageCell {
   overflowPage?: number;
   payloadBytes?: number;
   columns?: PageColumn[];
+  // Table-interior only: the actual rowids in this divider cell's left-child
+  // subtree — a count plus collapsed runs (rowids aren't contiguous: deletions
+  // leave gaps). A run [s, e] with s === e is a single rowid.
+  rowidCount?: number;
+  rowidRanges?: [number, number][];
 }
 export interface PageContent {
   pageNumber: number;
@@ -184,6 +189,10 @@ export interface PageContent {
   cells: PageCell[];
   pointers: Pointer[];
   ownerPage?: number; // for an overflow page: the leaf/interior page that owns its cell
+  // Table-interior only: rowids covered by the rightmost-pointer child, and a
+  // flag when subtree enumeration was capped (very large subtree).
+  rightmostRowids?: { count: number; ranges: [number, number][] };
+  rowidCapped?: boolean;
 }
 export interface PageDetail {
   pageNumber: number;

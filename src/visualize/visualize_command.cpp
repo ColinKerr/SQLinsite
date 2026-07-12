@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -215,6 +216,28 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
                                                    nlohmann::json::error_handler_t::replace);
                                } catch (...) {
                                }
+                           }
+                       }
+                       // Table-interior pages: annotate each divider cell (and the
+                       // rightmost pointer) with the actual rowids of its child
+                       // subtree — a count and collapsed runs (rowids have gaps).
+                       if (!body.empty() && type == "table-interior") {
+                           try {
+                               nlohmann::json j = nlohmann::json::parse(body);
+                               nlohmann::json r = nlohmann::json::parse(db.tableInteriorRowidRangesJson(n));
+                               std::map<std::int64_t, nlohmann::json> byIndex;
+                               for (const auto& e : r.value("cells", nlohmann::json::array()))
+                                   byIndex[e.value("cellIndex", std::int64_t{-1})] = e;
+                               for (auto& cell : j["cells"]) {
+                                   auto it = byIndex.find(cell.value("cellIndex", std::int64_t{-1}));
+                                   if (it == byIndex.end()) continue;
+                                   cell["rowidCount"] = it->second.value("count", std::int64_t{0});
+                                   cell["rowidRanges"] = it->second.value("ranges", nlohmann::json::array());
+                               }
+                               if (r.contains("rightmost")) j["rightmostRowids"] = r["rightmost"];
+                               j["rowidCapped"] = r.value("capped", false);
+                               body = j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+                           } catch (...) {
                            }
                        }
                        if (body.empty()) {

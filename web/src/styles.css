@@ -342,8 +342,10 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 /* Fixed top: page number, header info, schematic (does not scroll). */
 .pd-fixed { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px;
   padding: 8px 10px 8px; border-bottom: 1px solid #000; }
+/* No top padding: it must not sit above a sticky table header (rows would peek
+   through that strip). The top gap lives on the scrolling content instead. */
 .pd-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column;
-  gap: 8px; padding: 8px 10px; }
+  gap: 8px; padding: 0 10px 8px; }
 .pd-head { font-weight: 600; }
 .pd-head .pd-desc { display: block; color: var(--muted); font-weight: 400; margin-top: 2px; }
 .pd-owner { margin-left: 8px; font-weight: 400; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
@@ -365,7 +367,7 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
   border: 1px solid #000; border-radius: 3px; overflow: hidden; }
 .pd-block { height: 100%; min-width: 1px; border-right: 1px solid rgba(0,0,0,.4); cursor: pointer; }
 .pd-block.hi { outline: 2px solid var(--accent); outline-offset: -2px; }
-.pd-table { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pd-table { min-width: 0; display: flex; flex-direction: column; gap: 2px; padding-top: 8px; }
 .pd-row { padding: 2px 3px; border-radius: 3px; }
 .pd-row.hi { background: #262a32; }
 .pd-rowhead { display: flex; align-items: center; gap: 8px; }
@@ -381,6 +383,24 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .pd-coltable td { border-bottom: 1px solid #23262e; padding: 1px 8px; vertical-align: top; }
 .pd-ctype { white-space: nowrap; font-family: ui-monospace, monospace; }
 .pd-cval { font-family: ui-monospace, monospace; }
+
+/* Table Interior Cell control: divider cells as Cell/Row-Ids/Bytes/Left-Child.
+   `separate` borders (not `collapse`) + z-index keep the sticky header painting
+   above the scrolling rows instead of being overlapped by them. */
+.pd-intcell { border-collapse: separate; border-spacing: 0; width: 100%;
+  font-family: ui-monospace, monospace; }
+.pd-intcell th { text-align: left; color: var(--muted); font-weight: 400;
+  padding: 2px 8px; position: sticky; top: 0; z-index: 3; background: var(--panel);
+  box-shadow: inset 0 -1px 0 #2a2e37; }
+.pd-intcell td { border-bottom: 1px solid #23262e; padding: 2px 8px; white-space: nowrap; }
+.pd-intcell tr.int-row, .pd-intcell tr.int-rightmost { cursor: default; }
+.pd-intcell tr.hi td { background: #262a32; }
+.pd-intcell tr.int-rightmost td { border-top: 1px solid #3a3f49; }
+.pd-intcell tr.int-rightmost td:first-child { color: var(--accent); }
+/* The Row Ids column can list many runs — let it wrap instead of overflowing. */
+.pd-intcell td.int-rowids { white-space: normal; word-break: break-word; }
+.pd-intcell caption.int-capped { caption-side: top; text-align: left; color: var(--muted);
+  padding: 2px 8px; font-family: system-ui, sans-serif; }
 .pd-cvaltext { display: inline-block; max-width: 100%; max-height: 96px; overflow: auto;
   white-space: pre-wrap; word-break: break-word; vertical-align: top; }
 /* Overflowing value shown as per-page segments: leaf portion white, each overflow

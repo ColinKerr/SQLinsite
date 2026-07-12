@@ -1,8 +1,9 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useTree } from "../state/treeStore.ts";
 import type { PageCell, PageColumn, PageSegment } from "../core/types.ts";
 import { regionColor, regionLabel, pageTypeDesc } from "../core/pageTypes.ts";
 import { colorForPage, colorForPageNumber, GLYPH } from "../core/palette.ts";
+import { TableInteriorCells } from "./TableInteriorCells.tsx";
 
 function valueText(c: PageColumn): string {
   if (c.type === "null") return "NULL";
@@ -14,7 +15,7 @@ function valueText(c: PageColumn): string {
 // A small graphical page representation matching a b-tree tree node: type glyph +
 // color + page number. Clicking navigates to that page and expands+selects it in
 // the tree.
-function PageCard({ page, pageType, label, colorByNumber, onClick }:
+export function PageCard({ page, pageType, label, colorByNumber, onClick }:
                   { page: number; pageType?: string; label?: string; colorByNumber?: boolean;
                     onClick: (p: number) => void }) {
   // `colorByNumber` gives each page a distinct color (used for overflow value
@@ -40,7 +41,7 @@ export function PageDetail() {
   const selectedPage = useTree((s) => s.selectedPage);
   const revealPage = useTree((s) => s.revealPage);
   const [hover, setHover] = useState<number | null>(null);
-  const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const rowRefs = useRef<(HTMLElement | null)[]>([]);
 
   const kinds = useMemo(() => {
     const set = new Set<string>();
@@ -89,30 +90,48 @@ export function PageDetail() {
             <div key={i} className={"pd-block" + (hover === i ? " hi" : "")}
                  style={{ width: `${(r.length / total) * 100}%`, background: regionColor(r.kind) }}
                  onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}
-                 onClick={() => scrollToRegion(i)}
+                 onClick={() => { scrollToRegion(i); }}
                  title={`${regionLabel(r.kind)} — ${r.length} bytes @ ${r.offset}`} />
           ))}
         </div>
       </div>
 
-      {/* Full Page Contents (scrolls). */}
+      {/* Full Page Contents (scrolls). Table-interior pages render their divider
+          cells as one "Table Interior Cell control" instead of per-cell rows. */}
       <div className="pd-scroll">
         <div className="pd-table">
-          {content.regions.map((r, i) => {
-            const cell = r.cellIndex != null ? cellByIndex(r.cellIndex) : undefined;
-            return (
-              <div key={i} ref={(el) => { rowRefs.current[i] = el; }}
-                   className={"pd-row" + (hover === i ? " hi" : "")}
-                   onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
-                <div className="pd-rowhead">
-                  <span className="pd-swatch" style={{ background: regionColor(r.kind) }} />
-                  <span className="pd-rkind">{regionLabel(r.kind)}{r.cellIndex != null ? ` #${r.cellIndex}` : ""}</span>
-                  <span className="pd-range muted">{r.offset}–{r.offset + r.length} ({r.length}B)</span>
-                </div>
-                {cell && <CellData cell={cell} onNav={revealPage} typeOf={pointerType} leafPage={leafPage} />}
-              </div>
-            );
-          })}
+          {(() => {
+            const isInterior = content.pageType === "table-interior";
+            const out: ReactNode[] = [];
+            let interiorDone = false;
+            content.regions.forEach((r, i) => {
+              if (isInterior && r.kind === "cell") {
+                if (!interiorDone) {
+                  interiorDone = true;
+                  out.push(
+                    <TableInteriorCells key="int" content={content} hover={hover}
+                                        setHover={setHover} rowRefs={rowRefs} onNav={revealPage}
+                                        pointerType={pointerType} />,
+                  );
+                }
+                return;
+              }
+              const cell = r.cellIndex != null ? cellByIndex(r.cellIndex) : undefined;
+              out.push(
+                <div key={i} ref={(el) => { rowRefs.current[i] = el; }}
+                     className={"pd-row" + (hover === i ? " hi" : "")}
+                     onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
+                  <div className="pd-rowhead">
+                    <span className="pd-swatch" style={{ background: regionColor(r.kind) }} />
+                    <span className="pd-rkind">{regionLabel(r.kind)}{r.cellIndex != null ? ` #${r.cellIndex}` : ""}</span>
+                    <span className="pd-range muted">{r.offset}–{r.offset + r.length} ({r.length}B)</span>
+                  </div>
+                  {cell && <CellData cell={cell} onNav={revealPage} typeOf={pointerType} leafPage={leafPage} />}
+                </div>,
+              );
+            });
+            return out;
+          })()}
         </div>
       </div>
 

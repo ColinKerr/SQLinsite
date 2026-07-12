@@ -62,7 +62,22 @@ Depending on the type and how data is split it should be handled in one of the f
     - If the type is a string, the portion of the value from each overflow page shares the color giving to the clickable page control for that page.
     - If the type is a BLOB the number of bytes in each page are shown as such: `BLOB (42 bytes, 3000 bytes -> p32, 2700 bytes -> p33)` where 42 bytes are in the leaf page and 3000 bytes are in overflow page 32 and 2700 bytes are in overflow page 33.
 
+#### Overflow Pages
+
 If an overflow page is selected in the b-tree tree the leaf or internal page that owns the overflow page should be used to interpret the data in the overflow page to show the Full Page Contents of the overflow page. The owning page is shown as a clickable page control ("owned by [p_owner]"). The Full Page Contents shows only the data that physically lives on this overflow page: the owning cell restricted to the column value slices carried by this page (a column with no bytes on this page is omitted, and a column that overflows onto this page shows only its slice — its byte count for a BLOB, its text fragment for a string).
+
+#### Table Interior Pages
+
+Table interior pages have a different layout than Table leaf pages because their cells hold no data and only point to child table interior or table leaf cells.  Cell records are displayed in a table control called the 'Table Interior Cell control' with the following headings:
+
+- 'Cell (record)' - The Cell number.
+- 'Row Ids' - The range of row Ids of the Left Child page.  Includes the row ids from the page referenced by the Left Child's right most pointer.
+  - If only one row id is referenced so as a single id rather than a range
+- 'Row Count' - The number of rows included in the range shown in 'Row Ids'
+- 'Bytes' - The start and stop bytes plus the total number of bytes in the format `start-stop (total B)` e.g. `42-53 (11B)`
+- 'Left Child' - The clickable page control for the page pointed to by the cell
+
+Hovering over a row in the table highlights the corresponding cell in the Schematic View and vice versa.  Clicking a cell in the Schematic View scrolls and highlights the corresponding row in the Table Interior cell control.
 
 ### Page View Detail Key
 

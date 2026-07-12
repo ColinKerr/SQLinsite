@@ -2,6 +2,8 @@
 
 #include <cstdio>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
@@ -39,6 +41,64 @@ Fixture buildFixture() {
         sqlite3_reset(st);
     }
     sqlite3_finalize(st);
+    sqlite3_close(db);
+    REQUIRE(runMap(MapOptions{fx.dbPath, fx.mapPath}) == 0);
+    return fx;
+}
+
+// A table big enough to force a multi-level b-tree (an interior root page).
+Fixture buildInteriorFixture() {
+    Fixture fx;
+    fx.dbPath = tmpPath("pc_int.db");
+    fx.mapPath = tmpPath("pc_int.sqlite");
+    std::remove(fx.dbPath.c_str());
+    std::remove(fx.mapPath.c_str());
+
+    sqlite3* db = nullptr;
+    REQUIRE(sqlite3_open(fx.dbPath.c_str(), &db) == SQLITE_OK);
+    REQUIRE(sqlite3_exec(db, "CREATE TABLE T(id INTEGER PRIMARY KEY, s TEXT)",
+                         nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_stmt* st = nullptr;
+    REQUIRE(sqlite3_prepare_v2(db, "INSERT INTO T(id,s) VALUES (?,?)", -1, &st, nullptr) == SQLITE_OK);
+    const std::string pad(60, 'x');
+    for (int i = 1; i <= 5000; ++i) {
+        sqlite3_bind_int(st, 1, i);
+        sqlite3_bind_text(st, 2, pad.c_str(), -1, SQLITE_STATIC);
+        REQUIRE(sqlite3_step(st) == SQLITE_DONE);
+        sqlite3_reset(st);
+    }
+    sqlite3_finalize(st);
+    sqlite3_close(db);
+    REQUIRE(runMap(MapOptions{fx.dbPath, fx.mapPath}) == 0);
+    return fx;
+}
+
+// Like buildInteriorFixture but with scattered deletions so rowids are NOT
+// contiguous (every 7th id, plus the block 100..139 removed).
+Fixture buildGappyInteriorFixture() {
+    Fixture fx;
+    fx.dbPath = tmpPath("pc_gap.db");
+    fx.mapPath = tmpPath("pc_gap.sqlite");
+    std::remove(fx.dbPath.c_str());
+    std::remove(fx.mapPath.c_str());
+
+    sqlite3* db = nullptr;
+    REQUIRE(sqlite3_open(fx.dbPath.c_str(), &db) == SQLITE_OK);
+    REQUIRE(sqlite3_exec(db, "CREATE TABLE T(id INTEGER PRIMARY KEY, s TEXT)",
+                         nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_stmt* st = nullptr;
+    REQUIRE(sqlite3_prepare_v2(db, "INSERT INTO T(id,s) VALUES (?,?)", -1, &st, nullptr) == SQLITE_OK);
+    const std::string pad(60, 'x');
+    for (int i = 1; i <= 5000; ++i) {
+        sqlite3_bind_int(st, 1, i);
+        sqlite3_bind_text(st, 2, pad.c_str(), -1, SQLITE_STATIC);
+        REQUIRE(sqlite3_step(st) == SQLITE_DONE);
+        sqlite3_reset(st);
+    }
+    sqlite3_finalize(st);
+    REQUIRE(sqlite3_exec(db,
+                         "DELETE FROM T WHERE id % 7 = 1 OR id BETWEEN 100 AND 139",
+                         nullptr, nullptr, nullptr) == SQLITE_OK);
     sqlite3_close(db);
     REQUIRE(runMap(MapOptions{fx.dbPath, fx.mapPath}) == 0);
     return fx;
@@ -131,4 +191,87 @@ TEST_CASE("overflow page is owned by the leaf whose value chains through it") {
             for (const auto& seg : col.value("segments", json::array()))
                 if (seg.value("page", std::int64_t{0}) == overflowPage) owningCellReaches = true;
     CHECK(owningCellReaches);
+}
+
+namespace {
+std::int64_t firstInteriorPage(const MapDb& map) {
+    const auto meta = json::parse(map.metaJson());
+    const std::int64_t pageCount = meta["meta"].value("pageCount", 0);
+    for (std::int64_t n = 1; n <= pageCount; ++n)
+        if (map.pageType(n) == "table-interior") return n;
+    return 0;
+}
+}  // namespace
+
+TEST_CASE("table-interior rowid runs/counts cover a contiguous table end to end") {
+    const Fixture fx = buildInteriorFixture();
+    MapDb map(fx.mapPath);
+    const std::int64_t interior = firstInteriorPage(map);
+    REQUIRE(interior > 0);
+
+    const auto r = json::parse(map.tableInteriorRowidRangesJson(interior));
+    CHECK(r["capped"].get<bool>() == false);
+    const auto& cells = r["cells"];
+    REQUIRE(cells.size() >= 1);
+
+    // No deletions: each child is one contiguous run, runs are adjacent & ascending.
+    std::int64_t sum = 0, prevHigh = 0;
+    const std::int64_t firstLow = cells[0]["ranges"][0][0].get<std::int64_t>();
+    for (std::size_t i = 0; i < cells.size(); ++i) {
+        REQUIRE(cells[i]["ranges"].size() == 1);
+        const std::int64_t lo = cells[i]["ranges"][0][0].get<std::int64_t>();
+        const std::int64_t hi = cells[i]["ranges"][0][1].get<std::int64_t>();
+        CHECK(cells[i]["count"].get<std::int64_t>() == hi - lo + 1);
+        if (i > 0) CHECK(lo == prevHigh + 1);
+        prevHigh = hi;
+        sum += cells[i]["count"].get<std::int64_t>();
+    }
+    const auto& rm = r["rightmost"];
+    REQUIRE(rm["ranges"].size() == 1);
+    CHECK(rm["ranges"][0][0].get<std::int64_t>() == prevHigh + 1);
+    sum += rm["count"].get<std::int64_t>();
+
+    CHECK(firstLow == 1);
+    CHECK(rm["ranges"][0][1].get<std::int64_t>() == 5000);
+    CHECK(sum == 5000);  // every rowid is accounted for exactly once
+}
+
+TEST_CASE("table-interior counts individual rowids and splits runs at gaps") {
+    const Fixture fx = buildGappyInteriorFixture();  // deletes id%7==1 and 100..139
+    MapDb map(fx.mapPath);
+    const std::int64_t interior = firstInteriorPage(map);
+    REQUIRE(interior > 0);
+
+    const auto r = json::parse(map.tableInteriorRowidRangesJson(interior));
+    const auto& cells = r["cells"];
+
+    // Collect every run across cells + rightmost.
+    std::vector<std::pair<std::int64_t, std::int64_t>> runs;
+    std::int64_t sum = 0;
+    bool anyMultiRun = false;
+    for (const auto& c : cells) {
+        sum += c["count"].get<std::int64_t>();
+        if (c["ranges"].size() > 1) anyMultiRun = true;
+        for (const auto& run : c["ranges"])
+            runs.emplace_back(run[0].get<std::int64_t>(), run[1].get<std::int64_t>());
+    }
+    sum += r["rightmost"]["count"].get<std::int64_t>();
+    for (const auto& run : r["rightmost"]["ranges"])
+        runs.emplace_back(run[0].get<std::int64_t>(), run[1].get<std::int64_t>());
+
+    auto covered = [&](std::int64_t id) {
+        for (const auto& [lo, hi] : runs) if (id >= lo && id <= hi) return true;
+        return false;
+    };
+
+    // Count excludes the 750 deleted rows; gaps split runs, so some cell has >1 run.
+    CHECK(sum == 4250);
+    CHECK(anyMultiRun);
+    // Deleted ids are absent; surviving neighbours are present.
+    CHECK_FALSE(covered(1));    // id%7==1
+    CHECK_FALSE(covered(8));
+    CHECK_FALSE(covered(120));  // inside the deleted 100..139 block
+    CHECK(covered(2));
+    CHECK(covered(98));   // survives (98 % 7 == 0), just below the deleted block
+    CHECK(covered(140));  // survives, just above the deleted block
 }

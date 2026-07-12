@@ -70,6 +70,14 @@ public:
     // overflow chain back to the first non-overflow page). 0 if none/not overflow.
     std::int64_t overflowOwner(std::int64_t page) const;
 
+    // For a table-interior page: the actual rowids covered by each divider cell's
+    // left child and by the rightmost-pointer child, as collapsed runs plus a
+    // count (rowids aren't contiguous — deletions leave gaps). Enumeration is
+    // capped for very large subtrees. JSON:
+    // {"cells":[{"cellIndex","count","ranges":[[lo,hi]...]}...],
+    //  "rightmost":{"count","ranges"}, "capped":bool}.
+    std::string tableInteriorRowidRangesJson(std::int64_t page) const;
+
     // Page Tree view (b-tree structure). All lazy/windowed so nothing enumerates
     // the whole file. Children follow the map's pointer graph.
     // Roots: Page 1, each table/index b-tree, the Freelist, and All other pages.

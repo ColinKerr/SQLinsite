@@ -1,6 +1,5 @@
 #include "visualize/map_db.hpp"
 
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -369,6 +368,81 @@ std::int64_t MapDb::overflowOwner(std::int64_t page) const {
         "WHERE pages.pageType<>'overflow' ORDER BY up.depth LIMIT 1";
     json r = queryRows(db_, sql, {page});
     return r.empty() ? 0 : r[0]["pg"].get<std::int64_t>();
+}
+
+std::string MapDb::tableInteriorRowidRangesJson(std::int64_t page) const {
+    // Every divider cell must appear in the output (even a child whose whole
+    // subtree was deleted, giving 0 rowids), so enumerate the cells up front.
+    json cellRows = queryRows(
+        db_, "SELECT cellIndex FROM cells WHERE pageNumber=? ORDER BY cellIndex", {page});
+    std::vector<std::int64_t> cellIndexOf;  // cellIndexOf[bucket] for bucket 0..k-1
+    for (const auto& c : cellRows)
+        if (c["cellIndex"].is_number()) cellIndexOf.push_back(c["cellIndex"].get<std::int64_t>());
+    const std::size_t k = cellIndexOf.size();
+
+    // One recursive query does the whole computation (rowids aren't contiguous —
+    // deletions leave gaps): descend to the subtree's leftmost/rightmost leaf for
+    // its rowid span, enumerate the leaf rowids in that span (capped so a huge
+    // subtree can't stall the request), bucket each rowid by the divider it falls
+    // under (bucket = #dividers below it; bucket k == the rightmost-pointer child),
+    // and collapse consecutive rowids into runs (a gaps-and-islands GROUP BY).
+    // Returns one row per run: (bucket, lo, hi, cnt).
+    const std::int64_t cap = 200000;
+    const std::string sql =
+        "WITH RECURSIVE"
+        " lo_desc(pg, depth) AS ("
+        "  SELECT ?1, 0"
+        "  UNION ALL"
+        "  SELECT c.leftChild, lo_desc.depth+1 FROM lo_desc"
+        "   JOIN pages p ON p.pageNumber=lo_desc.pg AND p.pageType='table-interior'"
+        "   JOIN cells c ON c.pageNumber=lo_desc.pg AND c.cellIndex=0"
+        "   WHERE lo_desc.depth<10000),"
+        " hi_desc(pg, depth) AS ("
+        "  SELECT ?1, 0"
+        "  UNION ALL"
+        "  SELECT p.rightmostPointer, hi_desc.depth+1 FROM hi_desc"
+        "   JOIN pages p ON p.pageNumber=hi_desc.pg AND p.pageType='table-interior'"
+        "   WHERE hi_desc.depth<10000 AND p.rightmostPointer>0),"
+        " bounds(plo, phi) AS (SELECT"
+        "  (SELECT p.rowidMin FROM lo_desc JOIN pages p ON p.pageNumber=lo_desc.pg"
+        "    WHERE p.pageType<>'table-interior' ORDER BY lo_desc.depth DESC LIMIT 1),"
+        "  (SELECT p.rowidMax FROM hi_desc JOIN pages p ON p.pageNumber=hi_desc.pg"
+        "    WHERE p.pageType<>'table-interior' ORDER BY hi_desc.depth DESC LIMIT 1)),"
+        " dividers(div) AS (SELECT rowid FROM cells WHERE pageNumber=?1),"
+        " rids(rid) AS ("
+        "  SELECT c.rowid FROM cells c JOIN pages p ON p.pageNumber=c.pageNumber"
+        "   WHERE p.objectId=(SELECT objectId FROM pages WHERE pageNumber=?1)"
+        "     AND p.pageType='table-leaf'"
+        "     AND c.rowid BETWEEN (SELECT plo FROM bounds) AND (SELECT phi FROM bounds)"
+        "   ORDER BY c.rowid LIMIT ?2),"
+        " bucketed(rid, bucket) AS ("
+        "  SELECT rid, (SELECT COUNT(*) FROM dividers WHERE div<rid) FROM rids),"
+        " islands(rid, bucket, grp) AS ("
+        "  SELECT rid, bucket, rid - ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY rid)"
+        "   FROM bucketed)"
+        " SELECT bucket, MIN(rid) AS lo, MAX(rid) AS hi, COUNT(*) AS cnt"
+        " FROM islands GROUP BY bucket, grp ORDER BY bucket, lo";
+    json runs = queryRows(db_, sql, {page, cap + 1});
+
+    std::vector<std::int64_t> counts(k + 1, 0);   // bucket k == rightmost child
+    std::vector<json> ranges(k + 1, json::array());
+    std::int64_t total = 0;
+    for (const auto& r : runs) {
+        if (!r["bucket"].is_number()) continue;
+        std::int64_t b = r["bucket"].get<std::int64_t>();
+        if (b < 0 || b > static_cast<std::int64_t>(k)) continue;  // defensive
+        ranges[b].push_back(json::array({r["lo"], r["hi"]}));
+        counts[b] += r["cnt"].get<std::int64_t>();
+        total += r["cnt"].get<std::int64_t>();
+    }
+    const bool capped = total > cap;
+
+    json out = {{"cells", json::array()}, {"capped", capped}};
+    for (std::size_t i = 0; i < k; ++i)
+        out["cells"].push_back(
+            {{"cellIndex", cellIndexOf[i]}, {"count", counts[i]}, {"ranges", ranges[i]}});
+    out["rightmost"] = {{"count", counts[k]}, {"ranges", ranges[k]}};
+    return out.dump();
 }
 
 std::string MapDb::treeRootsJson() const {
