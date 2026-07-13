@@ -79,8 +79,8 @@ TEST_CASE("cell→page mapping is per column, spanning overflow pages") {
 }
 
 TEST_CASE("rowid→leaf mapping never returns table-interior pages") {
-    // A table large enough to have a multi-level b-tree: divider rowids appear on
-    // interior pages too, so the mapping must resolve to leaf pages only.
+    // A table large enough to have a multi-level b-tree. The rowid→leaf mapping
+    // must resolve only to the table-leaf pages where rows actually live.
     const std::string dbPath = tmpPath("cpm_big.db");
     const std::string mapPath = tmpPath("cpm_big.sqlite");
     std::remove(dbPath.c_str());
@@ -126,17 +126,22 @@ TEST_CASE("rowid→leaf mapping never returns table-interior pages") {
 
     CHECK_FALSE(sawInterior);
 
-    // The hazard is real: interior-page cells carry divider rowids in `cells`,
-    // which is exactly what the leaf-page filter must exclude.
+    // rowid is a table-leaf-only concept: this multi-level b-tree HAS interior
+    // cells, but none of them carries a rowid in the map (their divider keys are
+    // boundaries, not real rowids, so they are left NULL).
     sqlite3* mdb2 = nullptr;
     REQUIRE(sqlite3_open_v2(mapPath.c_str(), &mdb2, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
-    sqlite3_stmt* ic = nullptr;
-    REQUIRE(sqlite3_prepare_v2(mdb2,
-                               "SELECT count(*) FROM cells c JOIN pages p ON p.pageNumber=c.pageNumber "
-                               "WHERE c.rowid IS NOT NULL AND p.pageType='table-interior'",
-                               -1, &ic, nullptr) == SQLITE_OK);
-    REQUIRE(sqlite3_step(ic) == SQLITE_ROW);
-    CHECK(sqlite3_column_int(ic, 0) >= 1);
-    sqlite3_finalize(ic);
+    auto countCells = [&](const char* where) {
+        sqlite3_stmt* s = nullptr;
+        const std::string sql =
+            std::string("SELECT count(*) FROM cells c JOIN pages p ON p.pageNumber=c.pageNumber WHERE ") + where;
+        REQUIRE(sqlite3_prepare_v2(mdb2, sql.c_str(), -1, &s, nullptr) == SQLITE_OK);
+        REQUIRE(sqlite3_step(s) == SQLITE_ROW);
+        const int n = sqlite3_column_int(s, 0);
+        sqlite3_finalize(s);
+        return n;
+    };
+    CHECK(countCells("p.pageType='table-interior'") >= 1);                        // interior cells exist
+    CHECK(countCells("c.rowid IS NOT NULL AND p.pageType='table-interior'") == 0); // but none has a rowid
     sqlite3_close(mdb2);
 }

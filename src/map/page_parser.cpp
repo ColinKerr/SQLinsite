@@ -106,9 +106,11 @@ PageInfo parseBtree(const DbFile& db, std::int64_t pageNumber) {
         std::size_t remaining = static_cast<std::size_t>(pageSize - cell);
 
         if (tableInterior) {
+            // Interior cells carry a 4-byte left-child pointer and an integer
+            // divider key. That key is a b-tree boundary (it can even be stale
+            // after deletions), NOT a real row's rowid — rowid is a table-leaf-only
+            // concept, so it is deliberately left unset here.
             c.leftChild = sqlfmt::readBE32(p);
-            const sqlfmt::Varint rowid = sqlfmt::readVarint(p + 4, remaining - 4);
-            c.rowid = static_cast<std::int64_t>(rowid.value);
             info.pointers.push_back({*c.leftChild, "child"});
         } else if (tableLeaf) {
             const sqlfmt::Varint payload = sqlfmt::readVarint(p, remaining);
@@ -156,10 +158,6 @@ PageInfo parseBtree(const DbFile& db, std::int64_t pageNumber) {
             (void)indexLeaf;
         }
 
-        if (c.rowid) {
-            info.rowidMin = info.rowidMin ? std::min(*info.rowidMin, *c.rowid) : *c.rowid;
-            info.rowidMax = info.rowidMax ? std::max(*info.rowidMax, *c.rowid) : *c.rowid;
-        }
         info.cells.push_back(std::move(c));
     }
 

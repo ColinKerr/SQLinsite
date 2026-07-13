@@ -62,8 +62,6 @@ struct PageInfo {
     PageHeaderInfo header;
     std::int64_t freeBytes = 0;
     std::vector<CellInfo> cells;
-    std::optional<std::int64_t> rowidMin;
-    std::optional<std::int64_t> rowidMax;
     std::vector<Pointer> pointers;
     std::vector<PtrmapEntry> ptrmapEntries;
     std::optional<std::string> parseError;

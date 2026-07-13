@@ -18,7 +18,7 @@ beforeEach(() => {
     if (u === "/api/schema") return jsonResp({ tables: [], views: [] });
     if (u.startsWith("/api/page/")) {
       return jsonResp({ pageNumber: 3, pageType: "overflow", objectId: 1, cellCount: 0,
-                        freeBytes: 0, rowidMin: null, rowidMax: null });
+                        freeBytes: 0 });
     }
     return jsonResp({});
   }));

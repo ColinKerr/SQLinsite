@@ -34,8 +34,6 @@ CREATE TABLE pages (
   objectId           INTEGER,             -- objects.id, nullable
   freeBytes          INTEGER,
   cellCount          INTEGER,
-  rowidMin           INTEGER,             -- nullable
-  rowidMax           INTEGER,             -- nullable
   firstFreeblock     INTEGER,
   cellContentStart   INTEGER,
   fragmentedFreeBytes INTEGER,
@@ -47,7 +45,8 @@ CREATE INDEX pages_object ON pages(objectId);
 CREATE TABLE cells (
   pageNumber   INTEGER,
   cellIndex    INTEGER,
-  rowid        INTEGER,  -- nullable (table cells)
+  rowid        INTEGER,  -- table-leaf cells only (the row's rowid); NULL otherwise
+                         -- (interior divider keys are boundaries, not real rowids)
   leftChild    INTEGER,  -- nullable (interior cells)
   payloadBytes INTEGER,
   localBytes   INTEGER,

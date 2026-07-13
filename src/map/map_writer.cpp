@@ -21,7 +21,7 @@ CREATE TABLE objects (
   rootPage INTEGER, sql TEXT, pageCount INTEGER);
 CREATE TABLE pages (
   pageNumber INTEGER PRIMARY KEY, pageType TEXT, objectId INTEGER,
-  freeBytes INTEGER, cellCount INTEGER, rowidMin INTEGER, rowidMax INTEGER,
+  freeBytes INTEGER, cellCount INTEGER,
   firstFreeblock INTEGER, cellContentStart INTEGER, fragmentedFreeBytes INTEGER,
   rightmostPointer INTEGER, parseError TEXT);
 CREATE INDEX pages_object ON pages(objectId);
@@ -132,7 +132,7 @@ MapWriter::MapWriter(const std::string& path) {
     meta_ = prepare(db_,
         "INSERT INTO meta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
     object_ = prepare(db_, "INSERT INTO objects VALUES (?,?,?,?,?,?,?)");
-    page_ = prepare(db_, "INSERT INTO pages VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
+    page_ = prepare(db_, "INSERT INTO pages VALUES (?,?,?,?,?,?,?,?,?,?)");
     cell_ = prepare(db_, "INSERT INTO cells VALUES (?,?,?,?,?,?,?,?)");
     pointer_ = prepare(db_, "INSERT INTO pointers VALUES (?,?,?)");
     ptrmap_ = prepare(db_, "INSERT INTO ptrmap VALUES (?,?,?,?)");
@@ -199,16 +199,14 @@ void MapWriter::writePage(const PageInfo& p, std::int64_t objectId) {
     }
     sqlite3_bind_int64(page_, 4, p.freeBytes);
     bindOptInt(page_, 5, p.header.cellCount);
-    bindOptInt(page_, 6, p.rowidMin);
-    bindOptInt(page_, 7, p.rowidMax);
-    bindOptInt(page_, 8, p.header.firstFreeblock);
-    bindOptInt(page_, 9, p.header.cellContentStart);
-    bindOptInt(page_, 10, p.header.fragmentedFreeBytes);
-    bindOptInt(page_, 11, p.header.rightmostPointer);
+    bindOptInt(page_, 6, p.header.firstFreeblock);
+    bindOptInt(page_, 7, p.header.cellContentStart);
+    bindOptInt(page_, 8, p.header.fragmentedFreeBytes);
+    bindOptInt(page_, 9, p.header.rightmostPointer);
     if (p.parseError) {
-        sqlite3_bind_text(page_, 12, p.parseError->c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(page_, 10, p.parseError->c_str(), -1, SQLITE_TRANSIENT);
     } else {
-        sqlite3_bind_null(page_, 12);
+        sqlite3_bind_null(page_, 10);
     }
     runStep(db_, page_);
 

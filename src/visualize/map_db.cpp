@@ -192,9 +192,9 @@ std::unordered_map<std::int64_t, std::int64_t> MapDb::rowidLeafPages(
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(
             db_,
-            // Table-interior cells also carry a rowid (the divider key), so the
-            // page type must be constrained to leaf pages — the interior page is
-            // a routing node, not where the row's data lives.
+            // rowid is filled only for table-leaf cells (where the row's data
+            // lives); the pageType constraint is belt-and-suspenders alongside the
+            // rowid IS NOT NULL check.
             "SELECT c.rowid, c.pageNumber FROM cells c "
             "JOIN pages p ON p.pageNumber = c.pageNumber "
             "WHERE c.rowid IS NOT NULL AND p.pageType = 'table-leaf' AND p.objectId = "
@@ -339,11 +339,11 @@ namespace {
 constexpr const char* kChildKinds = "('child','overflow','freelist-leaf')";
 
 // Page-detail columns surfaced on tree nodes for the hover popover.
-constexpr const char* kDetailCols = "cellCount, freeBytes, rowidMin, rowidMax";
+constexpr const char* kDetailCols = "cellCount, freeBytes";
 
 // Copies the page-detail columns from a query row onto a tree node.
 void mergeDetails(json& node, const json& row) {
-    for (const char* k : {"cellCount", "freeBytes", "rowidMin", "rowidMax"}) {
+    for (const char* k : {"cellCount", "freeBytes"}) {
         node[k] = row.contains(k) ? row[k] : json(nullptr);
     }
 }
@@ -380,46 +380,38 @@ std::string MapDb::tableInteriorRowidRangesJson(std::int64_t page) const {
         if (c["cellIndex"].is_number()) cellIndexOf.push_back(c["cellIndex"].get<std::int64_t>());
     const std::size_t k = cellIndexOf.size();
 
-    // One recursive query does the whole computation (rowids aren't contiguous —
-    // deletions leave gaps): descend to the subtree's leftmost/rightmost leaf for
-    // its rowid span, enumerate the leaf rowids in that span (capped so a huge
-    // subtree can't stall the request), bucket each rowid by the divider it falls
-    // under (bucket = #dividers below it; bucket k == the rightmost-pointer child),
-    // and collapse consecutive rowids into runs (a gaps-and-islands GROUP BY).
-    // Returns one row per run: (bucket, lo, hi, cnt).
+    // One recursive query does the whole computation. Rowids live only on
+    // table-leaf cells (interior divider keys are boundaries, not real rowids and
+    // aren't stored), so we bucket by TREE STRUCTURE instead of divider keys:
+    // `seed` is this page's direct children (each cell's leftChild → bucket=cellIndex,
+    // the rightmost pointer → bucket=k); `walk` descends the child-pointer graph
+    // carrying that bucket down to every descendant page; `rids` reads the actual
+    // rowids from the table-leaf descendants (capped so a huge subtree can't stall
+    // the request); `islands` collapses consecutive rowids into runs per bucket
+    // (gaps-and-islands). Returns one row per run: (bucket, lo, hi, cnt).
     const std::int64_t cap = 200000;
     const std::string sql =
         "WITH RECURSIVE"
-        " lo_desc(pg, depth) AS ("
-        "  SELECT ?1, 0"
+        " seed(pg, bucket) AS ("
+        "  SELECT leftChild, cellIndex FROM cells WHERE pageNumber=?1 AND leftChild IS NOT NULL"
         "  UNION ALL"
-        "  SELECT c.leftChild, lo_desc.depth+1 FROM lo_desc"
-        "   JOIN pages p ON p.pageNumber=lo_desc.pg AND p.pageType='table-interior'"
-        "   JOIN cells c ON c.pageNumber=lo_desc.pg AND c.cellIndex=0"
-        "   WHERE lo_desc.depth<10000),"
-        " hi_desc(pg, depth) AS ("
-        "  SELECT ?1, 0"
+        "  SELECT rightmostPointer, (SELECT COUNT(*) FROM cells WHERE pageNumber=?1)"
+        "   FROM pages WHERE pageNumber=?1 AND rightmostPointer IS NOT NULL AND rightmostPointer>0),"
+        " walk(pg, bucket, depth) AS ("
+        "  SELECT pg, bucket, 0 FROM seed"
         "  UNION ALL"
-        "  SELECT p.rightmostPointer, hi_desc.depth+1 FROM hi_desc"
-        "   JOIN pages p ON p.pageNumber=hi_desc.pg AND p.pageType='table-interior'"
-        "   WHERE hi_desc.depth<10000 AND p.rightmostPointer>0),"
-        " bounds(plo, phi) AS (SELECT"
-        "  (SELECT p.rowidMin FROM lo_desc JOIN pages p ON p.pageNumber=lo_desc.pg"
-        "    WHERE p.pageType<>'table-interior' ORDER BY lo_desc.depth DESC LIMIT 1),"
-        "  (SELECT p.rowidMax FROM hi_desc JOIN pages p ON p.pageNumber=hi_desc.pg"
-        "    WHERE p.pageType<>'table-interior' ORDER BY hi_desc.depth DESC LIMIT 1)),"
-        " dividers(div) AS (SELECT rowid FROM cells WHERE pageNumber=?1),"
-        " rids(rid) AS ("
-        "  SELECT c.rowid FROM cells c JOIN pages p ON p.pageNumber=c.pageNumber"
-        "   WHERE p.objectId=(SELECT objectId FROM pages WHERE pageNumber=?1)"
-        "     AND p.pageType='table-leaf'"
-        "     AND c.rowid BETWEEN (SELECT plo FROM bounds) AND (SELECT phi FROM bounds)"
-        "   ORDER BY c.rowid LIMIT ?2),"
-        " bucketed(rid, bucket) AS ("
-        "  SELECT rid, (SELECT COUNT(*) FROM dividers WHERE div<rid) FROM rids),"
+        "  SELECT ptr.toPage, walk.bucket, walk.depth+1 FROM walk"
+        "   JOIN pointers ptr ON ptr.fromPage=walk.pg AND ptr.kind='child'"
+        "   WHERE walk.depth<10000),"
+        " leafBucket(leafPage, bucket) AS ("
+        "  SELECT walk.pg, walk.bucket FROM walk JOIN pages p ON p.pageNumber=walk.pg"
+        "   WHERE p.pageType='table-leaf'),"
+        " rids(rid, bucket) AS ("
+        "  SELECT c.rowid, lb.bucket FROM cells c JOIN leafBucket lb ON lb.leafPage=c.pageNumber"
+        "   WHERE c.rowid IS NOT NULL ORDER BY c.rowid LIMIT ?2),"
         " islands(rid, bucket, grp) AS ("
         "  SELECT rid, bucket, rid - ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY rid)"
-        "   FROM bucketed)"
+        "   FROM rids)"
         " SELECT bucket, MIN(rid) AS lo, MAX(rid) AS hi, COUNT(*) AS cnt"
         " FROM islands GROUP BY bucket, grp ORDER BY bucket, lo";
     json runs = queryRows(db_, sql, {page, cap + 1});
@@ -469,7 +461,6 @@ std::string MapDb::treeRootsJson() const {
         db_,
         "SELECT o.id AS objectId, o.type AS type, o.name AS name, o.rootPage AS page, "
         "p.pageType AS pageType, p.cellCount AS cellCount, p.freeBytes AS freeBytes, "
-        "p.rowidMin AS rowidMin, p.rowidMax AS rowidMax, "
         "EXISTS(SELECT 1 FROM pointers WHERE fromPage=o.rootPage AND kind IN " +
             std::string(kChildKinds) + ") AS hasChildren "
         "FROM objects o LEFT JOIN pages p ON p.pageNumber=o.rootPage "
@@ -543,7 +534,6 @@ std::string MapDb::treeChildrenJson(std::int64_t page) const {
     const std::string sql =
         "SELECT ptr.toPage AS page, ptr.kind AS kind, p.pageType AS pageType, "
         "p.objectId AS objectId, p.cellCount AS cellCount, p.freeBytes AS freeBytes, "
-        "p.rowidMin AS rowidMin, p.rowidMax AS rowidMax, "
         "EXISTS(SELECT 1 FROM pointers c WHERE c.fromPage=ptr.toPage AND c.kind IN " +
             std::string(kChildKinds) + ") AS hasChildren "
         "FROM pointers ptr JOIN pages p ON p.pageNumber=ptr.toPage "

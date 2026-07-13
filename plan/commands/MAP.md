@@ -15,10 +15,6 @@ page-number range so it never loads the whole map into memory. A database may
 have up to 4,294,967,294 pages, so the map is built and consumed **incrementally**
 — never as one in-memory blob or JSON document.
 
-> Change note: earlier versions emitted a single JSON document. That does not
-> scale (the browser had to parse the entire map), so the output is now a SQLite
-> file with indexes that support range queries. JSON output is removed.
-
 ## Approach
 
 - **Raw page bytes come from the `SQLITE_DBPAGE` virtual table.** We read each
@@ -81,7 +77,6 @@ CREATE TABLE pages (             -- one row per page; pageNumber is the rowid
   pageNumber INTEGER PRIMARY KEY,
   pageType TEXT, objectId INTEGER,
   freeBytes INTEGER, cellCount INTEGER,
-  rowidMin INTEGER, rowidMax INTEGER,
   firstFreeblock INTEGER, cellContentStart INTEGER,
   fragmentedFreeBytes INTEGER, rightmostPointer INTEGER,
   parseError TEXT);
@@ -89,7 +84,8 @@ CREATE INDEX pages_object ON pages(objectId);
 
 CREATE TABLE cells (             -- full per-cell detail
   pageNumber INTEGER, cellIndex INTEGER,
-  rowid INTEGER, leftChild INTEGER,
+  rowid INTEGER,                 -- table-leaf cells only; NULL for interior/index cells
+  leftChild INTEGER,
   payloadBytes INTEGER, localBytes INTEGER,
   overflowPage INTEGER, keyJson TEXT,   -- decoded index key values, JSON array
   PRIMARY KEY (pageNumber, cellIndex)) WITHOUT ROWID;
@@ -149,7 +145,7 @@ single sequential pass and indexed by `startPage`; an overlap query is
   auto-vacuum DB with pointer-map pages, a post-delete DB with freelist pages),
   run `map`, then open the output with SQLite and assert:
   - `meta`/`objects` rows; `pages` count == `meta.pageCount`; page types.
-  - object→page assignment via `pages.objectId`; rowid ranges.
+  - object→page assignment via `pages.objectId`.
   - every `pointers.toPage` is a valid page number.
   - `runs` cover all pages with no gaps or overlaps and respect object/type
     boundaries.

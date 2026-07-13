@@ -409,7 +409,6 @@ export class CanvasController {
         ["object", obj ? `${obj.name} (${obj.type})` : "—"],
         ["free bytes", d.freeBytes],
         ["cells", d.cellCount],
-        ["rowid", d.rowidMin != null ? `${d.rowidMin}–${d.rowidMax}` : null],
       ];
       if (d.profile) rows.push(["reads / writes", `${d.profile.reads} / ${d.profile.writes}`]);
       let html = `<h4>Page ${d.pageNumber}</h4><table>`;

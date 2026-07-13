@@ -19,7 +19,7 @@ export interface TreeNode extends PageBasics {
 
 // The subset of PageBasics fields, copied verbatim onto a node.
 function basics(x: PageBasics): PageBasics {
-  return { cellCount: x.cellCount, freeBytes: x.freeBytes, rowidMin: x.rowidMin, rowidMax: x.rowidMax };
+  return { cellCount: x.cellCount, freeBytes: x.freeBytes };
 }
 
 export interface FlatNode {

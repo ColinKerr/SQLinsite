@@ -13,7 +13,6 @@ function nodeTitle(node: TreeNode): string {
   const parts = [
     node.cellCount != null ? `${node.cellCount} cells` : null,
     node.freeBytes != null ? `${node.freeBytes} bytes free` : null,
-    node.rowidMin != null && node.rowidMax != null ? `rowids ${node.rowidMin}–${node.rowidMax}` : null,
   ].filter(Boolean);
   return `${node.label} — ${pageTypeDesc(node.pageType)}` + (parts.length ? "\n" + parts.join(" · ") : "");
 }

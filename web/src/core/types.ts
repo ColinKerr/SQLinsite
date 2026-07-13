@@ -124,8 +124,6 @@ export interface Pointer {
 export interface PageBasics {
   cellCount?: number | null;
   freeBytes?: number | null;
-  rowidMin?: number | null;
-  rowidMax?: number | null;
 }
 export interface TreeRoot extends PageBasics {
   kind: "page" | "freelist" | "other";
@@ -200,8 +198,6 @@ export interface PageDetail {
   objectId: number | null;
   freeBytes: number;
   cellCount: number;
-  rowidMin: number | null;
-  rowidMax: number | null;
   pointers?: Pointer[];
   profile?: { reads: number; writes: number };
   [k: string]: unknown;
