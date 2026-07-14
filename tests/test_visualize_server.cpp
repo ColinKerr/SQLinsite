@@ -33,7 +33,83 @@ std::string buildMapFixture() {
     return mapPath;
 }
 
+// A fixture with an indexed table (T + index T_n) and an index-less table (U),
+// for the tree's per-table grouping.
+std::string buildIndexedMapFixture() {
+    const std::string dbPath = tmpPath("viz_idx_src.db");
+    const std::string mapPath = tmpPath("viz_idx_src.sqlite");
+    std::remove(dbPath.c_str());
+    sqlite3* db = nullptr;
+    REQUIRE(sqlite3_open(dbPath.c_str(), &db) == SQLITE_OK);
+    REQUIRE(sqlite3_exec(db,
+                         "CREATE TABLE T(id INTEGER PRIMARY KEY, n INTEGER, v TEXT);"
+                         "CREATE INDEX T_n ON T(n);"
+                         "CREATE TABLE U(id INTEGER PRIMARY KEY, x TEXT);"
+                         "INSERT INTO T(n,v) VALUES (1,'a'),(2,'b'),(3,'c');"
+                         "INSERT INTO U(x) VALUES ('p'),('q');",
+                         nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_close(db);
+    MapOptions options{dbPath, mapPath};
+    REQUIRE(runMap(options) == 0);
+    return mapPath;
+}
+
 }  // namespace
+
+TEST_CASE("tree roots group each table's b-tree and indexes under one node") {
+    MapDb db(buildIndexedMapFixture());
+    auto roots = nlohmann::json::parse(db.treeRootsJson())["roots"];
+
+    // Page 1 (sqlite_schema) is still its own root; tables are grouping nodes.
+    bool sawSchema = false;
+    nlohmann::json tNode, uNode;
+    for (const auto& r : roots) {
+        if (r.value("label", "") == "sqlite_schema") sawSchema = true;
+        if (r.value("kind", "") == "table" && r.value("label", "") == "T") tNode = r;
+        if (r.value("kind", "") == "table" && r.value("label", "") == "U") uNode = r;
+    }
+    CHECK(sawSchema);
+    REQUIRE_FALSE(tNode.is_null());
+    REQUIRE_FALSE(uNode.is_null());
+
+    // T is a grouping node (no page of its own) whose b-tree child is "T (table)"
+    // and whose one index child is "T_n (index)".
+    CHECK(tNode["page"].is_null());
+    CHECK(tNode["objectId"].is_number());
+    CHECK(tNode["tableBtree"]["label"] == "T (table)");
+    CHECK(tNode["tableBtree"]["page"].is_number());
+    REQUIRE(tNode["indexes"].is_array());
+    REQUIRE(tNode["indexes"].size() == 1);
+    CHECK(tNode["indexes"][0]["label"] == "T_n (index)");
+    CHECK(tNode["indexes"][0]["pageType"].get<std::string>().rfind("index", 0) == 0);
+
+    // U has a b-tree but no indexes.
+    CHECK(uNode["tableBtree"]["label"] == "U (table)");
+    CHECK(uNode["indexes"].is_array());
+    CHECK(uNode["indexes"].empty());
+}
+
+TEST_CASE("tree object overview reports a table's rows and indexes") {
+    MapDb db(buildIndexedMapFixture());
+    auto roots = nlohmann::json::parse(db.treeRootsJson())["roots"];
+    std::int64_t tId = 0;
+    for (const auto& r : roots)
+        if (r.value("kind", "") == "table" && r.value("label", "") == "T")
+            tId = r["objectId"].get<std::int64_t>();
+    REQUIRE(tId > 0);
+
+    auto ov = nlohmann::json::parse(db.treeObjectOverviewJson(tId))["overview"];
+    CHECK(ov["name"] == "T");
+    CHECK(ov["type"] == "table");
+    CHECK(ov["rowCount"] == 3);
+    CHECK(ov["sql"].get<std::string>().find("CREATE TABLE T") != std::string::npos);
+    REQUIRE(ov["indexes"].size() == 1);
+    CHECK(ov["indexes"][0]["name"] == "T_n");
+    CHECK(ov["indexes"][0]["pageCount"].is_number());
+
+    // A missing object yields an empty string (404 at the HTTP layer).
+    CHECK(db.treeObjectOverviewJson(999999).empty());
+}
 
 TEST_CASE("server answers the map query API") {
     MapDb db(buildMapFixture());

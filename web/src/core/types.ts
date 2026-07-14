@@ -125,14 +125,38 @@ export interface PageBasics {
   cellCount?: number | null;
   freeBytes?: number | null;
 }
+// A table/index b-tree root page, inlined under a table grouping node.
+export interface TreeBtree extends PageBasics {
+  kind: "page";
+  label: string;             // "<name> (table)" or "<name> (index)"
+  page: number | null;       // null only for virtual/no-rootpage tables
+  pageType: string | null;
+  objectId: number | null;
+  hasChildren: number | boolean;
+}
 export interface TreeRoot extends PageBasics {
-  kind: "page" | "freelist" | "other";
+  kind: "page" | "table" | "freelist" | "other";
   label: string;
   page: number | null;
   pageType: string | null;
   objectId: number | null;
   hasChildren: number | boolean;
+  // Present for kind === "table": the table's b-tree and its index b-trees.
+  tableBtree?: TreeBtree | null;
+  indexes?: TreeBtree[];
 }
+export interface TreeObjectIndex { name: string; pageCount: number | null; rootPage: number | null; }
+export interface TreeObjectOverview {
+  objectId: number;
+  type: string;
+  name: string;
+  sql: string | null;
+  pageCount: number | null;
+  rootPage: number | null;
+  rowCount: number | null;
+  indexes: TreeObjectIndex[];
+}
+export interface TreeObjectResponse { overview: TreeObjectOverview; }
 export interface TreeChild extends PageBasics {
   page: number;
   kind: string; // edge kind: child | overflow | freelist-leaf

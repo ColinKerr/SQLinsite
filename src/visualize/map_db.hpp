@@ -81,8 +81,13 @@ public:
 
     // Page Tree view (b-tree structure). All lazy/windowed so nothing enumerates
     // the whole file. Children follow the map's pointer graph.
-    // Roots: Page 1, each table/index b-tree, the Freelist, and All other pages.
+    // Roots: Page 1, one grouping node per table (holding its table b-tree and,
+    // inlined, its indexes), the Freelist, Lock-Byte, and All other pages.
     std::string treeRootsJson() const;
+    // Overview of a schema object (table/index) for the tree's grouping node:
+    // {overview:{objectId,type,name,sql,pageCount,rootPage,rowCount,
+    //  indexes:[{name,pageCount,rootPage}]}}. Empty string if no such object.
+    std::string treeObjectOverviewJson(std::int64_t objectId) const;
     // Child page nodes of `page` (b-tree children, overflow, freelist-leaf).
     std::string treeChildrenJson(std::int64_t page) const;
     // Freelist trunk pages (children of the Freelist root), keyset-paginated.

@@ -1,16 +1,20 @@
-import type { PageBasics, TreeChild, TreeRoot } from "./types.ts";
+import type { PageBasics, TreeBtree, TreeChild, TreeRoot } from "./types.ts";
 
-// A node in the b-tree tree. `page` is null for the virtual roots and for the
-// "load more" loader rows.
+// A node in the b-tree tree. `page` is null for the virtual roots (including the
+// "table"/"indexes" grouping nodes) and for the "load more" loader rows.
 export interface TreeNode extends PageBasics {
   key: string;
-  kind: "page" | "freelist" | "other" | "more";
+  kind: "page" | "table" | "indexes" | "freelist" | "other" | "more";
   label: string;
   page: number | null;
   pageType: string | null;
   edgeKind?: string; // how it attaches to its parent: child | overflow | freelist-leaf | freelist-trunk
   hasChildren: boolean;
   objectId?: number | null;
+  // Grouping nodes ("table"/"indexes"): the b-tree(s) to build children from
+  // client-side (no fetch — schema-object cardinality is small).
+  tableBtree?: TreeBtree | null;
+  indexes?: TreeBtree[];
   // Loader ("more") rows:
   loaderParent?: string;
   loaderKind?: "freelist" | "other";
@@ -39,9 +43,40 @@ export function rootNode(r: TreeRoot): TreeNode {
     return { key: "other", kind: "other", label: r.label, page: null,
              pageType: null, hasChildren: true };
   }
+  if (r.kind === "table") {
+    // A grouping node: its children (b-tree page + Indexes group) build from the
+    // inlined payload without a fetch. `hasChildren` is true when it has a b-tree.
+    return { key: `t:${r.objectId}`, kind: "table", label: r.label, page: null,
+             pageType: null, objectId: r.objectId,
+             hasChildren: r.tableBtree != null || (r.indexes?.length ?? 0) > 0,
+             tableBtree: r.tableBtree ?? null, indexes: r.indexes ?? [] };
+  }
   return { key: `r:${r.page}`, kind: "page", label: r.label, page: r.page,
            pageType: r.pageType, objectId: r.objectId, hasChildren: truthy(r.hasChildren),
            ...basics(r) };
+}
+
+// A table/index b-tree root page node, built from the roots payload (no fetch).
+// `rel` namespaces the key segment ("table" | "index") under `parentKey`.
+export function btreeChildNode(parentKey: string, b: TreeBtree, rel: "table" | "index"): TreeNode {
+  return {
+    key: `${parentKey}>${rel}:${b.page}`,
+    kind: "page",
+    label: b.label,
+    page: b.page,
+    pageType: b.pageType,
+    objectId: b.objectId ?? null,
+    edgeKind: "child",
+    hasChildren: truthy(b.hasChildren),
+    ...basics(b),
+  };
+}
+
+// The "Indexes" grouping node under a table node; carries the index b-trees so
+// its children build client-side.
+export function indexesGroupNode(tableKey: string, indexes: TreeBtree[]): TreeNode {
+  return { key: `${tableKey}>indexes`, kind: "indexes", label: "Indexes", page: null,
+           pageType: null, hasChildren: indexes.length > 0, indexes };
 }
 
 // A page child under `parentKey`; `edge` overrides the API's edge kind (used for

@@ -1,10 +1,12 @@
 import { create } from "zustand";
 import {
-  fetchPageContent, fetchTreeChildren, fetchTreeFreelist, fetchTreeOther, fetchTreePath,
-  fetchTreeRoots,
+  fetchPageContent, fetchTreeChildren, fetchTreeFreelist, fetchTreeObject, fetchTreeOther,
+  fetchTreePath, fetchTreeRoots,
 } from "../core/api.ts";
-import type { PageContent } from "../core/types.ts";
-import { childNode, moreNode, rootNode, type TreeNode } from "../core/treeModel.ts";
+import type { PageContent, TreeObjectOverview } from "../core/types.ts";
+import {
+  btreeChildNode, childNode, indexesGroupNode, moreNode, rootNode, type TreeNode,
+} from "../core/treeModel.ts";
 
 const WINDOW = 1000; // page window for the freelist / "all other pages" nodes
 
@@ -14,13 +16,17 @@ export interface TreeState {
   expanded: Set<string>;
   loading: Set<string>;
   selectedPage: number | null;
+  selectedKey: string | null;   // selected non-page node (table/indexes) for highlight
   content: PageContent | null;
+  overview: TreeObjectOverview | null;  // shown for a selected table grouping node
   contentLoading: boolean;
 
   loadRoots(): Promise<void>;
   toggle(node: TreeNode): Promise<void>;
   loadMore(node: TreeNode): Promise<void>; // a "more" loader row
   selectPage(page: number): Promise<void>;
+  selectTable(objectId: number, key: string): Promise<void>; // table node → overview
+  selectKey(key: string): void; // select a grouping node with no detail (e.g. Indexes)
   revealPage(page: number): Promise<void>; // select + expand the tree down to it
 }
 
@@ -30,6 +36,16 @@ async function fetchChildren(node: TreeNode, after = 0): Promise<TreeNode[]> {
   if (node.kind === "page" && node.page != null) {
     const r = await fetchTreeChildren(node.page);
     return (r?.children ?? []).map((c) => childNode(node.key, c));
+  }
+  // Grouping nodes build children from the inlined roots payload — no fetch.
+  if (node.kind === "table") {
+    const kids: TreeNode[] = [];
+    if (node.tableBtree) kids.push(btreeChildNode(node.key, node.tableBtree, "table"));
+    if ((node.indexes?.length ?? 0) > 0) kids.push(indexesGroupNode(node.key, node.indexes!));
+    return kids;
+  }
+  if (node.kind === "indexes") {
+    return (node.indexes ?? []).map((b) => btreeChildNode(node.key, b, "index"));
   }
   if (node.kind === "freelist") {
     const r = await fetchTreeFreelist(after, WINDOW);
@@ -52,7 +68,9 @@ export const useTree = create<TreeState>((set, get) => ({
   expanded: new Set(),
   loading: new Set(),
   selectedPage: null,
+  selectedKey: null,
   content: null,
+  overview: null,
   contentLoading: false,
 
   async loadRoots() {
@@ -94,14 +112,28 @@ export const useTree = create<TreeState>((set, get) => ({
   },
 
   async selectPage(page) {
-    set({ selectedPage: page, contentLoading: true });
+    set({ selectedPage: page, selectedKey: null, overview: null, contentLoading: true });
     const content = await fetchPageContent(page);
     // Ignore if the selection changed while fetching.
     if (get().selectedPage === page) set({ content, contentLoading: false });
   },
 
-  // Select `page` and expand the tree down to its node (following the ancestor
-  // path from a b-tree root). Freelist/other targets just select (path degrades).
+  async selectTable(objectId, key) {
+    set({ selectedKey: key, selectedPage: null, content: null, overview: null,
+          contentLoading: true });
+    const r = await fetchTreeObject(objectId);
+    if (get().selectedKey === key) set({ overview: r?.overview ?? null, contentLoading: false });
+  },
+
+  selectKey(key) {
+    set({ selectedKey: key, selectedPage: null, content: null, overview: null,
+          contentLoading: false });
+  },
+
+  // Select `page` and expand the tree down to its node. The path from the map is
+  // the page ancestry from a b-tree root down; we prefix it with the synthetic
+  // grouping chain (table [→ Indexes] → b-tree page node) that now sits above
+  // every b-tree root. Freelist/other targets just select (path degrades).
   async revealPage(page) {
     void get().selectPage(page);
     // The tree view may not have mounted yet (e.g. revealed from the Query view),
@@ -109,11 +141,42 @@ export const useTree = create<TreeState>((set, get) => ({
     if (!get().roots) await get().loadRoots();
     const r = await fetchTreePath(page);
     const path = r?.path ?? [];
-    const root = path.length ? get().roots?.find((n) => n.kind === "page" && n.page === path[0].page) : undefined;
-    if (!root) return;
+    if (!path.length) return;
+
+    // Map path[0] (a b-tree root page) to its owning grouping chain, root-first,
+    // ending at the b-tree page node.
+    const rootPage = path[0].page;
+    let chain: TreeNode[] = [];
+    for (const t of get().roots ?? []) {
+      if (t.kind !== "table") continue;
+      if (t.tableBtree?.page === rootPage) {
+        chain = [t, btreeChildNode(t.key, t.tableBtree, "table")];
+        break;
+      }
+      const ix = (t.indexes ?? []).find((b) => b.page === rootPage);
+      if (ix) {
+        const grp = indexesGroupNode(t.key, t.indexes!);
+        chain = [t, grp, btreeChildNode(grp.key, ix, "index")];
+        break;
+      }
+    }
+    if (!chain.length) return;
+
     const expanded = new Set(get().expanded);
-    let key = root.key;
-    let node: TreeNode = root;
+    // Expand + cache the synthetic parents (all chain nodes but the b-tree page).
+    for (let i = 0; i < chain.length - 1; i++) {
+      const parent = chain[i];
+      expanded.add(parent.key);
+      if (!get().childrenByKey[parent.key]) {
+        const kids = await fetchChildren(parent);
+        const k = parent.key;
+        set((s) => ({ childrenByKey: { ...s.childrenByKey, [k]: kids } }));
+      }
+    }
+
+    // Descend the page path from the b-tree page node (the chain's last entry).
+    let node: TreeNode = chain[chain.length - 1];
+    let key = node.key;
     for (let i = 1; i < path.length; i++) {
       let kids = get().childrenByKey[key];
       if (!kids) {

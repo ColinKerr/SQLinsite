@@ -12,8 +12,10 @@ The view is split into two resizable areas vertically.  On the left hand side is
 ### Root nodes
 
 - 'sqlite_schema' root node.  Page 1 for the sqlite file serves as the root node.
-- Each table b-tree in the file is a root node.  The root page for that table serves as the root node.
-- Each index b-tree in the file is a root node.  The root page for that index serves as the root node.
+- Each table in the file is a root node, this node contains the table and index b-trees for the table.  Node is named the name of the table.  Clicking on the node shows overview information for the table and it's indexes
+  - Child nodes: 
+    - The table b-tree for this table.  The root page for that table serves as the first node.  Node is named the name of the table plus '(table)'
+    - Indexes grouping node, only shown if the table has indexes.  It's children are the index b-trees, the root page for each index serves as the indexes first row.  Node is named the name of the index plus '(index)'
 - The freelist.  The root page is a virtual node whose children are the freelist trunk pages.
 - Lock-Byte root node.  Only shown if the Lock-Byte page exists.  The Lock-Byte page serves as the root node.
 - All other pages.  Only shown if pages exist that are not covered in the root node descriptions above are grouped together under this root node for review, the final implementation will properly categorize these pages.

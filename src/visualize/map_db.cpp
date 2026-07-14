@@ -458,26 +458,49 @@ std::string MapDb::treeRootsJson() const {
         }
     }
 
-    // Each table / index b-tree (tables first).
-    json objs = queryRows(
-        db_,
-        "SELECT o.id AS objectId, o.type AS type, o.name AS name, o.rootPage AS page, "
+    // Each table is a grouping root node holding its table b-tree and (if any) its
+    // indexes; an index groups under its owning table via objects.tableName. The
+    // b-tree/index details are inlined here (schema-object cardinality is small);
+    // only the pages *below* each b-tree root load lazily via treeChildren.
+    const std::string btreeCols =
+        "o.id AS objectId, o.name AS name, o.tableName AS tableName, o.rootPage AS page, "
         "p.pageType AS pageType, p.cellCount AS cellCount, p.freeBytes AS freeBytes, "
         "EXISTS(SELECT 1 FROM pointers WHERE fromPage=o.rootPage AND kind IN " +
-            std::string(kChildKinds) + ") AS hasChildren "
-        "FROM objects o LEFT JOIN pages p ON p.pageNumber=o.rootPage "
-        // rootPage=1 is sqlite_schema, already represented by the Page 1 root.
-        "WHERE o.type IN ('table','index') AND o.rootPage<>1 "
-        "ORDER BY CASE o.type WHEN 'table' THEN 0 ELSE 1 END, o.name");
-    for (json& o : objs) {
+            std::string(kChildKinds) + ") AS hasChildren ";
+    // rootPage=1 is sqlite_schema, already represented by the Page 1 root.
+    json tables = queryRows(
+        db_, "SELECT " + btreeCols +
+                 "FROM objects o LEFT JOIN pages p ON p.pageNumber=o.rootPage "
+                 "WHERE o.type='table' AND o.rootPage<>1 ORDER BY o.name");
+    json indexes = queryRows(
+        db_, "SELECT " + btreeCols +
+                 "FROM objects o LEFT JOIN pages p ON p.pageNumber=o.rootPage "
+                 "WHERE o.type='index' ORDER BY o.name");
+
+    // A table/index b-tree root page node, labelled "<name> (table|index)".
+    auto btreeNode = [&](const json& o, const char* suffix) {
         json node = {
             {"kind", "page"},
-            {"label", o["name"].get<std::string>() + " (" + o["type"].get<std::string>() + ")"},
+            {"label", o["name"].get<std::string>() + " (" + suffix + ")"},
             {"page", o["page"]}, {"pageType", o["pageType"]},
             {"objectId", o["objectId"]}, {"hasChildren", o["hasChildren"]},
         };
         mergeDetails(node, o);
-        roots.push_back(std::move(node));
+        return node;
+    };
+
+    for (json& t : tables) {
+        json idxNodes = json::array();
+        for (json& ix : indexes)
+            if (ix["tableName"] == t["name"]) idxNodes.push_back(btreeNode(ix, "index"));
+        roots.push_back({
+            {"kind", "table"}, {"label", t["name"]},
+            {"page", nullptr}, {"pageType", nullptr},
+            {"objectId", t["objectId"]}, {"hasChildren", true},
+            // Null tableBtree covers virtual/no-rootpage tables (no b-tree page).
+            {"tableBtree", t["page"].is_null() ? json(nullptr) : btreeNode(t, "table")},
+            {"indexes", std::move(idxNodes)},
+        });
     }
 
     // Freelist (virtual) — present when any trunk exists.
@@ -512,6 +535,33 @@ std::string MapDb::treeRootsJson() const {
     }
 
     return json{{"roots", std::move(roots)}}.dump();
+}
+
+std::string MapDb::treeObjectOverviewJson(std::int64_t objectId) const {
+    json o = queryRows(db_,
+                       "SELECT id AS objectId, type, name, sql, pageCount, rootPage "
+                       "FROM objects WHERE id=?",
+                       {objectId});
+    if (o.empty()) return {};
+    json obj = std::move(o[0]);
+    // Total rows in the table subtree — page_row_runs covers the root page
+    // (whether it is a leaf or an interior page).
+    json rc = queryRows(db_,
+                        "SELECT SUM(rowCount) AS rowCount FROM page_row_runs "
+                        "WHERE parentPageNumber=(SELECT rootPage FROM objects WHERE id=?)",
+                        {objectId});
+    obj["rowCount"] = (!rc.empty() && !rc[0]["rowCount"].is_null()) ? rc[0]["rowCount"] : json(nullptr);
+    // Indexes owned by this table (empty for a non-table object). Filtered in C++
+    // since the join key (tableName) is text and queryRows binds only integers.
+    json allIdx = queryRows(
+        db_, "SELECT name, tableName, pageCount, rootPage FROM objects WHERE type='index' ORDER BY name");
+    json idx = json::array();
+    for (json& ix : allIdx)
+        if (ix["tableName"] == obj["name"])
+            idx.push_back({{"name", ix["name"]}, {"pageCount", ix["pageCount"]},
+                           {"rootPage", ix["rootPage"]}});
+    obj["indexes"] = std::move(idx);
+    return json{{"overview", std::move(obj)}}.dump();
 }
 
 std::string MapDb::treePathJson(std::int64_t page) const {

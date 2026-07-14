@@ -156,6 +156,15 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
     server.Get("/api/tree/path", [&db](const httplib::Request& req, httplib::Response& res) {
         res.set_content(db.treePathJson(paramInt(req, "page", 0)), "application/json");
     });
+    server.Get("/api/tree/object", [&db](const httplib::Request& req, httplib::Response& res) {
+        const std::string body = db.treeObjectOverviewJson(paramInt(req, "id", 0));
+        if (body.empty()) {
+            res.status = 404;
+            res.set_content(R"({"error":"no such object"})", "application/json");
+            return;
+        }
+        res.set_content(body, "application/json");
+    });
 
     // Page detail with decoded values (only with --db-file).
     if (content != nullptr) {

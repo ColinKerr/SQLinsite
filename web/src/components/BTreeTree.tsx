@@ -31,8 +31,11 @@ export function BTreeTree() {
   const expanded = useTree((s) => s.expanded);
   const loading = useTree((s) => s.loading);
   const selectedPage = useTree((s) => s.selectedPage);
+  const selectedKey = useTree((s) => s.selectedKey);
   const toggle = useTree((s) => s.toggle);
   const selectPage = useTree((s) => s.selectPage);
+  const selectTable = useTree((s) => s.selectTable);
+  const selectKey = useTree((s) => s.selectKey);
   const loadMore = useTree((s) => s.loadMore);
 
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -74,24 +77,41 @@ export function BTreeTree() {
   const start = Math.max(0, Math.floor(scrollTop / ROW_H) - 5);
   const end = Math.min(total, start + Math.ceil(height / ROW_H) + 10);
 
-  // Clicking the row body selects the node; expand/collapse is the arrow's job.
-  const onRowClick = (node: TreeNode) => {
+  // Selects a node: a table shows its overview, a page shows its detail, and a
+  // bare grouping node (Indexes) is just highlighted.
+  const select = (node: TreeNode) => {
+    if (node.kind === "table" && node.objectId != null) void selectTable(node.objectId, node.key);
+    else if (node.page != null) void selectPage(node.page);
+    else if (node.kind === "indexes") selectKey(node.key);
+  };
+
+  // Clicking the row body: a collapsed node expands (body clicks never collapse —
+  // only the chevron does), and the node is selected either way.
+  const onRowClick = (node: TreeNode, isOpen: boolean) => {
     if (node.kind === "more") { void loadMore(node); return; }
-    if (node.page != null) void selectPage(node.page);
+    if (node.hasChildren && !isOpen) void toggle(node);
+    select(node);
   };
 
   const rows = [];
   for (let i = start; i < end; i++) {
     const { node, depth, expanded: isOpen } = flat[i];
-    const isSel = node.page != null && node.page === selectedPage;
+    const isSel = node.page != null
+      ? node.page === selectedPage
+      : node.key === selectedKey;
     rows.push(
       <div key={node.key} className={"tn-row" + (isSel ? " tn-sel" : "")}
            style={{ position: "absolute", top: i * ROW_H, height: ROW_H, left: 0, right: 0,
                     paddingLeft: 6 + depth * INDENT }}
-           onClick={() => onRowClick(node)}
+           onClick={() => onRowClick(node, isOpen)}
            title={nodeTitle(node)}>
-        <span className="tn-exp" onClick={(e) => { e.stopPropagation();
-                    if (node.kind === "more") void loadMore(node); else if (node.hasChildren) void toggle(node); }}>
+        {/* The chevron column toggles expand/collapse without changing selection
+            (it stops the row click). For non-expandable rows it has no handler, so
+            clicks fall through to the row body (select / load-more). */}
+        <span className="tn-exp"
+              onClick={node.kind !== "more" && node.hasChildren
+                ? (e) => { e.stopPropagation(); void toggle(node); }
+                : undefined}>
           {node.kind !== "more" && node.hasChildren &&
             <span className={"tn-arrow" + (isOpen ? " open" : "")}>›</span>}
         </span>
@@ -99,12 +119,18 @@ export function BTreeTree() {
           <span className="tn-more">{loading.has(node.loaderParent ?? "") ? "Loading…" : "Load more…"}</span>
         ) : (
           <>
-            {node.pageType && (
+            {node.kind === "table" ? (
+              // A solid color block matching this table's page/index nodes (same
+              // object color), same size/shape as a page glyph but with no icon.
+              <span className="tn-glyph" style={{ background: colorForPage(node.objectId ?? null, "") }} />
+            ) : node.pageType ? (
               <span className="tn-glyph"
                     style={{ background: colorForPage(node.objectId ?? null, node.pageType) }}>
                 {GLYPH[node.pageType] ?? "·"}
               </span>
-            )}
+            ) : node.kind === "indexes" ? (
+              <span className="tn-glyph tn-folder">⊞</span>
+            ) : null}
             <span className="tn-label">{node.label}</span>
             {node.edgeKind === "overflow" && <span className="tn-tag">overflow</span>}
           </>

@@ -328,6 +328,15 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .tn-label { overflow: hidden; text-overflow: ellipsis; }
 .tn-tag { color: var(--muted); font-size: 10px; }
 .tn-more { color: var(--accent); }
+/* Grouping nodes (table / Indexes) use a neutral "folder" glyph, not a page color. */
+.tn-folder { background: transparent; color: var(--muted); font-size: 12px; }
+
+/* Table overview pane (shown for a selected table grouping node). */
+.to-section { margin: 4px 0 12px; }
+.to-title { font-size: 11px; text-transform: uppercase; color: var(--muted); margin-bottom: 5px; }
+.to-sql { margin: 0; padding: 6px 8px; background: #0e1014; border: 1px solid #2a2e37;
+  border-radius: 4px; font-family: ui-monospace, monospace; font-size: 12px;
+  white-space: pre-wrap; word-break: break-word; }
 
 /* Key bar fixed at the bottom of the b-tree area (does not scroll). Entries are
    laid out in 2 columns, or 3 when the tree pane is wide enough. */
