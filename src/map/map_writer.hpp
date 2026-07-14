@@ -24,6 +24,10 @@ struct ObjectRow {
 // commit() when done. Throws std::runtime_error on any SQLite error.
 class MapWriter {
 public:
+    // Bump when the map schema/semantics change incompatibly. The visualizer
+    // refuses to open a map whose meta.formatVersion differs (older or newer).
+    static constexpr int kFormatVersion = 2;
+
     explicit MapWriter(const std::string& path);
     ~MapWriter();
 

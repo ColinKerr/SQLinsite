@@ -158,7 +158,7 @@ MapWriter::~MapWriter() {
 
 void MapWriter::writeMeta(const DbHeader& h, const std::string& sourcePath,
                           std::int64_t pageCount) {
-    sqlite3_bind_int64(meta_, 1, 1);  // formatVersion
+    sqlite3_bind_int64(meta_, 1, kFormatVersion);  // formatVersion
     sqlite3_bind_text(meta_, 2, sourcePath.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(meta_, 3, h.pageSize);
     sqlite3_bind_int64(meta_, 4, pageCount);

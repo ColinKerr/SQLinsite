@@ -10,6 +10,7 @@
 #include <sqlite3.h>
 
 #include "map/map_command.hpp"
+#include "map/map_writer.hpp"
 #include "visualize/map_db.hpp"
 #include "test_util.hpp"
 #include "visualize/visualize_command.hpp"
@@ -54,7 +55,42 @@ std::string buildIndexedMapFixture() {
     return mapPath;
 }
 
+// Overwrites meta.formatVersion in an existing map file (to simulate a map made
+// by an older/newer build).
+void setMapFormatVersion(const std::string& mapPath, int version) {
+    sqlite3* db = nullptr;
+    REQUIRE(sqlite3_open(mapPath.c_str(), &db) == SQLITE_OK);
+    const std::string sql = "UPDATE meta SET formatVersion=" + std::to_string(version);
+    REQUIRE(sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_close(db);
+}
+
 }  // namespace
+
+TEST_CASE("map format version is reported so mismatches can be detected") {
+    const std::string mapPath = buildMapFixture();
+
+    SUBCASE("a freshly written map matches the expected version") {
+        MapDb db(mapPath);
+        auto j = nlohmann::json::parse(db.metaJson());
+        CHECK(j["meta"]["formatVersion"] == MapWriter::kFormatVersion);
+        CHECK(j["expectedFormatVersion"] == MapWriter::kFormatVersion);
+    }
+    SUBCASE("an older map reports a lower version than expected") {
+        setMapFormatVersion(mapPath, MapWriter::kFormatVersion - 1);
+        MapDb db(mapPath);
+        auto j = nlohmann::json::parse(db.metaJson());
+        CHECK(j["expectedFormatVersion"] == MapWriter::kFormatVersion);
+        CHECK(j["meta"]["formatVersion"].get<int>() < j["expectedFormatVersion"].get<int>());
+    }
+    SUBCASE("a newer map reports a higher version than expected") {
+        setMapFormatVersion(mapPath, MapWriter::kFormatVersion + 1);
+        MapDb db(mapPath);
+        auto j = nlohmann::json::parse(db.metaJson());
+        CHECK(j["expectedFormatVersion"] == MapWriter::kFormatVersion);
+        CHECK(j["meta"]["formatVersion"].get<int>() > j["expectedFormatVersion"].get<int>());
+    }
+}
 
 TEST_CASE("tree roots group each table's b-tree and indexes under one node") {
     MapDb db(buildIndexedMapFixture());

@@ -121,6 +121,8 @@ CREATE TABLE type_counts (       -- pages per type, precomputed for the legend
 type) are precomputed during the single pass so the visualizer's legend can show
 counts without scanning the `pages` table.
 
+The current map format version is **2** (`MapWriter::kFormatVersion`, written into `meta.formatVersion`). Bump it whenever the schema or semantics change incompatibly. `/api/meta` reports both the map's `meta.formatVersion` and the build's `expectedFormatVersion`; when loading the map the visualizer compares them and, if they differ (the map is **older or newer** than this build understands), shows an error message and asks the user to regenerate the map with `sqlinsite map` instead of rendering it.
+
 ### Why `runs`
 
 A *run* is a maximal range `[startPage, endPage]` of consecutive pages with the

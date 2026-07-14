@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
 
+#include "map/map_writer.hpp"
 #include "visualize/profile_reader.hpp"
 #include "visualize/run_coalesce.hpp"
 
@@ -148,6 +149,9 @@ std::string MapDb::metaJson() const {
 
     json j = {
         {"meta", meta},
+        // The format version this build understands; the front-end compares it to
+        // meta.formatVersion and refuses to render an older/newer map.
+        {"expectedFormatVersion", MapWriter::kFormatVersion},
         {"objects",
          queryRows(db_,
                    "SELECT id,type,name,tableName,rootPage,pageCount,"

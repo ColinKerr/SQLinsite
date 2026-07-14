@@ -24,7 +24,8 @@ export interface SessionInfo {
 }
 
 export interface Meta {
-  meta: { pageCount: number; pageSize: number; [k: string]: unknown };
+  meta: { pageCount: number; pageSize: number; formatVersion?: number; [k: string]: unknown };
+  expectedFormatVersion: number; // format version this build understands
   objects: ObjectInfo[];
   typeCounts: { pageType: string; count: number }[];
   hasProfile: boolean;

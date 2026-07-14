@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchMeta, fetchProfilePages, fetchRuns } from "./core/api.ts";
+import { formatVersionError } from "./core/version.ts";
 import { Profile } from "./core/profile.ts";
 import { ControllerProvider } from "./state/ControllerContext.tsx";
 import { useViz } from "./state/store.ts";
@@ -19,6 +20,9 @@ export default function App() {
     (async () => {
       const meta = await fetchMeta();
       if (!meta) { setError("Failed to load /api/meta"); return; }
+      // Refuse a map whose format version this build can't read (older or newer).
+      const verr = formatVersionError(meta.meta.formatVersion, meta.expectedFormatVersion);
+      if (verr) { setError(verr); return; }
       const pageCount = meta.meta.pageCount;
       const runs = await fetchRuns(1, pageCount); // whole-file run map for the minimap
       let profile = Profile.empty();
