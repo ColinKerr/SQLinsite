@@ -98,7 +98,10 @@ export function PageDetail() {
           {(() => {
             const out: ReactNode[] = [];
             content.regions.forEach((r, i) => {
-              if (r.kind === "cell") {
+              // Cell regions (and an overflow page's payload region, which the
+              // server annotates with the owning cell) render their contents in
+              // the scrolling section below, not as a bare header row here.
+              if (r.kind === "cell" || (r.kind === "payload" && r.cellIndex != null)) {
                 return;
               }
               out.push(
@@ -138,7 +141,9 @@ export function PageDetail() {
                 }
                 return;
               }
-              else if (!isInterior && r.kind === "cell"){
+              // A normal cell, or an overflow page's payload region carrying the
+              // owning cell's slice (server sets its cellIndex).
+              else if (!isInterior && (r.kind === "cell" || (r.kind === "payload" && r.cellIndex != null))){
                 const cell = r.cellIndex != null ? cellByIndex(r.cellIndex) : undefined;
                 out.push(
                   <div key={i} ref={(el) => { rowRefs.current[i] = el; }}
