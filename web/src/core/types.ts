@@ -162,6 +162,13 @@ export interface PageRegion {
   kind: string; // db-header|page-header|cellptr-array|cell|free|reserved|overflow-header|payload|freelist-header|freelist-array|...
   cellIndex?: number;
 }
+
+export interface RowRun {
+  startRowId: number;
+  endRowId: number;
+  rowCount: number;
+}
+
 export interface PageCell {
   cellIndex: number;
   offset: number;
@@ -174,8 +181,8 @@ export interface PageCell {
   // Table-interior only: the actual rowids in this divider cell's left-child
   // subtree — a count plus collapsed runs (rowids aren't contiguous: deletions
   // leave gaps). A run [s, e] with s === e is a single rowid.
-  rowidCount?: number;
-  rowidRanges?: [number, number][];
+  rowCount?: number;
+  rowRuns?: RowRun[];
 }
 export interface PageContent {
   pageNumber: number;
@@ -189,7 +196,7 @@ export interface PageContent {
   ownerPage?: number; // for an overflow page: the leaf/interior page that owns its cell
   // Table-interior only: rowids covered by the rightmost-pointer child, and a
   // flag when subtree enumeration was capped (very large subtree).
-  rightmostRowids?: { count: number; ranges: [number, number][] };
+  rightmostRowRuns?: { rowCount: number; rowRuns: RowRun[] };
   rowidCapped?: boolean;
 }
 export interface PageDetail {

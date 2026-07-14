@@ -239,5 +239,8 @@ void writeMap(const std::string& sourcePath, const std::string& outPath) {
     }
     writer.writeMeta(db.header(), sourcePath, n);
 
+    // Precompute per-interior-page rowid runs from the written cells/pointers.
+    writer.writeRowRuns(n);
+
     writer.commit();
 }

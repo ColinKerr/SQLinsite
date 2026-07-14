@@ -37,6 +37,9 @@ public:
     void writeRun(std::int64_t startPage, std::int64_t endPage,
                   const std::string& pageType, std::int64_t objectId);
     void writeTypeCount(const std::string& pageType, std::int64_t count);
+    // Precomputes page_row_runs from the already-written cells/pointers/pages
+    // (one INSERT…SELECT). Call after all pages are written, before commit().
+    void writeRowRuns(std::int64_t pageCount);
     void commit();
 
 private:

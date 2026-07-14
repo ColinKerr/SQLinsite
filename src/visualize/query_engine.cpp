@@ -173,12 +173,11 @@ void QueryEngine::mapRowPages(Entry& entry, const std::vector<std::string>& tabl
     const int D = static_cast<int>(tables.size());
     if (sqlite3_prepare_v2(db, aug.sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK &&
         sqlite3_column_count(stmt) == D + static_cast<int>(userN)) {
-        std::vector<std::unordered_map<std::int64_t, std::int64_t>> pageMaps;
+        // rowid → leaf page, resolved on demand (indexed) and memoized per table,
+        // so only the rowids actually displayed are mapped — no whole-table scan.
+        std::vector<std::unordered_map<std::int64_t, std::int64_t>> pageMaps(tables.size());
         std::vector<std::unordered_map<std::string, int>> cidMaps;
-        for (const std::string& t : tables) {
-            pageMaps.push_back(map_->rowidLeafPages(t));
-            cidMaps.push_back(tableCids(db, t));
-        }
+        for (const std::string& t : tables) cidMaps.push_back(tableCids(db, t));
 
         std::int64_t ri = 0;
         while (ri < static_cast<std::int64_t>(entry.rows.size()) &&
@@ -195,8 +194,10 @@ void QueryEngine::mapRowPages(Entry& entry, const std::vector<std::string>& tabl
                     if (sqlite3_column_type(stmt, ti) == SQLITE_NULL) continue;
                     const std::int64_t rid = sqlite3_column_int64(stmt, ti);
                     auto it = pageMaps[ti].find(rid);
-                    if (it == pageMaps[ti].end()) continue;
+                    if (it == pageMaps[ti].end())
+                        it = pageMaps[ti].emplace(rid, map_->leafPageForRowid(tables[ti], rid)).first;
                     const std::int64_t leaf = it->second;
+                    if (leaf == 0) continue;  // rowid not found in the map
 
                     // Resolve the column's storage index, then map its bytes to
                     // pages. Fall back to the leaf page when precise mapping is

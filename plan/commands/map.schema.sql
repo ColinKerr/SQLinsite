@@ -54,6 +54,8 @@ CREATE TABLE cells (
   keyJson      TEXT,     -- nullable: decoded index key values as a JSON array
   PRIMARY KEY (pageNumber, cellIndex)
 ) WITHOUT ROWID;
+CREATE INDEX cells_rowid ON cells(rowid) WHERE rowid IS NOT NULL;  -- rowid -> leaf page
+CREATE INDEX cells_leftChild ON cells(leftChild);
 
 CREATE TABLE pointers (
   fromPage INTEGER,
@@ -62,6 +64,19 @@ CREATE TABLE pointers (
 );
 CREATE INDEX pointers_from ON pointers(fromPage);
 CREATE INDEX pointers_to   ON pointers(toPage);
+
+-- Maximal contiguous rowid runs of each table b-tree page's subtree (rowids
+-- aren't contiguous: deletions leave gaps). One row per run; every table-interior
+-- AND table-leaf page is a parentPageNumber — a leaf is its own subtree — so a
+-- child page's runs are looked up the same way whether it is interior or leaf.
+-- Distinct from `runs` below, which describes page-number spans, not rowids.
+CREATE TABLE page_row_runs (
+  parentPageNumber INTEGER,  -- a table-interior or table-leaf page
+  startRowId       INTEGER,
+  endRowId         INTEGER,
+  rowCount         INTEGER   -- rows in the run = endRowId - startRowId + 1
+);
+CREATE INDEX page_row_runs_parent ON page_row_runs(parentPageNumber);
 
 CREATE TABLE ptrmap (
   pageNumber INTEGER,  -- the pointer-map page

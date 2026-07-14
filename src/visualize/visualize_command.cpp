@@ -224,18 +224,22 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
                        if (!body.empty() && type == "table-interior") {
                            try {
                                nlohmann::json j = nlohmann::json::parse(body);
-                               nlohmann::json r = nlohmann::json::parse(db.tableInteriorRowidRangesJson(n));
-                               std::map<std::int64_t, nlohmann::json> byIndex;
-                               for (const auto& e : r.value("cells", nlohmann::json::array()))
-                                   byIndex[e.value("cellIndex", std::int64_t{-1})] = e;
+                               nlohmann::json r = nlohmann::json::parse(db.tableInteriorRowRunsJson(n));
+                               // Merge the rowid runs into the decoded cells (keeping
+                               // cellIndex/offset/size), matched by the child page —
+                               // the runs are keyed by `leftChild`.
+                               std::map<std::int64_t, nlohmann::json> byChild;
+                               for (const auto& rc : r.value("cells", nlohmann::json::array()))
+                                   if (rc.value("leftChild", nlohmann::json()).is_number())
+                                       byChild[rc["leftChild"].get<std::int64_t>()] = rc;
                                for (auto& cell : j["cells"]) {
-                                   auto it = byIndex.find(cell.value("cellIndex", std::int64_t{-1}));
-                                   if (it == byIndex.end()) continue;
-                                   cell["rowidCount"] = it->second.value("count", std::int64_t{0});
-                                   cell["rowidRanges"] = it->second.value("ranges", nlohmann::json::array());
+                                   if (!cell.value("leftChild", nlohmann::json()).is_number()) continue;
+                                   auto it = byChild.find(cell["leftChild"].get<std::int64_t>());
+                                   if (it == byChild.end()) continue;
+                                   for (const char* k : {"rowCount", "runCount", "rowRuns"})
+                                       if (it->second.contains(k)) cell[k] = it->second[k];
                                }
-                               if (r.contains("rightmost")) j["rightmostRowids"] = r["rightmost"];
-                               j["rowidCapped"] = r.value("capped", false);
+                               if (r.contains("rightmost")) j["rightmostRowRuns"] = r["rightmost"];
                                body = j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
                            } catch (...) {
                            }

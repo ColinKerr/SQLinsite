@@ -9,7 +9,6 @@
 
 # Editor / OS
 .DS_Store
-.vscode/
 .idea/
 
 # Test/run artifacts

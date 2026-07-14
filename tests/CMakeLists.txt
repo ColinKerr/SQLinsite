@@ -28,6 +28,7 @@ add_executable(sqlinsite_tests
 )
 target_link_libraries(sqlinsite_tests PRIVATE sqlinsite_core doctest::doctest)
 
+
 # Test fixtures are written to the build dir at test time.
 target_compile_definitions(sqlinsite_tests PRIVATE
   SQLINSITE_TEST_TMPDIR="${CMAKE_CURRENT_BINARY_DIR}")

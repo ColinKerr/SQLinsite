@@ -89,11 +89,19 @@ CREATE TABLE cells (             -- full per-cell detail
   payloadBytes INTEGER, localBytes INTEGER,
   overflowPage INTEGER, keyJson TEXT,   -- decoded index key values, JSON array
   PRIMARY KEY (pageNumber, cellIndex)) WITHOUT ROWID;
+CREATE INDEX cells_rowid ON cells(rowid) WHERE rowid IS NOT NULL;  -- rowid → leaf page
+CREATE INDEX cells_leftChild ON cells(leftChild);
 
 CREATE TABLE pointers (
   fromPage INTEGER, toPage INTEGER, kind TEXT);  -- child|overflow|freelist-*|ptrmap-parent
 CREATE INDEX pointers_from ON pointers(fromPage);
 CREATE INDEX pointers_to   ON pointers(toPage);
+
+CREATE TABLE page_row_runs (    -- contiguous rowid runs of each table page's subtree
+  parentPageNumber INTEGER,     -- a table-interior OR table-leaf page
+  startRowId INTEGER, endRowId INTEGER,
+  rowCount INTEGER);            -- endRowId - startRowId + 1
+CREATE INDEX page_row_runs_parent ON page_row_runs(parentPageNumber);
 
 CREATE TABLE ptrmap (            -- pointer-map entries (auto_vacuum)
   pageNumber INTEGER, targetPage INTEGER,
@@ -122,14 +130,28 @@ zoomed out (one run can represent millions of pages). They are computed in the
 single sequential pass and indexed by `startPage`; an overlap query is
 `WHERE startPage <= :to AND endPage >= :from`.
 
+### Why `page_row_runs`
+
+Distinct from `runs` (page-number spans): `page_row_runs` stores, for **every**
+table b-tree page — interior *and* leaf — the maximal contiguous **rowid** runs of
+that page's subtree (a leaf is its own subtree; rowids aren't contiguous —
+deletions leave gaps). It is computed once at build time (a finalization
+`INSERT … SELECT` over `cells` + `pointers`) so the visualizer can answer "what
+rows does this page cover" without descending the b-tree at request time. Because
+leaf pages are included too, the Table Interior Cell control resolves every direct
+child with the **same** `page_row_runs` lookup — the "last interior page before the
+leaves" works exactly like any higher interior page, no leaf special-case.
+
 ### Indexing rationale
 
 - `pages.pageNumber` is the rowid → O(log n) range scans for a viewport.
 - `cells` and `ptrmap` are keyed by page → fetched only when one page is
-  inspected (zoomed-in popup).
+  inspected (zoomed-in popup); `cells(rowid)` (partial, leaf cells) maps a result
+  rowid straight to its leaf page for Query-view cell coloring.
 - `pointers(fromPage)` for a page's outgoing links; `pointers(toPage)` for
   "what points here" (used by clickable links / back-navigation).
 - `runs(startPage)` for zoomed-out level-of-detail queries.
+- `page_row_runs(parentPageNumber)` to fetch one interior page's rowid runs.
 
 ## Edge cases
 

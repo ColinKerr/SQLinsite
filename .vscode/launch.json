@@ -1,0 +1,65 @@
+{
+    "version": "0.2.0",
+    // These debug the C++ test binary. They build (and, if needed, configure) a
+    // Debug build in cmake-build-debug/ first (preLaunchTask), so breakpoints bind
+    // and stepping is clean — the default build/ is Release (-O2, no -g).
+    //
+    // On Apple Silicon the RECOMMENDED debugger is CodeLLDB (extension id
+    // vadimcn.vscode-lldb) — the Microsoft cppdbg path uses lldb-mi, which is flaky
+    // on arm64 (breakpoints may not bind). Install CodeLLDB for the "(CodeLLDB)"
+    // configs; the "(cppdbg)" config is a fallback using your installed C/C++ ext.
+    "configurations": [
+        {
+            "name": "C++ tests: all (CodeLLDB)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/cmake-build-debug/tests/sqlinsite_tests",
+            "args": [],
+            "cwd": "${workspaceFolder}/cmake-build-debug/tests",
+            "preLaunchTask": "cmake: build tests (debug)",
+            // Break on every C++ throw (in addition to your source breakpoints).
+            // Delete this line to instead use the BREAKPOINTS panel's "C++: on
+            // throw" filter, or when the whole suite's expected throws get noisy.
+            "preRunCommands": [ "breakpoint set -E c++" ]
+        },
+        {
+            "name": "C++ tests: by name (CodeLLDB)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/cmake-build-debug/tests/sqlinsite_tests",
+            // Prompts for a doctest filter, e.g. *interior* — run only that case so
+            // break-on-exception isn't tripped by every other test's expected throws.
+            "args": [ "--test-case=${input:testCase}" ],
+            "cwd": "${workspaceFolder}/cmake-build-debug/tests",
+            "preLaunchTask": "cmake: build tests (debug)",
+            "preRunCommands": [ "breakpoint set -E c++" ]
+        },
+        {
+            "name": "C++ tests: all (cppdbg fallback)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/cmake-build-debug/tests/sqlinsite_tests",
+            "args": [],
+            "cwd": "${workspaceFolder}/cmake-build-debug/tests",
+            "MIMode": "lldb",
+            "stopAtEntry": false,
+            "externalConsole": false,
+            "preLaunchTask": "cmake: build tests (debug)",
+            "setupCommands": [
+                {
+                    "description": "Break on all C++ exceptions",
+                    "text": "-interpreter-exec console \"break set -E c++\"",
+                    "ignoreFailures": true
+                }
+            ]
+        }
+    ],
+    "inputs": [
+        {
+            "id": "testCase",
+            "type": "promptString",
+            "description": "doctest --test-case filter (wildcards ok, e.g. *interior*)",
+            "default": "*"
+        }
+    ]
+}

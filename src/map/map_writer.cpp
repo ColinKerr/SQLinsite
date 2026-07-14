@@ -29,9 +29,14 @@ CREATE TABLE cells (
   pageNumber INTEGER, cellIndex INTEGER, rowid INTEGER, leftChild INTEGER,
   payloadBytes INTEGER, localBytes INTEGER, overflowPage INTEGER, keyJson TEXT,
   PRIMARY KEY (pageNumber, cellIndex)) WITHOUT ROWID;
+CREATE INDEX cells_rowid ON cells(rowid) WHERE rowid IS NOT NULL;
+CREATE INDEX cells_leftChild ON cells(leftChild);
 CREATE TABLE pointers (fromPage INTEGER, toPage INTEGER, kind TEXT);
 CREATE INDEX pointers_from ON pointers(fromPage);
 CREATE INDEX pointers_to ON pointers(toPage);
+CREATE TABLE page_row_runs (
+  parentPageNumber INTEGER, startRowId INTEGER, endRowId INTEGER, rowCount INTEGER);
+CREATE INDEX page_row_runs_parent ON page_row_runs(parentPageNumber);
 CREATE TABLE ptrmap (
   pageNumber INTEGER, targetPage INTEGER, entryType INTEGER, parentPage INTEGER,
   PRIMARY KEY (pageNumber, targetPage)) WITHOUT ROWID;
@@ -261,6 +266,37 @@ void MapWriter::writeTypeCount(const std::string& pageType, std::int64_t count) 
     sqlite3_bind_text(typeCount_, 1, pageType.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(typeCount_, 2, count);
     runStep(db_, typeCount_);
+}
+
+void MapWriter::writeRowRuns(std::int64_t pageCount) {
+    // For every table b-tree page — interior AND leaf — the maximal contiguous
+    // rowid runs of the rows in its subtree. A table-leaf page is its own subtree
+    // (just its own rowids); an interior page fans out to its descendant leaves.
+    // Including leaf pages lets a consumer look up any child page uniformly (the
+    // "last interior page before the leaves" resolves its leaf children with the
+    // same query as any higher interior page). `reach` seeds every table page and
+    // follows child pointers; the leaf descendants' rowids are collapsed into runs
+    // by a gaps-and-islands GROUP BY. Runs are compact even when rowids have gaps.
+    const std::string sql =
+        "INSERT INTO page_row_runs(parentPageNumber, startRowId, endRowId, rowCount) "
+        "WITH RECURSIVE "
+        "reach(root, pg, depth) AS ("
+        " SELECT pageNumber, pageNumber, 0 FROM pages WHERE pageType IN ('table-interior','table-leaf')"
+        " UNION ALL"
+        " SELECT reach.root, ptr.toPage, reach.depth+1 FROM reach"
+        "  JOIN pointers ptr ON ptr.fromPage=reach.pg AND ptr.kind='child'"
+        "  WHERE reach.depth < " + std::to_string(pageCount + 1) + "), "
+        "leaf_rids(root, rid) AS ("
+        " SELECT reach.root, c.rowid FROM reach"
+        "  JOIN pages p ON p.pageNumber=reach.pg AND p.pageType='table-leaf'"
+        "  JOIN cells c ON c.pageNumber=reach.pg WHERE c.rowid IS NOT NULL), "
+        "isl AS ("
+        " SELECT root, rid, rid - ROW_NUMBER() OVER (PARTITION BY root ORDER BY rid) AS grp"
+        "  FROM leaf_rids) "
+        "SELECT root, MIN(rid), MAX(rid), MAX(rid)-MIN(rid)+1 FROM isl GROUP BY root, grp";
+    if (sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, nullptr) != SQLITE_OK) {
+        fail(db_, "write page_row_runs");
+    }
 }
 
 void MapWriter::commit() {

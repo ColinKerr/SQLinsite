@@ -186,28 +186,27 @@ std::map<std::string, MapObjStat> MapDb::objectStats() const {
     return out;
 }
 
-std::unordered_map<std::int64_t, std::int64_t> MapDb::rowidLeafPages(
-    const std::string& tableName) const {
-    std::unordered_map<std::int64_t, std::int64_t> out;
+std::int64_t MapDb::leafPageForRowid(const std::string& tableName,
+                                     std::int64_t rowid) const {
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(
             db_,
-            // rowid is filled only for table-leaf cells (where the row's data
-            // lives); the pageType constraint is belt-and-suspenders alongside the
-            // rowid IS NOT NULL check.
-            "SELECT c.rowid, c.pageNumber FROM cells c "
+            // rowid lives only on table-leaf cells; the cells_rowid index makes
+            // this an indexed point lookup. The objectId filter disambiguates the
+            // same rowid value across different tables (each table's own space).
+            "SELECT c.pageNumber FROM cells c "
             "JOIN pages p ON p.pageNumber = c.pageNumber "
-            "WHERE c.rowid IS NOT NULL AND p.pageType = 'table-leaf' AND p.objectId = "
-            "(SELECT id FROM objects WHERE name=? AND type='table')",
+            "WHERE c.rowid = ?1 AND p.pageType = 'table-leaf' AND p.objectId = "
+            "(SELECT id FROM objects WHERE name = ?2 AND type = 'table') LIMIT 1",
             -1, &stmt, nullptr) != SQLITE_OK) {
-        return out;
+        return 0;
     }
-    sqlite3_bind_text(stmt, 1, tableName.c_str(), -1, SQLITE_TRANSIENT);
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
-        out[sqlite3_column_int64(stmt, 0)] = sqlite3_column_int64(stmt, 1);
-    }
+    sqlite3_bind_int64(stmt, 1, rowid);
+    sqlite3_bind_text(stmt, 2, tableName.c_str(), -1, SQLITE_TRANSIENT);
+    std::int64_t page = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) page = sqlite3_column_int64(stmt, 0);
     sqlite3_finalize(stmt);
-    return out;
+    return page;
 }
 
 std::string MapDb::pagesJson(std::int64_t from, std::int64_t to,
@@ -370,70 +369,73 @@ std::int64_t MapDb::overflowOwner(std::int64_t page) const {
     return r.empty() ? 0 : r[0]["pg"].get<std::int64_t>();
 }
 
-std::string MapDb::tableInteriorRowidRangesJson(std::int64_t page) const {
-    // Every divider cell must appear in the output (even a child whose whole
-    // subtree was deleted, giving 0 rowids), so enumerate the cells up front.
-    json cellRows = queryRows(
-        db_, "SELECT cellIndex FROM cells WHERE pageNumber=? ORDER BY cellIndex", {page});
-    std::vector<std::int64_t> cellIndexOf;  // cellIndexOf[bucket] for bucket 0..k-1
-    for (const auto& c : cellRows)
-        if (c["cellIndex"].is_number()) cellIndexOf.push_back(c["cellIndex"].get<std::int64_t>());
-    const std::size_t k = cellIndexOf.size();
+/**
+ * Returns a json string with format 
+ * {
+ * 'cells' : [
+ *      {
+ *      'leftChild': 424242
+ *      'rowCount': 42,
+ *      'runCount': 1,
+ *      'rowRuns': [
+ *          {
+ *          'startRowId': 0,
+ *          'endRowId': 42,
+ *          'rowCount': 42
+ *          }
+ *      ]
+ *      }
+ * ]
+ * 'rightmost': {
+ *      'leftChild': 424242
+ *      'rowCount': 42,
+ *      'runCount': 1,
+ *      'rowRuns': [
+ *          {
+ *          'startRowId': 0,
+ *          'endRowId': 42,
+ *          'rowCount': 42
+ *          }
+ *      ]
+ * }
+ * }
+ * 
+ */
+std::string MapDb::tableInteriorRowRunsJson(std::int64_t page) const {
 
-    // One recursive query does the whole computation. Rowids live only on
-    // table-leaf cells (interior divider keys are boundaries, not real rowids and
-    // aren't stored), so we bucket by TREE STRUCTURE instead of divider keys:
-    // `seed` is this page's direct children (each cell's leftChild → bucket=cellIndex,
-    // the rightmost pointer → bucket=k); `walk` descends the child-pointer graph
-    // carrying that bucket down to every descendant page; `rids` reads the actual
-    // rowids from the table-leaf descendants (capped so a huge subtree can't stall
-    // the request); `islands` collapses consecutive rowids into runs per bucket
-    // (gaps-and-islands). Returns one row per run: (bucket, lo, hi, cnt).
-    const std::int64_t cap = 200000;
     const std::string sql =
-        "WITH RECURSIVE"
-        " seed(pg, bucket) AS ("
-        "  SELECT leftChild, cellIndex FROM cells WHERE pageNumber=?1 AND leftChild IS NOT NULL"
-        "  UNION ALL"
-        "  SELECT rightmostPointer, (SELECT COUNT(*) FROM cells WHERE pageNumber=?1)"
-        "   FROM pages WHERE pageNumber=?1 AND rightmostPointer IS NOT NULL AND rightmostPointer>0),"
-        " walk(pg, bucket, depth) AS ("
-        "  SELECT pg, bucket, 0 FROM seed"
-        "  UNION ALL"
-        "  SELECT ptr.toPage, walk.bucket, walk.depth+1 FROM walk"
-        "   JOIN pointers ptr ON ptr.fromPage=walk.pg AND ptr.kind='child'"
-        "   WHERE walk.depth<10000),"
-        " leafBucket(leafPage, bucket) AS ("
-        "  SELECT walk.pg, walk.bucket FROM walk JOIN pages p ON p.pageNumber=walk.pg"
-        "   WHERE p.pageType='table-leaf'),"
-        " rids(rid, bucket) AS ("
-        "  SELECT c.rowid, lb.bucket FROM cells c JOIN leafBucket lb ON lb.leafPage=c.pageNumber"
-        "   WHERE c.rowid IS NOT NULL ORDER BY c.rowid LIMIT ?2),"
-        " islands(rid, bucket, grp) AS ("
-        "  SELECT rid, bucket, rid - ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY rid)"
-        "   FROM rids)"
-        " SELECT bucket, MIN(rid) AS lo, MAX(rid) AS hi, COUNT(*) AS cnt"
-        " FROM islands GROUP BY bucket, grp ORDER BY bucket, lo";
-    json runs = queryRows(db_, sql, {page, cap + 1});
+        R"sql_(SELECT c.cellIndex, 
+            json_object('leftChild', prr.parentPageNumber, 
+                        'rowCount', sum(prr.rowCount),
+                        'runCount', COUNT(*),
+                        'rowRuns', json_group_array(
+                            json_object('startRowId', prr.startRowId,
+                                        'endRowId', prr.endRowId,
+                                        'rowCount', prr.rowCount)
+                                )
+                ) AS cellContents
+            FROM page_row_runs prr 
+            LEFT OUTER JOIN cells c ON c.leftChild = prr.parentPageNumber
+            WHERE prr.parentPageNumber IN (SELECT toPage FROM pointers WHERE fromPage = ?1) OR 
+            prr.parentPageNumber = (SELECT rightmostPointer FROM pages WHERE pageNumber = ?1)
+            GROUP BY c.cellIndex
+            ORDER BY c.cellIndex ASC)sql_";
+    json cells = queryRows(db_, sql, {page});
 
-    std::vector<std::int64_t> counts(k + 1, 0);   // bucket k == rightmost child
-    std::vector<json> ranges(k + 1, json::array());
-    std::int64_t total = 0;
-    for (const auto& r : runs) {
-        if (!r["bucket"].is_number()) continue;
-        std::int64_t b = r["bucket"].get<std::int64_t>();
-        if (b < 0 || b > static_cast<std::int64_t>(k)) continue;  // defensive
-        ranges[b].push_back(json::array({r["lo"], r["hi"]}));
-        counts[b] += r["cnt"].get<std::int64_t>();
-        total += r["cnt"].get<std::int64_t>();
+    json out = {{"cells", json::array()}};
+    for (const auto& cell : cells) {
+        // cellContents is JSON text from SQLite's json_object(); parse it back to
+        // a nested object so consumers get {pageNumber, rowCount, rowRuns:[...]}
+        // rather than a doubly-encoded string.
+        if (!cell["cellContents"].is_string()) continue;
+        json contents = json::parse(cell["cellContents"].get<std::string>());
+        if (cell["cellIndex"].is_number()) {
+            out["cells"].push_back(std::move(contents));
+        } else {
+            out["rightmost"] = std::move(contents);
+        }
     }
-    const bool capped = total > cap;
 
-    json out = {{"cells", json::array()}, {"capped", capped}};
-    for (std::size_t i = 0; i < k; ++i)
-        out["cells"].push_back(
-            {{"cellIndex", cellIndexOf[i]}, {"count", counts[i]}, {"ranges", ranges[i]}});
-    out["rightmost"] = {{"count", counts[k]}, {"ranges", ranges[k]}};
     return out.dump();
 }
 

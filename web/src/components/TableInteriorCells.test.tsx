@@ -18,16 +18,18 @@ const content: PageContent = {
   cells: [
     // rowids 1..60 with 8 and 15 deleted → runs [1–7],[9–14],[16–60], count 58.
     { cellIndex: 0, offset: 20, size: 5, leftChild: 3, rowid: 60,
-      rowidCount: 58, rowidRanges: [[1, 7], [9, 14], [16, 60]] },
+      rowCount: 58, rowRuns: [{"startRowId": 1, "endRowId": 7, "rowCount": 7},
+        {"startRowId": 9, "endRowId": 14, "rowCount": 6},
+        {"startRowId": 16, "endRowId": 60, "rowCount": 45}] },
     { cellIndex: 1, offset: 25, size: 6, leftChild: 4, rowid: 120,
-      rowidCount: 60, rowidRanges: [[61, 120]] },
+      rowCount: 60, rowRuns: [{"startRowId": 61, "endRowId": 120, "rowCount": 60}] },
   ],
   pointers: [
     { toPage: 3, kind: "child", pageType: "table-leaf" },
     { toPage: 4, kind: "child", pageType: "table-leaf" },
     { toPage: 87, kind: "child", pageType: "table-leaf" },
   ],
-  rightmostRowids: { count: 40, ranges: [[121, 160]] },
+  rightmostRowRuns: { rowCount: 40, rowRuns: [{"startRowId": 121, "endRowId": 160, "rowCount": 40}] },
 };
 
 function renderControl(setHover = vi.fn()) {

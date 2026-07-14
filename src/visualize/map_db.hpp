@@ -36,10 +36,10 @@ public:
     // Per-object page/accessed counts keyed by object name (for /api/schema).
     std::map<std::string, MapObjStat> objectStats() const;
 
-    // rowid → leaf page for every row of a rowid table (for row→page mapping in
-    // the live-query results). One scan of the table's cells; empty if unknown.
-    std::unordered_map<std::int64_t, std::int64_t> rowidLeafPages(
-        const std::string& tableName) const;
+    // The table-leaf page holding `rowid` for the named rowid table, or 0 if not
+    // found. Indexed (cells_rowid), so the live-query results map only the rowids
+    // they actually display — no whole-table scan.
+    std::int64_t leafPageForRowid(const std::string& tableName, std::int64_t rowid) const;
 
     // Largest page range /api/pages will serialize; beyond this the client must
     // use runs instead.
@@ -70,13 +70,14 @@ public:
     // overflow chain back to the first non-overflow page). 0 if none/not overflow.
     std::int64_t overflowOwner(std::int64_t page) const;
 
-    // For a table-interior page: the actual rowids covered by each divider cell's
-    // left child and by the rightmost-pointer child, as collapsed runs plus a
-    // count (rowids aren't contiguous — deletions leave gaps). Enumeration is
-    // capped for very large subtrees. JSON:
+    // For a table-interior page: the rowids covered by each divider cell's left
+    // child and by the rightmost-pointer child, as collapsed runs plus a count
+    // (rowids aren't contiguous — deletions leave gaps). Resolved without descent:
+    // an interior child's runs come from page_row_runs, a leaf child's from its
+    // cells. Capped by run count. JSON:
     // {"cells":[{"cellIndex","count","ranges":[[lo,hi]...]}...],
     //  "rightmost":{"count","ranges"}, "capped":bool}.
-    std::string tableInteriorRowidRangesJson(std::int64_t page) const;
+    std::string tableInteriorRowRunsJson(std::int64_t page) const;
 
     // Page Tree view (b-tree structure). All lazy/windowed so nothing enumerates
     // the whole file. Children follow the map's pointer graph.

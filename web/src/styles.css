@@ -388,18 +388,26 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .pd-cval { font-family: ui-monospace, monospace; }
 
 
+/* Fixed column widths for Cell/Row Count/Bytes/Page so the header and values fit;
+   the Row Ids column (no width) takes the remaining space and wraps. */
 .pd-intcell { border-collapse: separate; border-spacing: 0; width: 100%;
-  font-family: ui-monospace, monospace; }
+  table-layout: fixed; font-family: ui-monospace, monospace; }
+.pd-intcell col.ic-col-cell  { width: 112px; max-width: 112px; }
+.pd-intcell col.ic-col-count { width: 88px; max-width: 88px;}
+.pd-intcell col.ic-col-bytes { width: 132px; max-width: 132px;}
+.pd-intcell col.ic-col-page  { width: 104px; max-width: 104px;}
 .pd-intcell th { text-align: left; color: var(--muted); font-weight: 400;
   padding: 2px 8px; position: sticky; top: 0; background: var(--panel);
-  box-shadow: inset 0 -1px 0 #2a2e37; }
-.pd-intcell td { border-bottom: 1px solid #23262e; padding: 2px 8px; white-space: nowrap; }
+  box-shadow: inset 0 -1px 0 #2a2e37;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pd-intcell td { border-bottom: 1px solid #23262e; padding: 2px 8px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pd-intcell tr.int-row, .pd-intcell tr.int-rightmost { cursor: default; }
 .pd-intcell tr.hi td { background: #262a32; }
 .pd-intcell tr.int-rightmost td { border-top: 1px solid #3a3f49; }
 .pd-intcell tr.int-rightmost td:first-child { color: var(--accent); }
-/* The Row Ids column can list many runs — let it wrap instead of overflowing. */
-.pd-intcell td.int-rowids { white-space: normal; word-break: break-word; }
+/* The Row Ids column can list many runs — let it wrap instead of clipping. */
+.pd-intcell td.int-rowids { white-space: normal; word-break: break-word; overflow: hidden; text-wrap-mode: nowrap}
 .pd-intcell caption.int-capped { caption-side: top; text-align: left; color: var(--muted);
   padding: 2px 8px; font-family: system-ui, sans-serif; }
 .pd-cvaltext { display: inline-block; max-width: 100%; max-height: 96px; overflow: auto;
