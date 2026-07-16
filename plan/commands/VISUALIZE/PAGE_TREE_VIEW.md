@@ -35,7 +35,7 @@ A key describing the page-type symbology.  Fixed at the bottom of the b-tree are
 
 All nodes, including grouping nodes, have an icon followed by the node name followed by the size in pages and bytes of the node and it's children.  Page count and size in bytes have muted color.  
 
-Page nodes are styled by page type and include a pop over with a text description of their type and basic details about the page.
+Page nodes are styled by page type with type included in the tree key.
 
 #### Formatting for Sizes in bytes
 
