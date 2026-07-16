@@ -8,7 +8,8 @@ function jsonResp(body: unknown) {
 beforeEach(() => {
   useTree.setState({
     roots: null, childrenByKey: {}, expanded: new Set(), loading: new Set(),
-    selectedPage: null, selectedKey: null, content: null, overview: null, contentLoading: false,
+    selectedPage: null, selectedKey: null, content: null, overview: null, overviewMode: null,
+    contentLoading: false,
   });
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     const u = String(url);
@@ -18,9 +19,9 @@ beforeEach(() => {
       return jsonResp({ roots: [
         { kind: "page", label: "sqlite_schema", page: 1, pageType: "table-leaf", objectId: null, hasChildren: 0 },
         { kind: "table", label: "T", page: null, pageType: null, objectId: 1, hasChildren: true,
-          tableBtree: { kind: "page", label: "T (table)", page: 2, pageType: "table-interior", objectId: 1, hasChildren: 1 },
+          tableBtree: { kind: "page", label: "T (table)", page: 2, pageType: "table-interior", objectId: 1, hasChildren: 1, subtreePageCount: 3 },
           indexes: [
-            { kind: "page", label: "T_n (index)", page: 3, pageType: "index-leaf", objectId: 2, hasChildren: 0 },
+            { kind: "page", label: "T_n (index)", page: 3, pageType: "index-leaf", objectId: 2, hasChildren: 0, subtreePageCount: 2 },
           ] },
       ] });
     }
@@ -38,7 +39,8 @@ beforeEach(() => {
     }
     if (u.startsWith("/api/tree/object?id=1")) {
       return jsonResp({ overview: { objectId: 1, type: "table", name: "T", sql: "CREATE TABLE T(...)",
-        pageCount: 4, rootPage: 2, rowCount: 42, indexes: [{ name: "T_n", pageCount: 2, rootPage: 3 }] } });
+        pageCount: 4, rootPage: 2, rowCount: 42,
+        indexes: [{ name: "T_n", pageCount: 2, rootPage: 3, sql: "CREATE INDEX T_n ON T(n)" }] } });
     }
     if (u.startsWith("/api/page/5/content")) return jsonResp({ pageNumber: 5, regions: [] });
     return jsonResp({});
@@ -88,15 +90,35 @@ describe("tree store", () => {
     expect(idxKids[0].page).toBe(3);
   });
 
-  it("selectTable loads the overview and marks the node selected", async () => {
+  it("a table grouping node's subtree size sums its b-tree and indexes", async () => {
+    await useTree.getState().loadRoots();
+    const table = useTree.getState().roots!.find((r) => r.kind === "table")!;
+    expect(table.subtreePageCount).toBe(5); // b-tree 3 + index 2
+    await useTree.getState().toggle(table);
+    const indexes = useTree.getState().childrenByKey[table.key].find((n) => n.kind === "indexes")!;
+    expect(indexes.subtreePageCount).toBe(2); // sum of index b-trees
+    expect(indexes.objectId).toBe(1);         // owning table's id
+  });
+
+  it("selectTable loads the overview in table mode and marks the node selected", async () => {
     await useTree.getState().loadRoots();
     const table = useTree.getState().roots!.find((r) => r.kind === "table")!;
     await useTree.getState().selectTable(1, table.key);
     const s = useTree.getState();
     expect(s.selectedKey).toBe(table.key);
     expect(s.selectedPage).toBeNull();
+    expect(s.overviewMode).toBe("table");
     expect(s.overview?.name).toBe("T");
     expect(s.overview?.rowCount).toBe(42);
+  });
+
+  it("selectIndexes loads the same overview in index mode", async () => {
+    await useTree.getState().loadRoots();
+    await useTree.getState().selectIndexes(1, "t:1>indexes");
+    const s = useTree.getState();
+    expect(s.selectedKey).toBe("t:1>indexes");
+    expect(s.overviewMode).toBe("index");
+    expect(s.overview?.indexes[0].sql).toMatch(/CREATE INDEX/);
   });
 
   it("revealPage expands the synthetic table chain down to the page", async () => {

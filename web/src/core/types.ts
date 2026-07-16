@@ -125,6 +125,7 @@ export interface Pointer {
 export interface PageBasics {
   cellCount?: number | null;
   freeBytes?: number | null;
+  subtreePageCount?: number | null; // pages in this node's subtree (incl. self)
 }
 // A table/index b-tree root page, inlined under a table grouping node.
 export interface TreeBtree extends PageBasics {
@@ -146,7 +147,12 @@ export interface TreeRoot extends PageBasics {
   tableBtree?: TreeBtree | null;
   indexes?: TreeBtree[];
 }
-export interface TreeObjectIndex { name: string; pageCount: number | null; rootPage: number | null; }
+export interface TreeObjectIndex {
+  name: string;
+  pageCount: number | null;
+  rootPage: number | null;
+  sql: string | null; // CREATE INDEX statement (for the Index Overview)
+}
 export interface TreeObjectOverview {
   objectId: number;
   type: string;

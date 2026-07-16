@@ -325,8 +325,10 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .tn-arrow.open { transform: rotate(90deg); }
 .tn-glyph { flex: 0 0 auto; width: 15px; height: 15px; border-radius: 3px; color: #000;
   font-size: 9px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
-.tn-label { overflow: hidden; text-overflow: ellipsis; }
+.tn-label { overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
 .tn-tag { color: var(--muted); font-size: 10px; }
+/* Subtree size (pages · bytes), muted; sits after the label and never shrinks. */
+.tn-size { flex: 0 0 auto; font-size: 11px; font-variant-numeric: tabular-nums; }
 .tn-more { color: var(--accent); }
 /* Grouping nodes (table / Indexes) use a neutral "folder" glyph, not a page color. */
 .tn-folder { background: transparent; color: var(--muted); font-size: 12px; }
@@ -337,6 +339,7 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .to-sql { margin: 0; padding: 6px 8px; background: #0e1014; border: 1px solid #2a2e37;
   border-radius: 4px; font-family: ui-monospace, monospace; font-size: 12px;
   white-space: pre-wrap; word-break: break-word; }
+.to-stmt { font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); }
 
 /* Key bar fixed at the bottom of the b-tree area (does not scroll). Entries are
    laid out in 2 columns, or 3 when the tree pane is wide enough. */

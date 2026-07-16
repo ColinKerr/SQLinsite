@@ -1,13 +1,17 @@
 import { useTree } from "../state/treeStore.ts";
+import { useViz } from "../state/store.ts";
+import { formatBytes } from "../core/format.ts";
 import { PageCard } from "./PageDetail.tsx";
+import { IndexTable } from "./IndexTable.tsx";
 
 // Right-hand pane shown when a table grouping node is selected in the b-tree tree:
-// an overview of the table (its SQL, page/row counts, root page) and its indexes.
-// Root-page controls navigate + reveal the corresponding b-tree in the tree.
+// an overview of the table (its SQL, page/row counts, size, root page) and its
+// indexes. Root-page controls navigate + reveal the corresponding b-tree.
 export function TableOverview() {
   const overview = useTree((s) => s.overview);
   const loading = useTree((s) => s.contentLoading);
   const revealPage = useTree((s) => s.revealPage);
+  const pageSize = useViz((s) => s.meta?.meta.pageSize ?? 0);
 
   if (!overview) return <div className="results-msg muted">{loading ? "Loading overview…" : "No overview."}</div>;
 
@@ -23,6 +27,8 @@ export function TableOverview() {
         <div className="pd-headerfields">
           {rowCount != null && <span className="pd-field"><b>rows</b> {rowCount}</span>}
           {pageCount != null && <span className="pd-field"><b>pages</b> {pageCount}</span>}
+          {pageCount != null && pageSize > 0 &&
+            <span className="pd-field"><b>size</b> {formatBytes(pageCount * pageSize)}</span>}
           <span className="pd-field"><b>indexes</b> {indexes.length}</span>
         </div>
       </div>
@@ -37,24 +43,7 @@ export function TableOverview() {
           )}
           <div className="to-section">
             <div className="to-title">Indexes</div>
-            {indexes.length === 0 ? (
-              <div className="muted">No indexes.</div>
-            ) : (
-              <table className="pd-coltable">
-                <thead><tr><th>name</th><th>pages</th><th>root</th></tr></thead>
-                <tbody>
-                  {indexes.map((ix) => (
-                    <tr key={ix.name}>
-                      <td>{ix.name}</td>
-                      <td className="muted">{ix.pageCount ?? "—"}</td>
-                      <td>{ix.rootPage != null
-                        ? <PageCard page={ix.rootPage} onClick={revealPage} />
-                        : "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+            <IndexTable indexes={indexes} pageSize={pageSize} onNav={revealPage} />
           </div>
         </div>
       </div>

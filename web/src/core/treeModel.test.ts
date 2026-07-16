@@ -28,10 +28,10 @@ describe("treeModel", () => {
     expect(bt.key).toBe("t:1>table:2");
     expect(bt).toMatchObject({ kind: "page", page: 2, hasChildren: true, edgeKind: "child" });
 
-    const idx = [{ kind: "page" as const, label: "T_n (index)", page: 3, pageType: "index-leaf", objectId: 2, hasChildren: 0 }];
-    const grp = indexesGroupNode("t:1", idx);
+    const idx = [{ kind: "page" as const, label: "T_n (index)", page: 3, pageType: "index-leaf", objectId: 2, hasChildren: 0, subtreePageCount: 5 }];
+    const grp = indexesGroupNode("t:1", 1, idx);
     expect(grp.key).toBe("t:1>indexes");
-    expect(grp).toMatchObject({ kind: "indexes", hasChildren: true });
+    expect(grp).toMatchObject({ kind: "indexes", hasChildren: true, objectId: 1, subtreePageCount: 5 });
     expect(btreeChildNode(grp.key, idx[0], "index").key).toBe("t:1>indexes>index:3");
   });
 

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTree } from "../state/treeStore.ts";
+import { useViz } from "../state/store.ts";
 import { flattenTree, type FlatNode, type TreeNode } from "../core/treeModel.ts";
 import { colorForPage, GLYPH } from "../core/palette.ts";
 import { pageTypeDesc } from "../core/pageTypes.ts";
+import { formatBytes } from "../core/format.ts";
 
 const ROW_H = 22;
 const INDENT = 14;
@@ -35,8 +37,9 @@ export function BTreeTree() {
   const toggle = useTree((s) => s.toggle);
   const selectPage = useTree((s) => s.selectPage);
   const selectTable = useTree((s) => s.selectTable);
-  const selectKey = useTree((s) => s.selectKey);
+  const selectIndexes = useTree((s) => s.selectIndexes);
   const loadMore = useTree((s) => s.loadMore);
+  const pageSize = useViz((s) => s.meta?.meta.pageSize ?? 0);
 
   const bodyRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -81,8 +84,8 @@ export function BTreeTree() {
   // bare grouping node (Indexes) is just highlighted.
   const select = (node: TreeNode) => {
     if (node.kind === "table" && node.objectId != null) void selectTable(node.objectId, node.key);
+    else if (node.kind === "indexes" && node.objectId != null) void selectIndexes(node.objectId, node.key);
     else if (node.page != null) void selectPage(node.page);
-    else if (node.kind === "indexes") selectKey(node.key);
   };
 
   // Clicking the row body: a collapsed node expands (body clicks never collapse —
@@ -133,6 +136,13 @@ export function BTreeTree() {
             ) : null}
             <span className="tn-label">{node.label}</span>
             {node.edgeKind === "overflow" && <span className="tn-tag">overflow</span>}
+            {/* Subtree size (this node + its children): page count and bytes, muted. */}
+            {node.subtreePageCount != null && (
+              <span className="tn-size muted">
+                {node.subtreePageCount} {node.subtreePageCount === 1 ? "page" : "pages"}
+                {pageSize > 0 && ` · ${formatBytes(node.subtreePageCount * pageSize)}`}
+              </span>
+            )}
           </>
         )}
       </div>,

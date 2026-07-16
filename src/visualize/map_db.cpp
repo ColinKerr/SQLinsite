@@ -341,12 +341,12 @@ namespace {
 // edges are not tree edges.
 constexpr const char* kChildKinds = "('child','overflow','freelist-leaf')";
 
-// Page-detail columns surfaced on tree nodes for the hover popover.
-constexpr const char* kDetailCols = "cellCount, freeBytes";
+// Page-detail columns surfaced on tree nodes (hover popover + subtree-size label).
+constexpr const char* kDetailCols = "cellCount, freeBytes, subtreePageCount";
 
 // Copies the page-detail columns from a query row onto a tree node.
 void mergeDetails(json& node, const json& row) {
-    for (const char* k : {"cellCount", "freeBytes"}) {
+    for (const char* k : {"cellCount", "freeBytes", "subtreePageCount"}) {
         node[k] = row.contains(k) ? row[k] : json(nullptr);
     }
 }
@@ -469,6 +469,7 @@ std::string MapDb::treeRootsJson() const {
     const std::string btreeCols =
         "o.id AS objectId, o.name AS name, o.tableName AS tableName, o.rootPage AS page, "
         "p.pageType AS pageType, p.cellCount AS cellCount, p.freeBytes AS freeBytes, "
+        "p.subtreePageCount AS subtreePageCount, "
         "EXISTS(SELECT 1 FROM pointers WHERE fromPage=o.rootPage AND kind IN " +
             std::string(kChildKinds) + ") AS hasChildren ";
     // rootPage=1 is sqlite_schema, already represented by the Page 1 root.
@@ -558,12 +559,12 @@ std::string MapDb::treeObjectOverviewJson(std::int64_t objectId) const {
     // Indexes owned by this table (empty for a non-table object). Filtered in C++
     // since the join key (tableName) is text and queryRows binds only integers.
     json allIdx = queryRows(
-        db_, "SELECT name, tableName, pageCount, rootPage FROM objects WHERE type='index' ORDER BY name");
+        db_, "SELECT name, tableName, pageCount, rootPage, sql FROM objects WHERE type='index' ORDER BY name");
     json idx = json::array();
     for (json& ix : allIdx)
         if (ix["tableName"] == obj["name"])
             idx.push_back({{"name", ix["name"]}, {"pageCount", ix["pageCount"]},
-                           {"rootPage", ix["rootPage"]}});
+                           {"rootPage", ix["rootPage"]}, {"sql", ix["sql"]}});
     obj["indexes"] = std::move(idx);
     return json{{"overview", std::move(obj)}}.dump();
 }
@@ -590,6 +591,7 @@ std::string MapDb::treeChildrenJson(std::int64_t page) const {
     const std::string sql =
         "SELECT ptr.toPage AS page, ptr.kind AS kind, p.pageType AS pageType, "
         "p.objectId AS objectId, p.cellCount AS cellCount, p.freeBytes AS freeBytes, "
+        "p.subtreePageCount AS subtreePageCount, "
         "EXISTS(SELECT 1 FROM pointers c WHERE c.fromPage=ptr.toPage AND c.kind IN " +
             std::string(kChildKinds) + ") AS hasChildren "
         "FROM pointers ptr JOIN pages p ON p.pageNumber=ptr.toPage "

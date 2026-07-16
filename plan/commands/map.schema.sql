@@ -38,7 +38,8 @@ CREATE TABLE pages (
   cellContentStart   INTEGER,
   fragmentedFreeBytes INTEGER,
   rightmostPointer   INTEGER,             -- nullable (interior pages)
-  parseError         TEXT                 -- nullable
+  parseError         TEXT,                -- nullable
+  subtreePageCount   INTEGER              -- pages in this page's subtree (incl. self)
 );
 CREATE INDEX pages_object ON pages(objectId);
 

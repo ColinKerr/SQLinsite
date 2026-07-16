@@ -14,7 +14,7 @@ describe("TableOverview", () => {
         objectId: 1, type: "table", name: "T",
         sql: "CREATE TABLE T(id INTEGER PRIMARY KEY, n INTEGER)",
         pageCount: 4, rootPage: 2, rowCount: 42,
-        indexes: [{ name: "T_n", pageCount: 2, rootPage: 3 }],
+        indexes: [{ name: "T_n", pageCount: 2, rootPage: 3, sql: "CREATE INDEX T_n ON T(n)" }],
       },
       contentLoading: false,
     });

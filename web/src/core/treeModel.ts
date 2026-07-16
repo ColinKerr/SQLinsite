@@ -23,7 +23,12 @@ export interface TreeNode extends PageBasics {
 
 // The subset of PageBasics fields, copied verbatim onto a node.
 function basics(x: PageBasics): PageBasics {
-  return { cellCount: x.cellCount, freeBytes: x.freeBytes };
+  return { cellCount: x.cellCount, freeBytes: x.freeBytes, subtreePageCount: x.subtreePageCount };
+}
+
+// Sum of subtree page counts across a set of b-trees (for grouping-node totals).
+function sumSubtree(btrees: TreeBtree[]): number {
+  return btrees.reduce((n, b) => n + (b.subtreePageCount ?? 0), 0);
 }
 
 export interface FlatNode {
@@ -46,10 +51,13 @@ export function rootNode(r: TreeRoot): TreeNode {
   if (r.kind === "table") {
     // A grouping node: its children (b-tree page + Indexes group) build from the
     // inlined payload without a fetch. `hasChildren` is true when it has a b-tree.
+    // Its subtree size covers the table b-tree plus every index b-tree.
+    const indexes = r.indexes ?? [];
     return { key: `t:${r.objectId}`, kind: "table", label: r.label, page: null,
              pageType: null, objectId: r.objectId,
-             hasChildren: r.tableBtree != null || (r.indexes?.length ?? 0) > 0,
-             tableBtree: r.tableBtree ?? null, indexes: r.indexes ?? [] };
+             hasChildren: r.tableBtree != null || indexes.length > 0,
+             tableBtree: r.tableBtree ?? null, indexes,
+             subtreePageCount: (r.tableBtree?.subtreePageCount ?? 0) + sumSubtree(indexes) };
   }
   return { key: `r:${r.page}`, kind: "page", label: r.label, page: r.page,
            pageType: r.pageType, objectId: r.objectId, hasChildren: truthy(r.hasChildren),
@@ -73,10 +81,14 @@ export function btreeChildNode(parentKey: string, b: TreeBtree, rel: "table" | "
 }
 
 // The "Indexes" grouping node under a table node; carries the index b-trees so
-// its children build client-side.
-export function indexesGroupNode(tableKey: string, indexes: TreeBtree[]): TreeNode {
+// its children build client-side. `objectId` is the owning table's id (used to
+// fetch the Index Overview); its subtree size is the sum of the index b-trees.
+export function indexesGroupNode(
+  tableKey: string, tableObjectId: number | null | undefined, indexes: TreeBtree[],
+): TreeNode {
   return { key: `${tableKey}>indexes`, kind: "indexes", label: "Indexes", page: null,
-           pageType: null, hasChildren: indexes.length > 0, indexes };
+           pageType: null, objectId: tableObjectId ?? null, hasChildren: indexes.length > 0,
+           indexes, subtreePageCount: sumSubtree(indexes) };
 }
 
 // A page child under `parentKey`; `edge` overrides the API's edge kind (used for

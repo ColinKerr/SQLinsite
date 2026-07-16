@@ -18,16 +18,31 @@ export interface TreeState {
   selectedPage: number | null;
   selectedKey: string | null;   // selected non-page node (table/indexes) for highlight
   content: PageContent | null;
-  overview: TreeObjectOverview | null;  // shown for a selected table grouping node
+  overview: TreeObjectOverview | null;  // table/index overview for the selected grouping node
+  overviewMode: "table" | "index" | null; // which overview view to render
   contentLoading: boolean;
 
   loadRoots(): Promise<void>;
   toggle(node: TreeNode): Promise<void>;
   loadMore(node: TreeNode): Promise<void>; // a "more" loader row
   selectPage(page: number): Promise<void>;
-  selectTable(objectId: number, key: string): Promise<void>; // table node → overview
-  selectKey(key: string): void; // select a grouping node with no detail (e.g. Indexes)
+  selectTable(objectId: number, key: string): Promise<void>;   // table node → Table Overview
+  selectIndexes(objectId: number, key: string): Promise<void>; // Indexes node → Index Overview
   revealPage(page: number): Promise<void>; // select + expand the tree down to it
+}
+
+// Selects a grouping node and loads its object overview into the right pane,
+// tagged with the view mode (Table vs Index Overview). Ignores a late response if
+// the selection moved on.
+async function loadOverview(
+  set: (partial: Partial<TreeState>) => void,
+  get: () => TreeState,
+  objectId: number, key: string, mode: "table" | "index",
+): Promise<void> {
+  set({ selectedKey: key, selectedPage: null, content: null, overview: null,
+        overviewMode: mode, contentLoading: true });
+  const r = await fetchTreeObject(objectId);
+  if (get().selectedKey === key) set({ overview: r?.overview ?? null, contentLoading: false });
 }
 
 // Fetches a node's children (page b-tree children, or a window of the freelist /
@@ -41,7 +56,8 @@ async function fetchChildren(node: TreeNode, after = 0): Promise<TreeNode[]> {
   if (node.kind === "table") {
     const kids: TreeNode[] = [];
     if (node.tableBtree) kids.push(btreeChildNode(node.key, node.tableBtree, "table"));
-    if ((node.indexes?.length ?? 0) > 0) kids.push(indexesGroupNode(node.key, node.indexes!));
+    if ((node.indexes?.length ?? 0) > 0)
+      kids.push(indexesGroupNode(node.key, node.objectId, node.indexes!));
     return kids;
   }
   if (node.kind === "indexes") {
@@ -71,6 +87,7 @@ export const useTree = create<TreeState>((set, get) => ({
   selectedKey: null,
   content: null,
   overview: null,
+  overviewMode: null,
   contentLoading: false,
 
   async loadRoots() {
@@ -112,22 +129,20 @@ export const useTree = create<TreeState>((set, get) => ({
   },
 
   async selectPage(page) {
-    set({ selectedPage: page, selectedKey: null, overview: null, contentLoading: true });
+    set({ selectedPage: page, selectedKey: null, overview: null, overviewMode: null,
+          contentLoading: true });
     const content = await fetchPageContent(page);
     // Ignore if the selection changed while fetching.
     if (get().selectedPage === page) set({ content, contentLoading: false });
   },
 
+  // Both overview modes fetch the same table overview (its `indexes` include SQL);
+  // `overviewMode` picks Table Overview vs Index Overview in the right pane.
   async selectTable(objectId, key) {
-    set({ selectedKey: key, selectedPage: null, content: null, overview: null,
-          contentLoading: true });
-    const r = await fetchTreeObject(objectId);
-    if (get().selectedKey === key) set({ overview: r?.overview ?? null, contentLoading: false });
+    await loadOverview(set, get, objectId, key, "table");
   },
-
-  selectKey(key) {
-    set({ selectedKey: key, selectedPage: null, content: null, overview: null,
-          contentLoading: false });
+  async selectIndexes(objectId, key) {
+    await loadOverview(set, get, objectId, key, "index");
   },
 
   // Select `page` and expand the tree down to its node. The path from the map is
@@ -155,7 +170,7 @@ export const useTree = create<TreeState>((set, get) => ({
       }
       const ix = (t.indexes ?? []).find((b) => b.page === rootPage);
       if (ix) {
-        const grp = indexesGroupNode(t.key, t.indexes!);
+        const grp = indexesGroupNode(t.key, t.objectId, t.indexes!);
         chain = [t, grp, btreeChildNode(grp.key, ix, "index")];
         break;
       }

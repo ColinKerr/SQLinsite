@@ -79,7 +79,8 @@ CREATE TABLE pages (             -- one row per page; pageNumber is the rowid
   freeBytes INTEGER, cellCount INTEGER,
   firstFreeblock INTEGER, cellContentStart INTEGER,
   fragmentedFreeBytes INTEGER, rightmostPointer INTEGER,
-  parseError TEXT);
+  parseError TEXT,
+  subtreePageCount INTEGER);      -- pages in this page's subtree (self + child/overflow/freelist-leaf descendants)
 CREATE INDEX pages_object ON pages(objectId);
 
 CREATE TABLE cells (             -- full per-cell detail

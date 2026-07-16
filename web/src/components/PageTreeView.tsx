@@ -3,13 +3,14 @@ import { useTree } from "../state/treeStore.ts";
 import { BTreeTree } from "./BTreeTree.tsx";
 import { PageDetail } from "./PageDetail.tsx";
 import { TableOverview } from "./TableOverview.tsx";
+import { IndexOverview } from "./IndexOverview.tsx";
 
 // The Page Tree view: the virtualized b-tree tree on the left and the page-detail
 // view on the right, separated by a draggable divider.
 export function PageTreeView() {
   const roots = useTree((s) => s.roots);
   const loadRoots = useTree((s) => s.loadRoots);
-  const overview = useTree((s) => s.overview);
+  const overviewMode = useTree((s) => s.overviewMode);
   useEffect(() => { if (!roots) void loadRoots(); }, [roots, loadRoots]);
 
   // The tree is a fixed-ish narrow column (like the Navigation Panel), resizable
@@ -37,7 +38,9 @@ export function PageTreeView() {
         <div className="tv-pane" style={{ flex: `0 0 ${treeWidth}px` }}><BTreeTree /></div>
         <div id="tv-divider" title="Drag to resize" onMouseDown={startDrag} />
         <div className="tv-pane" style={{ flex: "1 1 auto" }}>
-          {overview ? <TableOverview /> : <PageDetail />}
+          {overviewMode === "index" ? <IndexOverview />
+            : overviewMode === "table" ? <TableOverview />
+            : <PageDetail />}
         </div>
       </div>
     </main>

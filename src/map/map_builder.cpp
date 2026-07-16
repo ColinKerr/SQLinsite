@@ -241,6 +241,8 @@ void writeMap(const std::string& sourcePath, const std::string& outPath) {
 
     // Precompute per-interior-page rowid runs from the written cells/pointers.
     writer.writeRowRuns(n);
+    // Precompute each page's subtree page count (for tree-node size display).
+    writer.writeSubtreeCounts(n);
 
     writer.commit();
 }

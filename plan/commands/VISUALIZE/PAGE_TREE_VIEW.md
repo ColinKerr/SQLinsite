@@ -8,7 +8,6 @@ The view is split into two resizable areas vertically.  On the left hand side is
 
 ## b-tree tree
 
-
 ### Root nodes
 
 - 'sqlite_schema' root node.  Page 1 for the sqlite file serves as the root node.
@@ -32,9 +31,50 @@ A key describing the page-type symbology.  Fixed at the bottom of the b-tree are
 
 ### Styling
 
+#### Node Styling
+
+All nodes, including grouping nodes, have an icon followed by the node name followed by the size in pages and bytes of the node and it's children.  Page count and size in bytes have muted color.  
+
 Page nodes are styled by page type and include a pop over with a text description of their type and basic details about the page.
 
+#### Formatting for Sizes in bytes
+
+Size in bytes is formatted in kilobytes (KB), megabytes (MB) or gigabytes (GB) ensuring value is never more than 4 digits including decimal digits.
+
+#### Page Layout
+
 The b-tree tree is on the left hand side and has a similar width to the 'Navigation Panel' in other views.  The tree key is fixed at the bottom and the tree itself fills the entire remaining vertical space above the key.
+
+## Table Overview view
+
+Shows details about the table and it's indexes when the root node for a table is selected in the b-tree tree.
+
+### Content
+
+- Header
+  - Table name
+- Table details
+  - Root page show using a PageCard
+  - Number of rows in the table
+  - Number of pages in the table
+  - Size in bytes of the table based on number of pages * page size.
+- Table SQL
+  - Monospaced code text box with CREATE TABLE statement
+- Indexes
+  - A table view of the indexes for the sql table.
+  - Columns
+    - Name - Name of the index
+    - Pages - Number of pages used to store the index
+    - Size - Size in bytes of the index based on number of pages * page size.
+    - Root - Root page for index shown as a PageCard
+
+## Index Overview view
+
+Shows details about the indexes for a table when the index grouping node is selected in the b-tree tree.
+
+### Content
+
+Reuses the 'Indexes' section from the Table Overview view but adds a new column 'Statement' which shows the SQL used to create the index.
 
 ## Page Detail View
 

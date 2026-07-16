@@ -44,6 +44,10 @@ public:
     // Precomputes page_row_runs from the already-written cells/pointers/pages
     // (one INSERT…SELECT). Call after all pages are written, before commit().
     void writeRowRuns(std::int64_t pageCount);
+    // Fills pages.subtreePageCount (pages in each page's subtree, following the
+    // tree's child/overflow/freelist-leaf edges). Call after all pages/pointers
+    // are written, before commit().
+    void writeSubtreeCounts(std::int64_t pageCount);
     void commit();
 
 private:

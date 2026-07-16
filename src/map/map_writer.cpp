@@ -23,7 +23,7 @@ CREATE TABLE pages (
   pageNumber INTEGER PRIMARY KEY, pageType TEXT, objectId INTEGER,
   freeBytes INTEGER, cellCount INTEGER,
   firstFreeblock INTEGER, cellContentStart INTEGER, fragmentedFreeBytes INTEGER,
-  rightmostPointer INTEGER, parseError TEXT);
+  rightmostPointer INTEGER, parseError TEXT, subtreePageCount INTEGER);
 CREATE INDEX pages_object ON pages(objectId);
 CREATE TABLE cells (
   pageNumber INTEGER, cellIndex INTEGER, rowid INTEGER, leftChild INTEGER,
@@ -137,7 +137,11 @@ MapWriter::MapWriter(const std::string& path) {
     meta_ = prepare(db_,
         "INSERT INTO meta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
     object_ = prepare(db_, "INSERT INTO objects VALUES (?,?,?,?,?,?,?)");
-    page_ = prepare(db_, "INSERT INTO pages VALUES (?,?,?,?,?,?,?,?,?,?)");
+    // subtreePageCount is filled by a finalization pass (writeSubtreeCounts).
+    page_ = prepare(db_,
+                    "INSERT INTO pages(pageNumber,pageType,objectId,freeBytes,cellCount,"
+                    "firstFreeblock,cellContentStart,fragmentedFreeBytes,rightmostPointer,"
+                    "parseError) VALUES (?,?,?,?,?,?,?,?,?,?)");
     cell_ = prepare(db_, "INSERT INTO cells VALUES (?,?,?,?,?,?,?,?)");
     pointer_ = prepare(db_, "INSERT INTO pointers VALUES (?,?,?)");
     ptrmap_ = prepare(db_, "INSERT INTO ptrmap VALUES (?,?,?,?)");
@@ -296,6 +300,32 @@ void MapWriter::writeRowRuns(std::int64_t pageCount) {
         "SELECT root, MIN(rid), MAX(rid), MAX(rid)-MIN(rid)+1 FROM isl GROUP BY root, grp";
     if (sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, nullptr) != SQLITE_OK) {
         fail(db_, "write page_row_runs");
+    }
+}
+
+void MapWriter::writeSubtreeCounts(std::int64_t /*pageCount*/) {
+    // For every page, the number of pages in its subtree (itself plus all pages
+    // reachable through the tree's child/overflow/freelist-leaf edges — the same
+    // edges treeChildren follows). `reach` seeds every page as a root and follows
+    // those edges; UNION dedupes (root, page) pairs so the count is distinct pages
+    // and the recursion terminates even on a malformed cyclic map. Counts are
+    // aggregated once into a temp table (root primary-keyed) so the per-page UPDATE
+    // is a single indexed lookup.
+    const char* sql =
+        "CREATE TEMP TABLE subtree_counts(root INTEGER PRIMARY KEY, c INTEGER);"
+        "INSERT INTO subtree_counts(root, c) "
+        "WITH RECURSIVE reach(root, pg) AS ("
+        " SELECT pageNumber, pageNumber FROM pages"
+        " UNION"
+        " SELECT reach.root, ptr.toPage FROM reach"
+        "  JOIN pointers ptr ON ptr.fromPage=reach.pg"
+        "   AND ptr.kind IN ('child','overflow','freelist-leaf')) "
+        "SELECT root, COUNT(*) FROM reach GROUP BY root;"
+        "UPDATE pages SET subtreePageCount ="
+        " (SELECT c FROM subtree_counts WHERE root=pages.pageNumber);"
+        "DROP TABLE subtree_counts;";
+    if (sqlite3_exec(db_, sql, nullptr, nullptr, nullptr) != SQLITE_OK) {
+        fail(db_, "write subtreePageCount");
     }
 }
 
