@@ -2,6 +2,7 @@
 
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -173,12 +174,26 @@ void QueryEngine::mapRowPages(Entry& entry, const std::vector<std::string>& tabl
     const int D = static_cast<int>(tables.size());
     if (sqlite3_prepare_v2(db, aug.sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK &&
         sqlite3_column_count(stmt) == D + static_cast<int>(userN)) {
-        // rowid → leaf page, resolved on demand (indexed) and memoized per table,
-        // so only the rowids actually displayed are mapped — no whole-table scan.
-        std::vector<std::unordered_map<std::int64_t, std::int64_t>> pageMaps(tables.size());
         std::vector<std::unordered_map<std::string, int>> cidMaps;
         for (const std::string& t : tables) cidMaps.push_back(tableCids(db, t));
+        // Each user column's storage index (cid), resolved once — it depends only
+        // on the column, not the rowid.
+        std::vector<int> colCid(userN, -1);
+        for (std::size_t c = 0; c < userN; ++c) {
+            const int ti = colTable[c];
+            if (ti < 0 || !cellMap) continue;
+            const auto& src = entry.columns[c]["sourceColumn"];
+            if (!src.is_string()) continue;
+            auto cit = cidMaps[ti].find(src.get<std::string>());
+            if (cit != cidMaps[ti].end()) colCid[c] = cit->second;
+        }
 
+        // Pass 1: walk the augmented rows, recording each cell that needs a page
+        // (row, column, table, rowid) and collecting the distinct rowids per table.
+        struct Need { std::int64_t ri; std::size_t c; int ti; std::int64_t rid; };
+        std::vector<Need> needs;
+        std::vector<std::vector<std::int64_t>> wanted(tables.size());
+        std::vector<std::unordered_set<std::int64_t>> seen(tables.size());
         std::int64_t ri = 0;
         while (ri < static_cast<std::int64_t>(entry.rows.size()) &&
                sqlite3_step(stmt) == SQLITE_ROW) {
@@ -190,31 +205,31 @@ void QueryEngine::mapRowPages(Entry& entry, const std::vector<std::string>& tabl
             if (match) {
                 for (std::size_t c = 0; c < userN; ++c) {
                     const int ti = colTable[c];
-                    if (ti < 0) continue;
-                    if (sqlite3_column_type(stmt, ti) == SQLITE_NULL) continue;
+                    if (ti < 0 || sqlite3_column_type(stmt, ti) == SQLITE_NULL) continue;
                     const std::int64_t rid = sqlite3_column_int64(stmt, ti);
-                    auto it = pageMaps[ti].find(rid);
-                    if (it == pageMaps[ti].end())
-                        it = pageMaps[ti].emplace(rid, map_->leafPageForRowid(tables[ti], rid)).first;
-                    const std::int64_t leaf = it->second;
-                    if (leaf == 0) continue;  // rowid not found in the map
-
-                    // Resolve the column's storage index, then map its bytes to
-                    // pages. Fall back to the leaf page when precise mapping is
-                    // unavailable (never worse than leaf-only).
-                    std::vector<std::int64_t> pages;
-                    int cid = -1;
-                    const auto& src = entry.columns[c]["sourceColumn"];
-                    if (cellMap && src.is_string()) {
-                        auto cit = cidMaps[ti].find(src.get<std::string>());
-                        if (cit != cidMaps[ti].end()) cid = cit->second;
-                    }
-                    if (cellMap && cid >= 0) pages = cellMap->pagesForCell(leaf, rid, cid);
-                    if (pages.empty()) pages = {leaf};
-                    entry.rowPages[ri][c] = pages;
+                    needs.push_back({ri, c, ti, rid});
+                    if (seen[ti].insert(rid).second) wanted[ti].push_back(rid);
                 }
             }
             ++ri;
+        }
+
+        // Pass 2: batch-resolve rowid → leaf page per table (one query each) — a
+        // point lookup per rowid, so this stays fast for wide tables (many pages).
+        std::vector<std::unordered_map<std::int64_t, std::int64_t>> pageMaps(tables.size());
+        for (std::size_t ti = 0; ti < tables.size(); ++ti)
+            pageMaps[ti] = map_->leafPagesForRowids(tables[ti], wanted[ti]);
+
+        // Pass 3: map each cell's bytes to pages — precise via CellPageMap, else the
+        // leaf page (never worse than leaf-only). Unresolved rowids stay empty.
+        for (const Need& nd : needs) {
+            auto it = pageMaps[nd.ti].find(nd.rid);
+            if (it == pageMaps[nd.ti].end() || it->second == 0) continue;
+            const std::int64_t leaf = it->second;
+            std::vector<std::int64_t> pages;
+            if (cellMap && colCid[nd.c] >= 0) pages = cellMap->pagesForCell(leaf, nd.rid, colCid[nd.c]);
+            if (pages.empty()) pages = {leaf};
+            entry.rowPages[nd.ri][nd.c] = pages;
         }
     }
     sqlite3_finalize(stmt);

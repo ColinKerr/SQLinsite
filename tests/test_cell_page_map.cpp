@@ -53,7 +53,9 @@ TEST_CASE("cell→page mapping is per column, spanning overflow pages") {
     MapDb map(fx.mapPath);
     CellPageMap cpm = CellPageMap::open(fx.dbPath);
 
-    const std::int64_t leaf = map.leafPageForRowid("T", 1);
+    const auto tLeaves = map.leafPagesForRowids("T", {1});
+    REQUIRE(tLeaves.count(1) == 1);
+    const std::int64_t leaf = tLeaves.at(1);
     REQUIRE(leaf > 0);
 
     // Small columns live entirely within the leaf's local payload.
@@ -111,9 +113,14 @@ TEST_CASE("rowid→leaf mapping never returns table-interior pages") {
     sqlite3_stmt* q = nullptr;
     REQUIRE(sqlite3_prepare_v2(mdb, "SELECT pageType FROM pages WHERE pageNumber=?", -1,
                                &q, nullptr) == SQLITE_OK);
+    std::vector<std::int64_t> allRowids;
+    for (int rowid = 1; rowid <= 4000; ++rowid) allRowids.push_back(rowid);
+    const auto bigLeaves = map.leafPagesForRowids("Big", allRowids);  // one batched query
     bool sawInterior = false;
     for (int rowid = 1; rowid <= 4000; ++rowid) {
-        const std::int64_t page = map.leafPageForRowid("Big", rowid);
+        auto it = bigLeaves.find(rowid);
+        REQUIRE(it != bigLeaves.end());
+        const std::int64_t page = it->second;
         REQUIRE(page > 0);
         sqlite3_reset(q);
         sqlite3_bind_int64(q, 1, page);
@@ -125,7 +132,7 @@ TEST_CASE("rowid→leaf mapping never returns table-interior pages") {
     sqlite3_close(mdb);
 
     CHECK_FALSE(sawInterior);
-    CHECK(map.leafPageForRowid("Big", 999999) == 0);  // missing rowid → 0
+    CHECK(map.leafPagesForRowids("Big", {999999}).count(999999) == 0);  // missing rowid → absent
 
     // rowid is a table-leaf-only concept: this multi-level b-tree HAS interior
     // cells, but none of them carries a rowid in the map (their divider keys are

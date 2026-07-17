@@ -27,10 +27,13 @@ public:
     // Reported in /api/meta so the front-end can enable the live Query view.
     void setHasDb(bool v) { hasDb_ = v; }
 
-    // The table-leaf page holding `rowid` for the named rowid table, or 0 if not
-    // found. Indexed (cells_rowid), so the live-query results map only the rowids
-    // they actually display — no whole-table scan.
-    std::int64_t leafPageForRowid(const std::string& tableName, std::int64_t rowid) const;
+    // Resolves the table-leaf page holding each of `rowids` for the named table,
+    // as a rowid → page map (rowids not in the map are simply absent). Done in one
+    // batched query (a temp table of the wanted rowids CROSS JOIN'd against
+    // cells/pages) so every rowid is a point lookup — no per-rowid scan and no
+    // whole-table scan. Used to map only the rowids a query actually displays.
+    std::unordered_map<std::int64_t, std::int64_t> leafPagesForRowids(
+        const std::string& tableName, const std::vector<std::int64_t>& rowids) const;
 
     // Largest page range /api/pages will serialize; beyond this the client must
     // use runs instead.
@@ -98,6 +101,7 @@ public:
 
 private:
     sqlite3* db_ = nullptr;
+    std::string mapPath_;              // for opening short-lived private connections
     bool hasProfile_ = false;
     bool hasDb_ = false;
     std::vector<ProfileLeaf> leaves_;  // profile session/statement manifest

@@ -85,7 +85,7 @@ bool tableExists(sqlite3* db, const char* name) {
 
 }  // namespace
 
-MapDb::MapDb(const std::string& mapPath) {
+MapDb::MapDb(const std::string& mapPath) : mapPath_(mapPath) {
     if (sqlite3_open_v2(mapPath.c_str(), &db_, SQLITE_OPEN_READONLY, nullptr) !=
         SQLITE_OK) {
         const std::string msg = sqlite3_errmsg(db_);
@@ -174,27 +174,56 @@ std::string MapDb::metaJson() const {
     return j.dump();
 }
 
-std::int64_t MapDb::leafPageForRowid(const std::string& tableName,
-                                     std::int64_t rowid) const {
-    sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(
-            db_,
-            // rowid lives only on table-leaf cells; the cells_rowid index makes
-            // this an indexed point lookup. The objectId filter disambiguates the
-            // same rowid value across different tables (each table's own space).
-            "SELECT c.pageNumber FROM cells c "
-            "JOIN pages p ON p.pageNumber = c.pageNumber "
-            "WHERE c.rowid = ?1 AND p.pageType = 'table-leaf' AND p.objectId = "
-            "(SELECT id FROM objects WHERE name = ?2 AND type = 'table') LIMIT 1",
-            -1, &stmt, nullptr) != SQLITE_OK) {
-        return 0;
+std::unordered_map<std::int64_t, std::int64_t> MapDb::leafPagesForRowids(
+    const std::string& tableName, const std::vector<std::int64_t>& rowids) const {
+    std::unordered_map<std::int64_t, std::int64_t> out;
+    if (rowids.empty()) return out;
+
+    // Use a short-lived private connection so the temp table + insert transaction
+    // never touch the shared db_ (which other requests use concurrently). The main
+    // db is read-only; temp storage is still writable.
+    sqlite3* db = nullptr;
+    if (sqlite3_open_v2(mapPath_.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        sqlite3_close(db);
+        return out;
     }
-    sqlite3_bind_int64(stmt, 1, rowid);
-    sqlite3_bind_text(stmt, 2, tableName.c_str(), -1, SQLITE_TRANSIENT);
-    std::int64_t page = 0;
-    if (sqlite3_step(stmt) == SQLITE_ROW) page = sqlite3_column_int64(stmt, 0);
-    sqlite3_finalize(stmt);
-    return page;
+    out.reserve(rowids.size());
+
+    // Load the wanted rowids into a temp table, then resolve them all in one query.
+    // The CROSS JOINs force the join order want → cells → pages, so each rowid is a
+    // point lookup (cells_rowid, then pages' INTEGER PRIMARY KEY) rather than a
+    // per-rowid scan of the table's pages.
+    sqlite3_exec(db, "CREATE TEMP TABLE want(rowid INTEGER PRIMARY KEY)", nullptr, nullptr, nullptr);
+    sqlite3_exec(db, "BEGIN", nullptr, nullptr, nullptr);
+    sqlite3_stmt* ins = nullptr;
+    if (sqlite3_prepare_v2(db, "INSERT OR IGNORE INTO want(rowid) VALUES(?1)", -1, &ins, nullptr) ==
+        SQLITE_OK) {
+        for (const std::int64_t rid : rowids) {
+            sqlite3_bind_int64(ins, 1, rid);
+            sqlite3_step(ins);
+            sqlite3_reset(ins);
+        }
+    }
+    sqlite3_finalize(ins);
+    sqlite3_exec(db, "COMMIT", nullptr, nullptr, nullptr);
+
+    sqlite3_stmt* sel = nullptr;
+    if (sqlite3_prepare_v2(
+            db,
+            "SELECT c.rowid, c.pageNumber FROM want w "
+            "CROSS JOIN cells c ON c.rowid = w.rowid "
+            "CROSS JOIN pages p ON p.pageNumber = c.pageNumber "
+            "WHERE p.pageType = 'table-leaf' AND p.objectId = "
+            "(SELECT id FROM objects WHERE name = ?1 AND type = 'table')",
+            -1, &sel, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(sel, 1, tableName.c_str(), -1, SQLITE_TRANSIENT);
+        while (sqlite3_step(sel) == SQLITE_ROW) {
+            out[sqlite3_column_int64(sel, 0)] = sqlite3_column_int64(sel, 1);
+        }
+    }
+    sqlite3_finalize(sel);
+    sqlite3_close(db);
+    return out;
 }
 
 std::string MapDb::pagesJson(std::int64_t from, std::int64_t to,

@@ -145,6 +145,65 @@ TEST_CASE("row→page mapping resolves single-table cells, leaves others null") 
     }
 }
 
+TEST_CASE("large-result query on a wide table maps pages without hanging") {
+    // Regression guard (first bad commit d836a45): mapping each displayed rowid
+    // with a per-rowid lookup whose plan scanned all of the table's pages was
+    // O(rows * pages), so a query on a table with many pages hung. Here every row
+    // ~fills a 512-byte page, so the table has about as many pages as rows; the
+    // batched point-lookup mapping (leafPagesForRowids) must stay fast.
+    const std::string dbPath = tmpPath("qe_wide.db");
+    const std::string mapPath = tmpPath("qe_wide.sqlite");
+    std::remove(dbPath.c_str());
+    std::remove(mapPath.c_str());
+
+    sqlite3* db = nullptr;
+    REQUIRE(sqlite3_open(dbPath.c_str(), &db) == SQLITE_OK);
+    REQUIRE(sqlite3_exec(db, "PRAGMA page_size=512; CREATE TABLE T(id INTEGER PRIMARY KEY, v TEXT);",
+                         nullptr, nullptr, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_stmt* ins = nullptr;
+    REQUIRE(sqlite3_prepare_v2(db, "INSERT INTO T(v) VALUES(?)", -1, &ins, nullptr) == SQLITE_OK);
+    const std::string pad(450, 'x');  // one row ~fills a 512-byte page
+    const int N = 20000;
+    for (int i = 0; i < N; ++i) {
+        sqlite3_bind_text(ins, 1, pad.c_str(), -1, SQLITE_STATIC);
+        REQUIRE(sqlite3_step(ins) == SQLITE_DONE);
+        sqlite3_reset(ins);
+    }
+    sqlite3_finalize(ins);
+    REQUIRE(sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr) == SQLITE_OK);
+    int pageSize = 0;
+    sqlite3_stmt* ps = nullptr;
+    sqlite3_prepare_v2(db, "PRAGMA page_size;", -1, &ps, nullptr);
+    if (sqlite3_step(ps) == SQLITE_ROW) pageSize = sqlite3_column_int(ps, 0);
+    sqlite3_finalize(ps);
+    sqlite3_close(db);
+    REQUIRE(runMap(MapOptions{dbPath, mapPath}) == 0);
+
+    MapDb map(mapPath);
+    CHECK(json::parse(map.metaJson())["meta"]["pageCount"].get<int>() >= N);  // truly "wide"
+
+    QueryEngine engine(dbPath, pageSize, map);
+    const auto t0 = std::chrono::steady_clock::now();
+    const json run = json::parse(engine.runJson("SELECT id FROM T"));  // a mappable column
+    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+
+    REQUIRE_FALSE(run.contains("error"));
+    CHECK(run["rowCount"].get<int>() == N);
+    // The batched mapping is ~a second here; the O(rows*pages) regression took tens
+    // of seconds. A generous ceiling still fails hard if the hang returns.
+    CHECK(secs < 15.0);
+
+    // Correctness: each row's cell resolves to exactly its own single leaf page.
+    const json rows = json::parse(engine.rowsJson(run["queryId"].get<int>(), 0, 5));
+    REQUIRE(rows["rowPages"].size() == 5);
+    for (const auto& cell : rows["rowPages"]) {
+        REQUIRE(cell[0].is_array());
+        CHECK(cell[0].size() == 1);
+        CHECK(cell[0][0].get<int>() > 0);
+    }
+}
+
 TEST_CASE("live-query routes are served when a db is attached") {
     const Fixture fx = buildFixture();
     MapDb map(fx.mapPath);
