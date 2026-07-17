@@ -45,6 +45,10 @@ std::int64_t paramInt(const httplib::Request& req, const char* key,
     }
 }
 
+std::string paramStr(const httplib::Request& req, const char* key, const char* fallback) {
+    return req.has_param(key) ? req.get_param_value(key) : fallback;
+}
+
 // Parses a comma-separated list of profile leaf ids (e.g. "0,2,3"). An absent
 // or empty `sel` yields an empty filter, which the data layer treats as "all".
 std::vector<int> paramLeaves(const httplib::Request& req) {
@@ -155,6 +159,11 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
     });
     server.Get("/api/tree/path", [&db](const httplib::Request& req, httplib::Response& res) {
         res.set_content(db.treePathJson(paramInt(req, "page", 0)), "application/json");
+    });
+    server.Get("/api/tree/search", [&db](const httplib::Request& req, httplib::Response& res) {
+        res.set_content(
+            db.treeSearchJson(paramStr(req, "q", ""), static_cast<int>(paramInt(req, "limit", 20))),
+            "application/json");
     });
     server.Get("/api/tree/object", [&db](const httplib::Request& req, httplib::Response& res) {
         const std::string body = db.treeObjectOverviewJson(paramInt(req, "id", 0));

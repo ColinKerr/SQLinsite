@@ -1,4 +1,4 @@
-import type { PageBasics, TreeBtree, TreeChild, TreeRoot } from "./types.ts";
+import type { PageBasics, TreeBtree, TreeChild, TreeRoot, TreeSearchMatch } from "./types.ts";
 
 // A node in the b-tree tree. `page` is null for the virtual roots (including the
 // "table"/"indexes" grouping nodes) and for the "load more" loader rows.
@@ -77,6 +77,20 @@ export function btreeChildNode(parentKey: string, b: TreeBtree, rel: "table" | "
     edgeKind: "child",
     hasChildren: truthy(b.hasChildren),
     ...basics(b),
+  };
+}
+
+// A page node for a Node Search match (rendered only in the search dropdown).
+export function searchNode(m: TreeSearchMatch): TreeNode {
+  return {
+    key: `search:${m.page}`,
+    kind: "page",
+    label: m.label,
+    page: m.page,
+    pageType: m.pageType,
+    objectId: m.objectId ?? null,
+    hasChildren: truthy(m.hasChildren),
+    ...basics(m),
   };
 }
 

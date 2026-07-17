@@ -1,6 +1,7 @@
 import type {
   Meta, ObjectPagesResponse, PageContent, PageDetail, PagesResponse, ProfilePagesResponse,
   RunsResponse, TreeChild, TreeObjectResponse, TreePagesResponse, TreePathResponse, TreeRoot,
+  TreeSearchResponse,
 } from "./types.ts";
 
 export async function getJson<T>(url: string): Promise<T | null> {
@@ -41,4 +42,6 @@ export const fetchTreePath = (page: number) =>
   getJson<TreePathResponse>(`/api/tree/path?page=${page}`);
 export const fetchTreeObject = (objectId: number) =>
   getJson<TreeObjectResponse>(`/api/tree/object?id=${objectId}`);
+export const fetchTreeSearch = (q: string, limit: number) =>
+  getJson<TreeSearchResponse>(`/api/tree/search?q=${encodeURIComponent(q)}&limit=${limit}`);
 export const fetchPageContent = (n: number) => getJson<PageContent>(`/api/page/${n}/content`);

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  btreeChildNode, childNode, flattenTree, indexesGroupNode, moreNode, rootNode, type TreeNode,
+  btreeChildNode, childNode, flattenTree, indexesGroupNode, moreNode, rootNode, searchNode,
+  type TreeNode,
 } from "./treeModel.ts";
 
 describe("treeModel", () => {
@@ -33,6 +34,13 @@ describe("treeModel", () => {
     expect(grp.key).toBe("t:1>indexes");
     expect(grp).toMatchObject({ kind: "indexes", hasChildren: true, objectId: 1, subtreePageCount: 5 });
     expect(btreeChildNode(grp.key, idx[0], "index").key).toBe("t:1>indexes>index:3");
+  });
+
+  it("searchNode builds a page node with its label and details", () => {
+    const n = searchNode({ page: 123, label: "Page 123", pageType: "table-leaf",
+      objectId: 1, hasChildren: 0, subtreePageCount: 4 });
+    expect(n).toMatchObject({ key: "search:123", kind: "page", page: 123, label: "Page 123",
+      hasChildren: false, subtreePageCount: 4 });
   });
 
   it("childNode uses the parent key + edge kind for a unique key", () => {

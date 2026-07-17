@@ -98,6 +98,12 @@ public:
     // Ancestor chain from a b-tree root down to `page`, so the tree can expand to
     // it: `{path:[{page, edgeKind}]}` root-first (edgeKind null for the root).
     std::string treePathJson(std::int64_t page) const;
+    // Node-search matches for a page-number prefix (the digits `query`): pages
+    // whose decimal number starts with `query`, within [1, pageCount], ordered
+    // exact value first then prefix-extensions ascending, capped at `limit`. Each
+    // match is a tree page node ({page,label,pageType,objectId,cellCount,
+    // freeBytes,subtreePageCount,hasChildren}). JSON: {matches:[...]}.
+    std::string treeSearchJson(const std::string& query, int limit) const;
 
 private:
     sqlite3* db_ = nullptr;

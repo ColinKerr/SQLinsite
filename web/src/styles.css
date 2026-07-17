@@ -314,6 +314,21 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .btree-head { padding: 6px 10px; background: #1f2229; border-bottom: 1px solid #000;
   color: var(--muted); text-transform: uppercase; font-size: 11px; flex: 0 0 auto; }
 .btree-body { flex: 1 1 auto; overflow: auto; min-height: 0; }
+
+/* Node Search bar: fixed at the top of the b-tree area (does not scroll). */
+.btree-search { position: relative; flex: 0 0 auto; padding: 6px 8px;
+  background: #1f2229; border-bottom: 1px solid #000; }
+.btree-search-input { width: 100%; box-sizing: border-box; font: inherit;
+  background: #14161b; color: var(--ink); border: 1px solid #333a44;
+  border-radius: 5px; padding: 4px 8px; }
+.btree-search-input::placeholder { color: var(--muted); }
+.btree-search-input:focus { outline: none; border-color: var(--accent); }
+/* Dropdown of matches, rendered over the tree below. */
+.btree-search-menu { position: absolute; left: 8px; right: 8px; top: 100%; z-index: 30;
+  max-height: 320px; overflow-y: auto; background: var(--panel);
+  border: 1px solid #333a44; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+.btree-search-item { height: 22px; padding-left: 8px; }
+.btree-search-item.active { background: #30343d; }
 .tn-row { display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap;
   padding-right: 8px; }
 .tn-row:hover { background: #262a32; }

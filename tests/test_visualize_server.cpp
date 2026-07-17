@@ -147,6 +147,53 @@ TEST_CASE("tree object overview reports a table's rows and indexes") {
     CHECK(db.treeObjectOverviewJson(999999).empty());
 }
 
+TEST_CASE("tree search finds pages by page-number prefix") {
+    // A table large enough for page numbers to reach three digits.
+    const std::string dbPath = tmpPath("viz_search_src.db");
+    const std::string mapPath = tmpPath("viz_search_src.sqlite");
+    std::remove(dbPath.c_str());
+    sqlite3* db = nullptr;
+    REQUIRE(sqlite3_open(dbPath.c_str(), &db) == SQLITE_OK);
+    REQUIRE(sqlite3_exec(db, "CREATE TABLE T(id INTEGER PRIMARY KEY, s TEXT);",
+                         nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_stmt* st = nullptr;
+    REQUIRE(sqlite3_prepare_v2(db, "INSERT INTO T(id,s) VALUES(?, ?)", -1, &st, nullptr) == SQLITE_OK);
+    const std::string pad(80, 'x');
+    for (int i = 1; i <= 6000; ++i) {
+        sqlite3_bind_int(st, 1, i);
+        sqlite3_bind_text(st, 2, pad.c_str(), -1, SQLITE_STATIC);
+        REQUIRE(sqlite3_step(st) == SQLITE_DONE);
+        sqlite3_reset(st);
+    }
+    sqlite3_finalize(st);
+    sqlite3_close(db);
+    REQUIRE(runMap(MapOptions{dbPath, mapPath}) == 0);
+
+    MapDb map(mapPath);
+    const std::int64_t pageCount =
+        nlohmann::json::parse(map.metaJson())["meta"]["pageCount"].get<std::int64_t>();
+    REQUIRE(pageCount >= 123);
+
+    auto m = nlohmann::json::parse(map.treeSearchJson("123", 20))["matches"];
+    REQUIRE(m.is_array());
+    REQUIRE_FALSE(m.empty());
+    // Exact value first; each match's page number starts with "123".
+    CHECK(m[0]["page"] == 123);
+    CHECK(m[0]["label"] == "Page 123");
+    CHECK(m[0].contains("pageType"));
+    CHECK(m[0].contains("subtreePageCount"));
+    for (const auto& n : m)
+        CHECK(std::to_string(n["page"].get<std::int64_t>()).rfind("123", 0) == 0);
+
+    // Fewer than the cap: honored.
+    CHECK(nlohmann::json::parse(map.treeSearchJson("123", 1))["matches"].size() == 1);
+    // No page starts with these digits (out of range) → empty.
+    CHECK(nlohmann::json::parse(map.treeSearchJson("999999", 20))["matches"].empty());
+    // Non-digit / leading-zero queries → empty.
+    CHECK(nlohmann::json::parse(map.treeSearchJson("12a", 20))["matches"].empty());
+    CHECK(nlohmann::json::parse(map.treeSearchJson("012", 20))["matches"].empty());
+}
+
 TEST_CASE("server answers the map query API") {
     MapDb db(buildMapFixture());
 

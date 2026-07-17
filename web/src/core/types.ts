@@ -172,6 +172,15 @@ export interface TreeChild extends PageBasics {
   hasChildren: number | boolean;
 }
 export interface TreePagesResponse { pages: TreeChild[]; }
+// A Node Search match: a page node (with a display label) for the search dropdown.
+export interface TreeSearchMatch extends PageBasics {
+  page: number;
+  label: string;
+  pageType: string | null;
+  objectId: number | null;
+  hasChildren: number | boolean;
+}
+export interface TreeSearchResponse { matches: TreeSearchMatch[]; }
 export interface TreePathNode { page: number; edgeKind: string | null; }
 export interface TreePathResponse { path: TreePathNode[]; }
 

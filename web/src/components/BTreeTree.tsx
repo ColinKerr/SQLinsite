@@ -4,7 +4,8 @@ import { useViz } from "../state/store.ts";
 import { flattenTree, type FlatNode, type TreeNode } from "../core/treeModel.ts";
 import { colorForPage, GLYPH } from "../core/palette.ts";
 import { pageTypeDesc } from "../core/pageTypes.ts";
-import { formatBytes } from "../core/format.ts";
+import { TreeNodeContent } from "./TreeNodeContent.tsx";
+import { NodeSearch } from "./NodeSearch.tsx";
 
 const ROW_H = 22;
 const INDENT = 14;
@@ -110,29 +111,7 @@ export function BTreeTree() {
         {node.kind === "more" ? (
           <span className="tn-more">{loading.has(node.loaderParent ?? "") ? "Loading…" : "Load more…"}</span>
         ) : (
-          <>
-            {node.kind === "table" ? (
-              // A solid color block matching this table's page/index nodes (same
-              // object color), same size/shape as a page glyph but with no icon.
-              <span className="tn-glyph" style={{ background: colorForPage(node.objectId ?? null, "") }} />
-            ) : node.pageType ? (
-              <span className="tn-glyph"
-                    style={{ background: colorForPage(node.objectId ?? null, node.pageType) }}>
-                {GLYPH[node.pageType] ?? "·"}
-              </span>
-            ) : node.kind === "indexes" ? (
-              <span className="tn-glyph tn-folder">⊞</span>
-            ) : null}
-            <span className="tn-label">{node.label}</span>
-            {node.edgeKind === "overflow" && <span className="tn-tag">overflow</span>}
-            {/* Subtree size (this node + its children): page count and bytes, muted. */}
-            {node.subtreePageCount != null && (
-              <span className="tn-size muted">
-                {node.subtreePageCount} {node.subtreePageCount === 1 ? "page" : "pages"}
-                {pageSize > 0 && ` · ${formatBytes(node.subtreePageCount * pageSize)}`}
-              </span>
-            )}
-          </>
+          <TreeNodeContent node={node} pageSize={pageSize} />
         )}
       </div>,
     );
@@ -140,7 +119,7 @@ export function BTreeTree() {
 
   return (
     <div className="btree">
-      <div className="btree-head">b-tree tree</div>
+      <NodeSearch pageSize={pageSize} />
       <div className="btree-body" ref={bodyRef}
            onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
         <div style={{ height: total * ROW_H, position: "relative" }}>{rows}</div>

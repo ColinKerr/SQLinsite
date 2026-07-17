@@ -1,5 +1,8 @@
 #include "visualize/map_db.hpp"
 
+#include <algorithm>
+#include <cctype>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -585,6 +588,61 @@ std::string MapDb::treePathJson(std::int64_t page) const {
         " WHERE anc.depth<10000"
         ") SELECT page, edgeKind FROM anc ORDER BY depth DESC";
     return json{{"path", queryRows(db_, sql, {page})}}.dump();
+}
+
+std::string MapDb::treeSearchJson(const std::string& query, int limit) const {
+    json matches = json::array();
+    // Only a non-empty digit string with no leading zero can prefix a page number
+    // (no page number starts with 0); cap the length to keep the value in range.
+    if (query.empty() || query.size() > 18 || query[0] == '0' ||
+        !std::all_of(query.begin(), query.end(),
+                     [](unsigned char c) { return std::isdigit(c) != 0; }))
+        return json{{"matches", matches}}.dump();
+    limit = std::clamp(limit, 1, 200);
+
+    const std::int64_t base = std::stoll(query);
+    json meta = queryRows(db_, "SELECT pageCount FROM meta LIMIT 1");
+    const std::int64_t pageCount =
+        (!meta.empty() && !meta[0]["pageCount"].is_null()) ? meta[0]["pageCount"].get<std::int64_t>() : 0;
+
+    // Page numbers whose decimal string starts with `query`: the exact value, then
+    // each prefix-extension range [base·10^k, base·10^k + 10^k − 1], ascending.
+    std::vector<std::int64_t> candidates;
+    if (base >= 1 && base <= pageCount) candidates.push_back(base);
+    std::int64_t lo = base;
+    while (static_cast<int>(candidates.size()) < limit && lo <= pageCount / 10) {
+        lo *= 10;                                 // base·10^k
+        const std::int64_t width = lo / base;      // 10^k
+        const std::int64_t hi = std::min(pageCount, lo + width - 1);
+        for (std::int64_t p = lo; p <= hi && static_cast<int>(candidates.size()) < limit; ++p)
+            candidates.push_back(p);
+    }
+    if (candidates.empty()) return json{{"matches", matches}}.dump();
+
+    // Fetch node details for the matched pages (one indexed lookup by PK).
+    std::string inList;
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        if (i) inList += ',';
+        inList += std::to_string(candidates[i]);
+    }
+    const std::string sql =
+        "SELECT pageNumber AS page, pageType, objectId, cellCount, freeBytes, subtreePageCount, "
+        "EXISTS(SELECT 1 FROM pointers WHERE fromPage=pages.pageNumber AND kind IN " +
+            std::string(kChildKinds) + ") AS hasChildren "
+        "FROM pages WHERE pageNumber IN (" + inList + ")";
+    json rows = queryRows(db_, sql);
+    std::map<std::int64_t, json> byPage;
+    for (json& r : rows) {
+        const std::int64_t p = r["page"].get<std::int64_t>();
+        byPage[p] = std::move(r);
+    }
+    for (std::int64_t p : candidates) {
+        auto it = byPage.find(p);
+        if (it == byPage.end()) continue;
+        it->second["label"] = "Page " + std::to_string(p);
+        matches.push_back(std::move(it->second));
+    }
+    return json{{"matches", std::move(matches)}}.dump();
 }
 
 std::string MapDb::treeChildrenJson(std::int64_t page) const {
