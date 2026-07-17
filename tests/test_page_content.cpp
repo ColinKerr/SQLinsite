@@ -251,6 +251,49 @@ std::int64_t firstInteriorPage(const MapDb& map) {
 }
 }  // namespace
 
+TEST_CASE("page b-tree info reports the owning object and table row count") {
+    // A multi-level table b-tree: interior + leaf pages both belong to table T and
+    // carry a row count (subtree total for the interior root, own rows for a leaf).
+    {
+        const Fixture fx = buildInteriorFixture();
+        MapDb map(fx.mapPath);
+        const std::int64_t pageCount = json::parse(map.metaJson())["meta"].value("pageCount", 0);
+        const std::int64_t interior = firstInteriorPage(map);  // the table's root
+        REQUIRE(interior > 0);
+        std::int64_t leaf = 0;
+        for (std::int64_t n = 2; n <= pageCount && leaf == 0; ++n)  // skip sqlite_schema (page 1)
+            if (map.pageType(n) == "table-leaf") leaf = n;
+        REQUIRE(leaf > 0);
+
+        const auto in = json::parse(map.pageBtreeInfoJson(interior));
+        CHECK(in["object"]["name"] == "T");
+        CHECK(in["object"]["type"] == "table");
+        REQUIRE(in.contains("rowCount"));
+        CHECK(in["rowCount"].get<std::int64_t>() == 5000);  // whole table
+
+        const auto lf = json::parse(map.pageBtreeInfoJson(leaf));
+        CHECK(lf["object"]["name"] == "T");
+        REQUIRE(lf.contains("rowCount"));
+        CHECK(lf["rowCount"].get<std::int64_t>() > 0);
+        CHECK(lf["rowCount"].get<std::int64_t>() < 5000);   // one leaf < whole table
+    }
+    // An index page belongs to its index object but has no row count.
+    {
+        const Fixture fx = buildFixture();  // table T + index T_n
+        MapDb map(fx.mapPath);
+        const std::int64_t pageCount = json::parse(map.metaJson())["meta"].value("pageCount", 0);
+        std::int64_t idx = 0;
+        for (std::int64_t n = 1; n <= pageCount && idx == 0; ++n) {
+            const std::string t = map.pageType(n);
+            if (t == "index-leaf" || t == "index-interior") idx = n;
+        }
+        REQUIRE(idx > 0);
+        const auto j = json::parse(map.pageBtreeInfoJson(idx));
+        CHECK(j["object"]["type"] == "index");
+        CHECK_FALSE(j.contains("rowCount"));  // index pages carry no row count
+    }
+}
+
 TEST_CASE("table-interior rowid runs/counts cover a contiguous table end to end") {
     const Fixture fx = buildInteriorFixture();
     MapDb map(fx.mapPath);

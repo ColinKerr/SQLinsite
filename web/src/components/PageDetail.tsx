@@ -67,11 +67,21 @@ export function PageDetail() {
       {/* Fixed section: page number, header info, schematic. */}
       <div className="pd-fixed">
         <div className="pd-head">
-          Page {content.pageNumber} · <span className="muted">{content.pageType}</span>
+          {content.object &&
+            <span><b>{content.object.name}</b> <span className="muted">({content.object.type})</span></span>}
+        </div>
+        <div className="pd-head">
+          Page {content.pageNumber} · <span className="pd-desc">{pageTypeDesc(content.pageType)}</span>
           {content.ownerPage != null &&
             <span className="pd-owner">owned by <PageCard page={content.ownerPage} onClick={revealPage} /></span>}
-          <span className="pd-desc">{pageTypeDesc(content.pageType)}</span>
         </div>
+
+        {/* Row count of this page's subtree (table-interior / table-leaf pages). */}
+        {content.rowCount != null && (
+          <div className="pd-head pd-rowcount">
+            <b>Row Count: </b> {content.rowCount.toLocaleString()}
+          </div>
+        )}
 
         <div className="pd-headerfields">
           {Object.entries(content.header).map(([k, v]) => {

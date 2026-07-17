@@ -225,6 +225,8 @@ export interface PageContent {
   regions: PageRegion[];
   cells: PageCell[];
   pointers: Pointer[];
+  object?: { name: string; type: string }; // the table/index b-tree this page belongs to
+  rowCount?: number;                        // table-interior/table-leaf pages: rows in the subtree
   ownerPage?: number; // for an overflow page: the leaf/interior page that owns its cell
   // Table-interior only: rowids covered by the rightmost-pointer child, and a
   // flag when subtree enumeration was capped (very large subtree).

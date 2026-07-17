@@ -73,6 +73,11 @@ public:
     //  "rightmost":{"count","ranges"}, "capped":bool}.
     std::string tableInteriorRowRunsJson(std::int64_t page) const;
 
+    // Page Detail header info for a page: the table/index b-tree it belongs to and
+    // (for a table-interior or table-leaf page) the row count of its subtree.
+    // JSON: {"object":{"name","type"}?, "rowCount":<int>?}.
+    std::string pageBtreeInfoJson(std::int64_t page) const;
+
     // Page Tree view (b-tree structure). All lazy/windowed so nothing enumerates
     // the whole file. Children follow the map's pointer graph.
     // Roots: Page 1, one grouping node per table (holding its table b-tree and,

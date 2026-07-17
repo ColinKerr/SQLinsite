@@ -183,6 +183,19 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
                        const std::string type = db.pageType(n);
                        auto typeOf = [&db](std::int64_t p) { return db.pageType(p); };
                        std::string body = type.empty() ? std::string() : content->pageJson(n, type, typeOf);
+                       // Header info: the b-tree this page belongs to and (for a
+                       // table page) its row count. Added first so the overflow /
+                       // table-interior enrichment below preserves it.
+                       if (!body.empty()) {
+                           try {
+                               nlohmann::json j = nlohmann::json::parse(body);
+                               nlohmann::json info = nlohmann::json::parse(db.pageBtreeInfoJson(n));
+                               if (info.contains("object")) j["object"] = info["object"];
+                               if (info.contains("rowCount")) j["rowCount"] = info["rowCount"];
+                               body = j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+                           } catch (...) {
+                           }
+                       }
                        // Interpret an overflow page through its owning leaf/interior
                        // page: show the owning cell's decoded record for this page.
                        if (!body.empty() && type == "overflow") {

@@ -56,6 +56,15 @@ Shows the full contents of the page node selected in the b-tree tree.
 
 If pointer to another page exists in the header or cell records it is shown as a clickable control matching the node in the b-tree tree.  Clicking on the control navigates to the Page Detail View for that page and expands and selects the node in the b-tree tree.
 
+### Header
+
+The header includes the following with each line below a line in the header
+
+- Table or index b-tree this page is part of
+- Page Number, page type description
+- Row Count (if this is a table-internal or table-leaf page)
+- The decoded contents of the header
+
 ### Horizontal Schematic View
 
 A fixed section of the Page Detail View including the page number, header info and schematic view.

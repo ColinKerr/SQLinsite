@@ -456,6 +456,30 @@ std::string MapDb::tableInteriorRowRunsJson(std::int64_t page) const {
     return out.dump();
 }
 
+std::string MapDb::pageBtreeInfoJson(std::int64_t page) const {
+    json out = json::object();
+    json rows = queryRows(db_,
+                          "SELECT o.name AS name, o.type AS type, p.pageType AS pageType "
+                          "FROM pages p LEFT JOIN objects o ON o.id = p.objectId "
+                          "WHERE p.pageNumber = ?",
+                          {page});
+    if (rows.empty()) return out.dump();
+    const json& r = rows[0];
+    if (r["name"].is_string())
+        out["object"] = {{"name", r["name"]}, {"type", r["type"]}};
+    // Row count only for table b-tree pages: page_row_runs covers both interior
+    // (whole subtree) and leaf (its own rows); COALESCE gives 0 for an empty page.
+    const std::string type = r["pageType"].is_string() ? r["pageType"].get<std::string>() : "";
+    if (type == "table-leaf" || type == "table-interior") {
+        json rc = queryRows(
+            db_, "SELECT COALESCE(SUM(rowCount), 0) AS rowCount FROM page_row_runs "
+                 "WHERE parentPageNumber = ?",
+            {page});
+        out["rowCount"] = rc[0]["rowCount"];
+    }
+    return out.dump();
+}
+
 std::string MapDb::treeRootsJson() const {
     json roots = json::array();
 

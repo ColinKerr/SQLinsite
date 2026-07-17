@@ -57,3 +57,36 @@ describe("PageDetail — overflow pages", () => {
     expect(screen.getByText(/owned by/)).toBeInTheDocument();
   });
 });
+
+describe("PageDetail — header", () => {
+  const tableLeaf: PageContent = {
+    pageNumber: 6, pageType: "table-leaf", pageSize: 4096, usableSize: 4096,
+    header: { type: 13, typeName: "table leaf", cellCount: 272 },
+    object: { name: "T", type: "table" },
+    rowCount: 272,
+    regions: [{ offset: 0, length: 8, kind: "page-header" }],
+    cells: [], pointers: [],
+  };
+
+  it("shows the owning b-tree and the row count for a table page", () => {
+    useTree.setState({ selectedPage: 6, content: tableLeaf, contentLoading: false });
+    render(<PageDetail />);
+    // Line 1: which table/index b-tree the page is part of.
+    expect(screen.getByText(/part of/)).toBeInTheDocument();
+    expect(screen.getByText("T")).toBeInTheDocument();
+    expect(screen.getByText(/\(table\)/)).toBeInTheDocument();
+    // Line 2: the row count (its own line; 272 also appears as cellCount below).
+    expect(document.querySelector(".pd-rowcount")?.textContent).toMatch(/272\s*rows/);
+  });
+
+  it("omits the row count for a page with no rowCount (e.g. an index page)", () => {
+    useTree.setState({
+      selectedPage: 8, contentLoading: false,
+      content: { ...tableLeaf, pageNumber: 8, pageType: "index-leaf",
+        object: { name: "T_s", type: "index" }, rowCount: undefined },
+    });
+    render(<PageDetail />);
+    expect(screen.getByText(/\(index\)/)).toBeInTheDocument();
+    expect(document.querySelector(".pd-rowcount")).toBeNull();
+  });
+});

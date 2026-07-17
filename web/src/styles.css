@@ -383,7 +383,9 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .pd-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column;
   gap: 8px; padding: 0 10px 8px; scroll-padding-top: 32px; }
 .pd-head { font-weight: 600; }
-.pd-head .pd-desc { display: block; color: var(--muted); font-weight: 400; margin-top: 2px; }
+.pd-head .pd-desc { color: var(--muted); font-weight: 400; margin-top: 2px; }
+.pd-rowcount { font-weight: 400; margin-top: 2px; }
+.pd-rowcount b { font-weight: 600; }
 .pd-owner { margin-left: 8px; font-weight: 400; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
 
 .pd-headerfields { display: flex; flex-wrap: wrap; gap: 4px 12px; }
