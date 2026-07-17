@@ -1,29 +1,16 @@
-import { useEffect } from "react";
 import { useViz } from "../state/store.ts";
 import { CanvasHost } from "./CanvasHost.tsx";
-import { PanelResizer } from "./PanelResizer.tsx";
-import { NavigationPanel } from "./NavigationPanel.tsx";
 import { PageTopBar } from "./PageTopBar.tsx";
 
-// Main Pages/Tables view: the Page Top Bar (zoom/profile/session) over the canvas
-// + minimap (driven by the app store) and the Navigation panel.
+// The Pages/Tables view content (to the right of the shared Navigation Panel): the
+// Page Top Bar (zoom/profile/session) over the canvas + minimap.
 export function CanvasStage() {
-  const setLegendWidth = useViz((s) => s.setLegendWidth);
-  useEffect(() => {
-    const saved = localStorage.getItem("legendWidth");
-    if (saved) setLegendWidth(parseInt(saved, 10));
-  }, [setLegendWidth]);
-
   return (
-    <main>
-      <div className="view-area">
-        <PageTopBar />
-        <div className="view-body">
-          <CanvasHost store={useViz} publish />
-        </div>
+    <div className="view-area">
+      <PageTopBar />
+      <div className="view-body">
+        <CanvasHost store={useViz} publish />
       </div>
-      <PanelResizer />
-      <NavigationPanel />
-    </main>
+    </div>
   );
 }

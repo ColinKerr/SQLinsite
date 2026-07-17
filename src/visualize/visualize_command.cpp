@@ -273,10 +273,6 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
 
     if (engine == nullptr) return;  // live-query routes only with --db-file
 
-    server.Get("/api/schema", [engine, &db](const httplib::Request&, httplib::Response& res) {
-        res.set_content(engine->schemaJson(db.objectStats()), "application/json");
-    });
-
     server.Post("/api/query/run", [engine](const httplib::Request& req, httplib::Response& res) {
         const std::string body = engine->runJson(req.body);
         if (body.rfind("{\"error\"", 0) == 0) res.status = 400;  // prefix match

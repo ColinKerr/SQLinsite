@@ -105,14 +105,6 @@ export interface HistoryEntry {
   rowCount: number; truncated: boolean; pageCount: number; accesses: number;
   profile: { pages: ProfilePage[] };
 }
-export interface SchemaColumn { name: string; type: string; }
-export interface SchemaIndex { name: string; pageCount: number; accessedPages: number; }
-export interface SchemaTable {
-  name: string; pageCount: number; accessedPages: number;
-  columns: SchemaColumn[]; indexes: SchemaIndex[]; triggers: string[];
-}
-export interface SchemaView { name: string; columns: SchemaColumn[]; triggers: string[]; }
-export interface Schema { tables: SchemaTable[]; views: SchemaView[]; }
 
 export interface Pointer {
   toPage: number;

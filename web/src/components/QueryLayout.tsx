@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "../state/queryStore.ts";
 import { QueryEditor } from "./QueryEditor.tsx";
 import { ResultsView } from "./ResultsView.tsx";
-import { SchemaPanel } from "./SchemaPanel.tsx";
-import { PanelResizer } from "./PanelResizer.tsx";
+import { CellDetails } from "./CellDetails.tsx";
 
-// The live Query view: the "query and data viewer" (editor over results, split by
-// a horizontal divider) plus the schema panel on the right.
+// The live Query view content (to the right of the shared Navigation Panel): the
+// "query and data viewer" — editor over results, split by a horizontal divider —
+// plus the Cell Details panel that appears when a results cell is clicked.
 export function QueryLayout() {
   const [editorPct, setEditorPct] = useState(33);
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -31,18 +31,15 @@ export function QueryLayout() {
   };
 
   return (
-    <main>
-      <div id="query-viewer" ref={viewerRef}>
-        <div className="qv-pane" style={{ height: `${editorPct}%` }}>
-          <QueryEditor />
-        </div>
-        <div id="qsplit" title="Drag to resize" onMouseDown={startDrag} />
-        <div className="qv-pane" style={{ height: `${100 - editorPct}%` }}>
-          <ResultsView />
-        </div>
+    <div id="query-viewer" ref={viewerRef}>
+      <div className="qv-pane" style={{ height: `${editorPct}%` }}>
+        <QueryEditor />
       </div>
-      <PanelResizer />
-      <SchemaPanel />
-    </main>
+      <div id="qsplit" title="Drag to resize" onMouseDown={startDrag} />
+      <div className="qv-pane" style={{ height: `${100 - editorPct}%` }}>
+        <ResultsView />
+      </div>
+      <CellDetails />
+    </div>
   );
 }

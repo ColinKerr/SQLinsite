@@ -10,12 +10,6 @@
 
 struct sqlite3;
 
-// Per-object page totals used by the live-query schema panel.
-struct MapObjStat {
-    std::int64_t pageCount = 0;
-    std::int64_t accessedPages = 0;  // distinct pages touched by the loaded profile
-};
-
 // Opens a `sqlinsite map` SQLite file read-only and answers the visualize
 // query API. Optionally holds an in-memory profile table for overlays.
 class MapDb {
@@ -32,9 +26,6 @@ public:
 
     // Reported in /api/meta so the front-end can enable the live Query view.
     void setHasDb(bool v) { hasDb_ = v; }
-
-    // Per-object page/accessed counts keyed by object name (for /api/schema).
-    std::map<std::string, MapObjStat> objectStats() const;
 
     // The table-leaf page holding `rowid` for the named rowid table, or 0 if not
     // found. Indexed (cells_rowid), so the live-query results map only the rowids

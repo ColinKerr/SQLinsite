@@ -37,16 +37,18 @@ A single `<canvas>` per view, sized to its container and scaled for
 
 ### Navigation Panel
 
-The right column is a **resizable** panel (drag its left edge; width persisted in
-`localStorage`). It lists:
+Navigation is the shared **B-Tree Tree** panel on the **left** (see
+B_TREE_TREE.md), the same control and state used by every view — it replaces the
+old page-types / tables-indexes list. The information that list carried is already
+in the tree: the page-type glyph/color symbology is the tree's key, and each
+node's page count and size are shown on the node.
 
-- **Page types** — each type's glyph/color and its **page count** (from
-  `/api/meta` `typeCounts`).
-- **Tables/indexes** — each object's color, name, and its **page count** (from
-  `objects.pageCount`).
-  - Tables are root nodes and indexes of that table are child nodes
-  - Each node should have the starting block and the object identifier so that clicking on the node will scroll to the first **leaf** block or the beginning of the object in block and table views respectively.
-  - Each node should have a count of pages associated with that node
+Clicking a tree node scrolls the canvas to that node's target and highlights it:
+
+- **Pages view** — scroll to the node's first **leaf** page (or to a page node's
+  own page).
+- **Tables view** — scroll to the band of the object the node belongs to (the
+  beginning of that object).
 
 ### Zoom & pan
 
@@ -92,7 +94,7 @@ Each view should have a scroll bar that is a scaled image of the entire view.  C
 
 ### Page Top Bar
 
-The page top bar, shared between both views, should be contained within the 'view' area and not extend into the navigation panel.
+The page top bar, shared between both views, should be contained within the 'view' area (the canvas area to the **right** of the left-hand Navigation Panel) and not extend into the navigation panel.
 
 - Zoom controls (right aligned)
   - Zoom %

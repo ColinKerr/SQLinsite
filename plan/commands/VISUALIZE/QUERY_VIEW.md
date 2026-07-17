@@ -2,21 +2,35 @@
 
 The goal of this view is to let the user profile a query interactively then review the profile results AND the data returned by the queries.
 
-For this mode the navigation Panel is replaced with the 'schema panel'.  The schema panel is a tree showing the schemas in the SQLite file.  The view is is a new control called the 'query and data viewer' is split horizontally into two parts separated by a resizable divider.  On top, taking up 1/3rd of the view vertically is a text editor for entering a SQL query called the 'query editor'.  The bottom 2/3rds of the view is called 'results view' and can show one of four tabs, the default tab is a table control that shows results of the query called 'results table', the next two tabs are the pages and tables view that show the profile results of the last executed query or selection from the schema tree view.  The final tab is a hidden tab just to show the results from the 'Explain' button in the 'query control bar', it is called 'explain results'.
+For this mode the Navigation Panel is the shared **B-Tree Tree** on the left (see B_TREE_TREE.md), the same control and state as every other view.  The main content to its right is a new control called the 'query and data viewer' which is split horizontally into two parts separated by a resizable divider.  On top, taking up 1/3rd of the view vertically is a text editor for entering a SQL query called the 'query editor'.  The bottom 2/3rds of the view is called 'results view' and can show one of four tabs, the default tab is a table control that shows results of the query called 'results table', the next two tabs are the pages and tables view that show the profile results of the last executed query or selection in the tree.  The final tab is a hidden tab just to show the results from the 'Explain' button in the 'query control bar', it is called 'explain results'.
 
-## Schema Panel
+## Navigation (B-Tree Tree)
 
-The schema panel is a tree derived from the `sqlite_schema` table the root nodes are 'Tables' and 'Views' their children are the tables and views respectively found in the sqlite_schema table.  The individual tables and views have children 'Columns', 'Indexes', and 'Triggers' and their children are the columns indexes and triggers respectively found via hte sqlite_schema table.
+The Query view navigates with the shared B-Tree Tree (see B_TREE_TREE.md); it
+replaces the earlier bespoke schema panel.  Its nodes are the file's b-trees — the
+tables and their indexes, plus pages — so navigation is at object/page
+granularity rather than the schema's columns/triggers granularity.
 
-Each node in the tree has some information to the right of the name.  Number of pages, number of pages access by the selected profile run and if child nodes are queried from the sqlite_schema table, count of child nodes.  NOTE: The root 'Tables' node would show the count of children (number of tables) but each individual table node would not show a count because that would be just the fixed Columns, Indexes and Triggers nodes.
+Clicking a node runs the query for that node and fills the 'results view' with its
+data and profile, exactly as the query control bar's 'Run' does:
 
-Each node table, view, column, index and trigger node has a 'Run' button (play symbol) that fills the 'results view' with the content related to that node.
+- A **table** or **index** node runs that object's data (e.g. `SELECT * FROM
+  <object>`), loading the results table plus the pages/tables profile tabs.
+- Selecting a **page** node scopes the results/profile to that page's rows.
+
+Arbitrary SQL — including against views, which are not b-trees and so do not
+appear in the tree — is still run from the query editor.  The editor's
+autocomplete is removed so the schema API can also be removed (`/api/schema`)
+
+The tree does not show any per-node profile results (e.g. accessed page counts)
+for now; nodes show only their static page count and size, the same as in every
+other view.
 
 ## Results View
 
 ### Query Editor
 
-The query editor has a 'query control bar' at the top with following controls: 'Run' button (play symbol), 'History' button, 'Format' button, and 'Explain' button in that order.  Below the query control bar is the query editor which is a text editor control with intellisense driven by SQLites 'sqlite_schema' table.  Uses the Monaco text editor: https://github.com/microsoft/monaco-editor/blob/main/README.md
+The query editor has a 'query control bar' at the top with following controls: 'Run' button (play symbol), 'History' button, 'Format' button, and 'Explain' button in that order.  Below the query control bar is the query editor which is a Monaco text editor control (https://github.com/microsoft/monaco-editor/blob/main/README.md).  Autocomplete/intellisense is removed for now.
 
 ### Query Control Bar
 
@@ -27,5 +41,5 @@ The query editor has a 'query control bar' at the top with following controls: '
 
  ### Results Table
 
- A virtualized table control showing the results for either a query executed from the query editor or the results of selecting a node in the schema panel.  The table should also show the pages containing the data from each row and column within that row.
+ A virtualized table control showing the results for either a query executed from the query editor or the results of selecting a node in the tree.  The table should also show the pages containing the data from each row and column within that row.
 

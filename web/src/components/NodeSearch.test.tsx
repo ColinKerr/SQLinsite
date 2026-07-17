@@ -28,9 +28,9 @@ const type = (v: string) =>
   fireEvent.change(screen.getByLabelText("Find page by number"), { target: { value: v } });
 
 describe("NodeSearch", () => {
-  it("shows no dropdown until 3 digits are entered", async () => {
+  it("shows no dropdown until a digit is entered", async () => {
     render(<NodeSearch pageSize={4096} />);
-    type("12");
+    type("ab"); // no digits
     // Give any (cancelled) fetch a chance; the dropdown must not appear.
     await new Promise((r) => setTimeout(r, 200));
     expect(screen.queryByRole("listbox")).toBeNull();

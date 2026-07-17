@@ -43,9 +43,6 @@ public:
     // accesses, profile:{pages}} or {error}.
     std::string historyEntryJson(int id) const;
 
-    // Schema tree (tables/views → columns/indexes/triggers) joined to `counts`.
-    std::string schemaJson(const std::map<std::string, MapObjStat>& counts) const;
-
 private:
     struct Entry {
         int id = 0;

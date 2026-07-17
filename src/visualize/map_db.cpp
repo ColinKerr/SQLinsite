@@ -174,25 +174,6 @@ std::string MapDb::metaJson() const {
     return j.dump();
 }
 
-std::map<std::string, MapObjStat> MapDb::objectStats() const {
-    std::map<std::string, MapObjStat> out;
-    const char* sql = hasProfile_
-        ? "SELECT name, pageCount, "
-          "(SELECT COUNT(*) FROM pages p WHERE p.objectId=objects.id "
-          " AND p.pageNumber IN (SELECT DISTINCT pageNumber FROM profile)) AS accessed "
-          "FROM objects"
-        : "SELECT name, pageCount, 0 AS accessed FROM objects";
-    sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return out;
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
-        const char* name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        if (name == nullptr) continue;
-        out[name] = MapObjStat{sqlite3_column_int64(stmt, 1), sqlite3_column_int64(stmt, 2)};
-    }
-    sqlite3_finalize(stmt);
-    return out;
-}
-
 std::int64_t MapDb::leafPageForRowid(const std::string& tableName,
                                      std::int64_t rowid) const {
     sqlite3_stmt* stmt = nullptr;

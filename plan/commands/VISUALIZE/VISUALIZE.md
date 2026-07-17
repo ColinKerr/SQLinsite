@@ -69,7 +69,7 @@ the selected sessions/queries.
 - Top bar - A fixed bar at the top of the app that contains the name of the app and the view picker (a button for each view).
 - Page Top Bar - A secondary bar shown only for the Page Views (Pages and Tables) that contains the zoom controls, profile controls, and session/map information.
 - View - The main content window of the app that shows details about the blocks or data in the mapped SQLite file
-- Navigation Panel - A resizable bar on the right hand side of the screen that contains navigation controls as specified in this document.
+- Navigation Panel - A resizable panel on the **left** hand side of the screen, shared by every view, whose content is the **B-Tree Tree** navigation control (see B_TREE_TREE.md). The panel (drag its right edge; width persisted in `localStorage`) and its tree are visually identical and keep their state — selection, expansion, scroll position, and the node search — when switching views. Only the main content shown to its right, and the way a click on a tree node is handled, change from view to view.
 
 ## Front-end
 
@@ -89,6 +89,12 @@ The top bar should be organized in groups from left to right in this order:
   - Forwards button
 
 ## Views
+
+Every view lays out the same way: the shared B-Tree Tree Navigation Panel on the
+left (see B_TREE_TREE.md), and that view's own main content on the right. The tree
+is one shared instance kept mounted across view switches, so it looks and behaves
+identically in every view; each view only supplies its own handler for what a node
+click does (scroll the canvas, run a query, show page detail, …).
 
 All views must handle billions of pages and or rows.  Pages and Tables tabs sharing a canvas renderer.
 

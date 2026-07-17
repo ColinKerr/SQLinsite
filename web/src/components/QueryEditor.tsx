@@ -3,34 +3,6 @@ import Editor, { type OnMount } from "@monaco-editor/react";
 import { formatSql } from "../core/formatSql.ts";
 import { useQuery } from "../state/queryStore.ts";
 
-type Monaco = Parameters<OnMount>[1];
-
-let completionsRegistered = false;
-function registerCompletions(monaco: Monaco) {
-  if (completionsRegistered) return;
-  completionsRegistered = true;
-  monaco.languages.registerCompletionItemProvider("sql", {
-    provideCompletionItems(model, position) {
-      const schema = useQuery.getState().schema;
-      const word = model.getWordUntilPosition(position);
-      const range = {
-        startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
-        startColumn: word.startColumn, endColumn: word.endColumn,
-      };
-      const K = monaco.languages.CompletionItemKind;
-      const suggestions: Array<{ label: string; kind: number; insertText: string; range: typeof range }> = [];
-      if (schema) {
-        for (const t of schema.tables) {
-          suggestions.push({ label: t.name, kind: K.Struct, insertText: t.name, range });
-          for (const c of t.columns) suggestions.push({ label: c.name, kind: K.Field, insertText: c.name, range });
-        }
-        for (const v of schema.views) suggestions.push({ label: v.name, kind: K.Struct, insertText: v.name, range });
-      }
-      return { suggestions };
-    },
-  });
-}
-
 function ControlBar() {
   const runCurrent = useQuery((s) => s.runCurrent);
   const running = useQuery((s) => s.running);
@@ -84,7 +56,6 @@ export function QueryEditor() {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       void useQuery.getState().runCurrent();
     });
-    registerCompletions(monaco);
   };
 
   return (

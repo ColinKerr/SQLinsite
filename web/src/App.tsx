@@ -6,6 +6,8 @@ import { ControllerProvider } from "./state/ControllerContext.tsx";
 import { useViz } from "./state/store.ts";
 import { initHistory, useHistory } from "./state/historyStore.ts";
 import { TopBar } from "./components/TopBar.tsx";
+import { NavPanel } from "./components/NavPanel.tsx";
+import { PanelResizer } from "./components/PanelResizer.tsx";
 import { CanvasStage } from "./components/CanvasStage.tsx";
 import { QueryLayout } from "./components/QueryLayout.tsx";
 import { PageTreeView } from "./components/PageTreeView.tsx";
@@ -46,9 +48,17 @@ export default function App() {
   return (
     <ControllerProvider>
       <TopBar />
-      {view === "query" ? <QueryLayout />
-        : view === "tree" ? <PageTreeView />
-        : <CanvasStage />}
+      <main>
+        {/* One shared B-Tree Tree on the left for every view; the resizer and the
+            view-specific content follow it. */}
+        <NavPanel />
+        <PanelResizer />
+        <div className="view-main">
+          {view === "query" ? <QueryLayout />
+            : view === "tree" ? <PageTreeView />
+            : <CanvasStage />}
+        </div>
+      </main>
     </ControllerProvider>
   );
 }

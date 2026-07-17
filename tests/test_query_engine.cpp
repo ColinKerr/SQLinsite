@@ -107,32 +107,6 @@ TEST_CASE("query engine runs, profiles, paginates, explains") {
     }
 }
 
-TEST_CASE("schema tree joins db structure to map page counts") {
-    const Fixture fx = buildFixture();
-    MapDb map(fx.mapPath);
-    QueryEngine engine(fx.dbPath, fx.pageSize, map);
-
-    auto j = json::parse(engine.schemaJson(map.objectStats()));
-    REQUIRE(j["tables"].is_array());
-
-    const auto& tables = j["tables"];
-    auto tit = std::find_if(tables.begin(), tables.end(),
-                            [](const json& t) { return t["name"] == "T"; });
-    REQUIRE(tit != tables.end());
-    const json& t = *tit;
-    CHECK(t["pageCount"].get<int>() >= 1);
-    // columns id, v
-    CHECK(t["columns"].size() == 2);
-    CHECK(t["columns"][0]["name"] == "id");
-    // index T_v nested under T
-    REQUIRE(t["indexes"].size() >= 1);
-    CHECK(t["indexes"][0]["name"] == "T_v");
-
-    REQUIRE(j["views"].size() >= 1);
-    CHECK(j["views"][0]["name"] == "VW");
-    CHECK(j["views"][0]["columns"].size() == 2);
-}
-
 TEST_CASE("row→page mapping resolves single-table cells, leaves others null") {
     const Fixture fx = buildFixture();
     MapDb map(fx.mapPath);
@@ -207,13 +181,6 @@ TEST_CASE("live-query routes are served when a db is attached") {
         CHECK(r->status == 400);
         CHECK(json::parse(r->body).contains("error"));
     }
-    SUBCASE("GET /api/schema returns the tree") {
-        auto r = cli.Get("/api/schema");
-        REQUIRE(r);
-        CHECK(r->status == 200);
-        CHECK(json::parse(r->body)["tables"].is_array());
-    }
-
     server.stop();
     th.join();
 }

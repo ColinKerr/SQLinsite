@@ -18,7 +18,7 @@ struct VisualizeOptions {
 
 // Registers the visualize routes (static assets + the map query API) on the
 // given server, backed by `db`. When `engine` is non-null the live-query routes
-// (/api/schema, /api/query/*) are registered too; when `content` is non-null the
+// (/api/query/*) are registered too; when `content` is non-null the
 // Page Tree detail route (/api/page/:n/content) is registered. Exposed for tests.
 void configureVisualizeRoutes(httplib::Server& server, MapDb& db,
                               QueryEngine* engine = nullptr,

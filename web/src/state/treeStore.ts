@@ -28,6 +28,7 @@ export interface TreeState {
   selectPage(page: number): Promise<void>;
   selectTable(objectId: number, key: string): Promise<void>;   // table node → Table Overview
   selectIndexes(objectId: number, key: string): Promise<void>; // Indexes node → Index Overview
+  highlightNode(node: TreeNode): void; // set the shared selection highlight, no detail fetch
   revealPage(page: number): Promise<void>; // select + expand the tree down to it
 }
 
@@ -143,6 +144,13 @@ export const useTree = create<TreeState>((set, get) => ({
   },
   async selectIndexes(objectId, key) {
     await loadOverview(set, get, objectId, key, "index");
+  },
+
+  // Move the shared selection highlight to `node` without fetching any detail
+  // (used by non-Page-Tree views, which drive their own content off the click).
+  highlightNode(node) {
+    if (node.page != null) set({ selectedPage: node.page, selectedKey: null, overviewMode: null });
+    else set({ selectedKey: node.key, selectedPage: null, overviewMode: null });
   },
 
   // Select `page` and expand the tree down to its node. The path from the map is

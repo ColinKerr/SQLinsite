@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { SchemaPanel } from "./SchemaPanel.tsx";
+import { CellDetails } from "./CellDetails.tsx";
 import { useQuery } from "../state/queryStore.ts";
 import { useViz } from "../state/store.ts";
 import { useTree } from "../state/treeStore.ts";
@@ -10,12 +10,11 @@ function jsonResp(body: unknown) {
 }
 
 beforeEach(() => {
-  useQuery.setState({ schema: { tables: [], views: [] }, selectedCell: null });
+  useQuery.setState({ selectedCell: null });
   useViz.setState({ view: "query" });
   useTree.setState({ selectedPage: null, roots: null, expanded: new Set(), childrenByKey: {} });
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     const u = String(url);
-    if (u === "/api/schema") return jsonResp({ tables: [], views: [] });
     if (u.startsWith("/api/page/")) {
       return jsonResp({ pageNumber: 3, pageType: "overflow", objectId: 1, cellCount: 0,
                         freeBytes: 0 });
@@ -26,12 +25,12 @@ beforeEach(() => {
 
 describe("cell details panel", () => {
   it("is hidden until a cell is selected", () => {
-    render(<SchemaPanel />);
+    render(<CellDetails />);
     expect(screen.queryByText(/Go to page/)).toBeNull();
   });
 
   it("shows the clicked cell's value + page links, and jumps on click", async () => {
-    render(<SchemaPanel />);
+    render(<CellDetails />);
     useQuery.setState({
       selectedCell: {
         rowIndex: 0, colIndex: 1, value: "xxxxxxxx", pages: [2, 3],
@@ -55,7 +54,7 @@ describe("cell details panel", () => {
   });
 
   it("closes when the ✕ button is clicked", async () => {
-    render(<SchemaPanel />);
+    render(<CellDetails />);
     useQuery.setState({
       selectedCell: {
         rowIndex: 0, colIndex: 0, value: 1, pages: [2],

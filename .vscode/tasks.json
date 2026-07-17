@@ -30,6 +30,22 @@
             "problemMatcher": [ "$gcc" ]
         },
         {
+            // Builds the `sqlinsite` app binary (Debug, -g) in cmake-build-debug/.
+            // Used as the preLaunchTask for the "visualize serve" debug configs, so
+            // F5 always debugs a freshly-built binary. This also rebuilds and embeds
+            // the front-end (needs Node/npm), so the served app is current.
+            "label": "cmake: build sqlinsite (debug)",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build", "${workspaceFolder}/cmake-build-debug",
+                "--target", "sqlinsite", "-j"
+            ],
+            "dependsOn": "cmake: configure (debug)",
+            "group": "build",
+            "problemMatcher": [ "$gcc" ]
+        },
+        {
             "type": "cppbuild",
             "label": "C/C++: clang build active file",
             "command": "/usr/bin/clang",

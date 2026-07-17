@@ -1,14 +1,14 @@
 import { create } from "zustand";
 import {
-  explainQuery, fetchHistory, fetchHistoryEntry, fetchRows, fetchSchema, runQuery,
+  explainQuery, fetchHistory, fetchHistoryEntry, fetchRows, runQuery,
 } from "../core/queryApi.ts";
 import type {
-  ExplainResult, HistoryItem, QueryColumn, RowsResponse, RunSummary, Schema,
+  ExplainResult, HistoryItem, QueryColumn, RowsResponse, RunSummary,
 } from "../core/types.ts";
 
 export type ResultsTab = "table" | "pages" | "tables" | "explain";
 
-// A results-table cell the user clicked; drives the schema-panel details panel.
+// A results-table cell the user clicked; drives the Cell Details panel.
 export interface SelectedCell {
   rowIndex: number;
   colIndex: number;
@@ -21,7 +21,6 @@ export interface SelectedCell {
 const ROW_WINDOW = 1000;
 
 export interface QueryState {
-  schema: Schema | null;
   sql: string;
   running: boolean;
   loadingMore: boolean;
@@ -33,7 +32,6 @@ export interface QueryState {
   history: HistoryItem[];
   selectedCell: SelectedCell | null;
 
-  loadSchema(): Promise<void>;
   refreshHistory(): Promise<void>;
   setSql(sql: string): void;
   setResultsTab(tab: ResultsTab): void;
@@ -46,7 +44,6 @@ export interface QueryState {
 }
 
 export const useQuery = create<QueryState>((set, get) => ({
-  schema: null,
   sql: "SELECT * FROM sqlite_schema;",
   running: false,
   loadingMore: false,
@@ -58,9 +55,6 @@ export const useQuery = create<QueryState>((set, get) => ({
   history: [],
   selectedCell: null,
 
-  async loadSchema() {
-    set({ schema: await fetchSchema() });
-  },
   async refreshHistory() {
     set({ history: await fetchHistory() });
   },

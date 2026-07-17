@@ -437,7 +437,9 @@ export class CanvasController {
   private hidePopup() { this.clearPopupTimer(); this.popup.hidden = true; }
 
   // ---- navigation & zoom --------------------------------------------------
-  private goToPage(n: number) {
+  // Scroll the Pages view to page `n`, centered, and select it. Public so the
+  // shared b-tree tree can drive Pages-view navigation from a node click.
+  goToPage(n: number) {
     this.store.getState().setView("pages");
     this.scroll.pages = Math.max(0, scrollForPageAtY(n, this.cssH / 2, this.cssW, this.blockPx()));
     this.selected = n;

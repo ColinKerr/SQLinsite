@@ -1,5 +1,29 @@
 # B-Tree Tree
 
+The B-Tree Tree is the application's shared **Navigation Panel**. It renders the
+same nodes (roots, tables/indexes, pages, freelist, …) and node control in every
+view; the tree, its node search, selection, expansion state, and scroll position
+are visually unchanged when switching views because it is a single shared instance
+backed by one shared tree state. What differs per view is only how a click on a
+node is handled — each view registers its own node-click handler.
+
+## Per-view node clicks
+
+Selecting a node in the tree (the selection highlight is shared across views) does
+different things depending on the active view:
+
+- **Pages view** — scrolls the Pages canvas to the node's first **leaf** page (or
+  to the page itself for a page node) and highlights it.
+- **Tables view** — scrolls to the band of the object the node belongs to (its
+  table/index), i.e. the beginning of that object.
+- **Query view** — runs the query for the selected object (e.g. a table or index
+  b-tree node) and fills the Results View with its data and profile, the same way
+  the query control bar's Run does. (See QUERY_VIEW.md.)
+- **Page Tree view** — selects the node and shows its Page Detail, Table Overview,
+  or Index Overview in the pane to the right (see PAGE_TREE_VIEW.md).
+
+Expand/collapse (the chevron) and the node search behave identically in all views.
+
 ## Root nodes
 
 - 'sqlite_schema' root node.  Page 1 for the sqlite file serves as the root node.
