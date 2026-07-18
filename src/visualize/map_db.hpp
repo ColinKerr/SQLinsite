@@ -78,6 +78,13 @@ public:
     // JSON: {"object":{"name","type"}?, "rowCount":<int>?}.
     std::string pageBtreeInfoJson(std::int64_t page) const;
 
+    // The exact rowid runs of a table page's rows, keyset-paginated by startRowId
+    // (rowids aren't contiguous — deletions leave gaps — so the Query view selects
+    // them exactly, a batch at a time). For a table-interior/leaf page the runs are
+    // its subtree's; for an overflow page they are its owner leaf's. JSON:
+    // {"table":<name>|null, "runs":[[lo,hi]...], "nextAfter":<startRowId>|null}.
+    std::string pageRowidRunsJson(std::int64_t page, std::int64_t after, int limit) const;
+
     // Page Tree view (b-tree structure). All lazy/windowed so nothing enumerates
     // the whole file. Children follow the map's pointer graph.
     // Roots: Page 1, one grouping node per table (holding its table b-tree and,

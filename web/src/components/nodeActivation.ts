@@ -1,4 +1,3 @@
-import type { TreeNode } from "../core/treeModel.ts";
 import type { ObjectInfo } from "../core/types.ts";
 import type { NodeActivate } from "../state/treeSelectionStore.ts";
 
@@ -6,24 +5,27 @@ import type { NodeActivate } from "../state/treeSelectionStore.ts";
 // them with its own hooks and registers the result; keeping the logic here makes
 // it unit-testable without rendering the (canvas / Monaco) view components.
 
-const qi = (name: string) => `"${name.replace(/"/g, '""')}"`;
-
-// The table a node resolves to: a table node/page is its own table; an index
-// node/page maps to the table it indexes (its `tableName`).
-function tableOf(node: TreeNode, objById: Map<number, ObjectInfo>): string | undefined {
-  if (node.objectId == null) return undefined;
-  const obj = objById.get(node.objectId);
-  if (!obj) return undefined;
-  return obj.type === "table" ? obj.name : obj.tableName ?? undefined;
-}
-
-// Query view: run the query for the node's table, filling the results view.
-export function makeQueryActivate(
-  objById: Map<number, ObjectInfo>, runSql: (sql: string) => void,
-): NodeActivate {
+// Query view: fill the results view with the activated node's rows.
+//  - Table grouping node → the whole table.
+//  - Table interior / leaf / overflow page → that page's exact rows (interior =
+//    its subtree, leaf = its own rows, overflow = its owner leaf's rows), fetched
+//    a run-batch at a time by the store.
+//  - Any index node (index b-tree page or the "Indexes" grouping node) → nothing.
+export function makeQueryActivate(deps: {
+  objById: Map<number, ObjectInfo>;
+  runObjectQuery: (table: string) => void;
+  runPageQuery: (page: number, overflow: boolean) => void;
+}): NodeActivate {
   return (node) => {
-    const table = tableOf(node, objById);
-    if (table) runSql(`SELECT * FROM ${qi(table)};`);
+    if (node.kind === "indexes") return;                      // Indexes grouping node
+    const obj = node.objectId != null ? deps.objById.get(node.objectId) : undefined;
+    if (obj?.type !== "table") return;                        // index pages / sqlite_schema / none
+    if (node.kind === "table") { deps.runObjectQuery(obj.name); return; }  // whole table
+    if (node.kind === "page" && node.page != null) {
+      const pt = node.pageType ?? "";
+      if (pt === "table-leaf" || pt === "table-interior" || pt === "overflow")
+        deps.runPageQuery(node.page, pt === "overflow");
+    }
   };
 }
 

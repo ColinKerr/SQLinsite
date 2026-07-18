@@ -14,23 +14,56 @@ describe("makeQueryActivate", () => {
     [1, obj({ id: 1, type: "table", name: "T" })],
     [2, obj({ id: 2, type: "index", name: "T_n", tableName: "T" })],
   ]);
+  const mk = () => {
+    const runObjectQuery = vi.fn(), runPageQuery = vi.fn();
+    return { runObjectQuery, runPageQuery,
+             activate: makeQueryActivate({ objById, runObjectQuery, runPageQuery }) };
+  };
 
-  it("runs SELECT * FROM the table for a table node", () => {
-    const runSql = vi.fn();
-    makeQueryActivate(objById, runSql)(node({ kind: "table", objectId: 1 }));
-    expect(runSql).toHaveBeenCalledWith('SELECT * FROM "T";');
+  it("runs the whole table for a table grouping node", () => {
+    const { runObjectQuery, runPageQuery, activate } = mk();
+    activate(node({ kind: "table", objectId: 1 }));
+    expect(runObjectQuery).toHaveBeenCalledWith("T");
+    expect(runPageQuery).not.toHaveBeenCalled();
   });
 
-  it("maps an index node to its owning table", () => {
-    const runSql = vi.fn();
-    makeQueryActivate(objById, runSql)(node({ objectId: 2, page: 8 }));
-    expect(runSql).toHaveBeenCalledWith('SELECT * FROM "T";');
+  it("runs a table leaf page's rows (not overflow)", () => {
+    const { runPageQuery, activate } = mk();
+    activate(node({ kind: "page", page: 5, objectId: 1, pageType: "table-leaf" }));
+    expect(runPageQuery).toHaveBeenCalledWith(5, false);
+  });
+
+  it("runs a table interior page's subtree rows", () => {
+    const { runPageQuery, activate } = mk();
+    activate(node({ kind: "page", page: 2, objectId: 1, pageType: "table-interior" }));
+    expect(runPageQuery).toHaveBeenCalledWith(2, false);
+  });
+
+  it("runs the owning leaf's rows and flags overflow for an overflow page", () => {
+    const { runPageQuery, activate } = mk();
+    activate(node({ kind: "page", page: 9, objectId: 1, pageType: "overflow" }));
+    expect(runPageQuery).toHaveBeenCalledWith(9, true);
+  });
+
+  it("does nothing for an index page node", () => {
+    const { runObjectQuery, runPageQuery, activate } = mk();
+    activate(node({ kind: "page", page: 8, objectId: 2, pageType: "index-leaf" }));
+    expect(runObjectQuery).not.toHaveBeenCalled();
+    expect(runPageQuery).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for the Indexes grouping node", () => {
+    const { runObjectQuery, runPageQuery, activate } = mk();
+    activate(node({ kind: "indexes", objectId: 1 }));
+    expect(runObjectQuery).not.toHaveBeenCalled();
+    expect(runPageQuery).not.toHaveBeenCalled();
   });
 
   it("does nothing for a node with no object", () => {
-    const runSql = vi.fn();
-    makeQueryActivate(objById, runSql)(node({ objectId: null, page: 1 }));
-    expect(runSql).not.toHaveBeenCalled();
+    const { runObjectQuery, runPageQuery, activate } = mk();
+    activate(node({ kind: "page", objectId: null, page: 1, pageType: "table-leaf" }));
+    expect(runObjectQuery).not.toHaveBeenCalled();
+    expect(runPageQuery).not.toHaveBeenCalled();
   });
 });
 

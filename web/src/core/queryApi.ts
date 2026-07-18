@@ -1,6 +1,6 @@
 import { getJson } from "./api.ts";
 import type {
-  ExplainResult, HistoryEntry, HistoryItem, RowsResponse, RunSummary,
+  ExplainResult, HistoryEntry, HistoryItem, PageRowidRuns, RowsResponse, RunSummary,
 } from "./types.ts";
 
 async function postSql<T>(url: string, sql: string): Promise<T> {
@@ -18,3 +18,5 @@ export async function fetchHistory(): Promise<HistoryItem[]> {
 }
 export const fetchHistoryEntry = (id: number) =>
   getJson<HistoryEntry>(`/api/query/history/${id}`);
+export const fetchPageRowidRuns = (page: number, after: number, limit: number) =>
+  getJson<PageRowidRuns>(`/api/page/${page}/rowid-runs?after=${after}&limit=${limit}`);

@@ -1,9 +1,10 @@
 import { create } from "zustand";
 import {
-  explainQuery, fetchHistory, fetchHistoryEntry, fetchRows, runQuery,
+  explainQuery, fetchHistory, fetchHistoryEntry, fetchPageRowidRuns, fetchRows, runQuery,
 } from "../core/queryApi.ts";
+import { pageRowsSql, qi } from "../core/pageQuery.ts";
 import type {
-  ExplainResult, HistoryItem, QueryColumn, RowsResponse, RunSummary,
+  ExplainResult, HistoryItem, ProfilePage, QueryColumn, RowsResponse, RunSummary,
 } from "../core/types.ts";
 
 export type ResultsTab = "table" | "pages" | "tables" | "explain";
@@ -17,8 +18,33 @@ export interface SelectedCell {
   pages: number[];
 }
 
+// Pagination state for a "select this page's rows" node query. The page's rows are
+// selected exactly, one run-batch at a time; as the user scrolls past a batch the
+// next batch is fetched, run, and appended.
+interface NodeQuery {
+  page: number;
+  overflow: boolean;
+  nextAfter: number | null;   // cursor for the next run batch (null = no more runs)
+  batchQueryId: number;       // the current batch's query (for row windowing)
+  batchLoaded: number;        // rows loaded from the current batch
+}
+
 // How many result rows to load into the table at once.
 const ROW_WINDOW = 1000;
+// How many rowid runs to request per batch (kept under SQLite's expression limits).
+const RUN_BATCH = 500;
+
+// Merges profile page lists (union by page number, summing reads/writes).
+function mergeProfile(a: ProfilePage[], b: ProfilePage[]): ProfilePage[] {
+  const byPage = new Map<number, ProfilePage>();
+  for (const p of a) byPage.set(p.pageNumber, { ...p });
+  for (const p of b) {
+    const e = byPage.get(p.pageNumber);
+    if (e) { e.reads += p.reads; e.writes += p.writes; }
+    else byPage.set(p.pageNumber, { ...p });
+  }
+  return [...byPage.values()];
+}
 
 export interface QueryState {
   sql: string;
@@ -31,13 +57,18 @@ export interface QueryState {
   explain: ExplainResult | null;
   history: HistoryItem[];
   selectedCell: SelectedCell | null;
+  highlightPage: number | null;   // results cells with data on this page are emphasized
+  nodeQuery: NodeQuery | null;    // in-progress "select page's rows" pagination
 
   refreshHistory(): Promise<void>;
   setSql(sql: string): void;
   setResultsTab(tab: ResultsTab): void;
   setSelectedCell(cell: SelectedCell | null): void;
+  setHighlightPage(page: number | null): void;
   runCurrent(): Promise<void>;
   runSql(sql: string): Promise<void>;
+  runObjectQuery(table: string): Promise<void>;
+  runPageQuery(page: number, overflow: boolean): Promise<void>;
   doExplain(): Promise<void>;
   loadHistory(id: number): Promise<void>;
   loadMoreRows(): Promise<void>;
@@ -54,6 +85,8 @@ export const useQuery = create<QueryState>((set, get) => ({
   explain: null,
   history: [],
   selectedCell: null,
+  highlightPage: null,
+  nodeQuery: null,
 
   async refreshHistory() {
     set({ history: await fetchHistory() });
@@ -61,11 +94,13 @@ export const useQuery = create<QueryState>((set, get) => ({
   setSql: (sql) => set({ sql }),
   setResultsTab: (resultsTab) => set({ resultsTab }),
   setSelectedCell: (selectedCell) => set({ selectedCell }),
+  setHighlightPage: (highlightPage) => set({ highlightPage }),
 
   async runCurrent() {
     const sql = get().sql.trim();
     if (!sql || get().running) return;
-    set({ running: true, error: null, selectedCell: null });
+    // A manual run is a plain single query — clear any node-query pagination/highlight.
+    set({ running: true, error: null, selectedCell: null, nodeQuery: null, highlightPage: null });
     const summary = await runQuery(sql);
     if (summary.error) {
       set({ running: false, error: summary.error });
@@ -79,6 +114,41 @@ export const useQuery = create<QueryState>((set, get) => ({
     set({ sql });
     await get().runCurrent();
   },
+
+  // Grouping node → the whole table (a plain query, ordinary row windowing).
+  async runObjectQuery(table) {
+    const sql = `SELECT * FROM ${qi(table)};`;
+    set({ highlightPage: null });
+    if (get().sql.trim() !== sql.trim() || !get().run) await get().runSql(sql);
+  },
+
+  // Table interior/leaf/overflow page → the page's exact rows, first run batch.
+  async runPageQuery(page, overflow) {
+    const batch = await fetchPageRowidRuns(page, 0, RUN_BATCH);
+    if (!batch || !batch.table || batch.runs.length === 0) return;
+    const sql = pageRowsSql(batch.table, batch.runs);
+    // Same query already shown → just update the (overflow) highlight, no re-run.
+    if (get().sql.trim() === sql.trim() && get().run) {
+      set({ highlightPage: overflow ? page : null });
+      return;
+    }
+    set({ sql, running: true, error: null, selectedCell: null, resultsTab: "table" });
+    const summary = await runQuery(sql);
+    if (summary.error) { set({ running: false, error: summary.error }); return; }
+    const rows = await fetchRows(summary.queryId, 0, ROW_WINDOW);
+    set({
+      running: false,
+      run: { ...summary, rowCount: batch.totalRowCount },  // page total across all batches
+      rows,
+      highlightPage: overflow ? page : null,
+      nodeQuery: {
+        page, overflow, nextAfter: batch.nextAfter,
+        batchQueryId: summary.queryId, batchLoaded: rows?.rows.length ?? 0,
+      },
+    });
+    void get().refreshHistory();
+  },
+
   async doExplain() {
     const sql = get().sql.trim();
     if (!sql) return;
@@ -93,6 +163,7 @@ export const useQuery = create<QueryState>((set, get) => ({
     const rows = await fetchRows(id, 0, ROW_WINDOW);
     set({
       sql: entry.sql, error: null, resultsTab: "table", rows, selectedCell: null,
+      highlightPage: null, nodeQuery: null,
       run: {
         queryId: entry.id, columns: entry.columns, rowCount: entry.rowCount,
         truncated: entry.truncated, pageCount: entry.pageCount, accesses: entry.accesses,
@@ -102,24 +173,58 @@ export const useQuery = create<QueryState>((set, get) => ({
   },
 
   // Fetches the next window of rows and appends them (incremental virtualization).
+  // For a node "select page's rows" query this also advances across run batches:
+  // once the current batch's rows are exhausted the next batch is run and appended.
   async loadMoreRows() {
-    const { run, rows, loadingMore } = get();
-    if (!run || !rows || loadingMore) return;
-    if (rows.rows.length >= run.rowCount) return;
-    set({ loadingMore: true });
-    const from = rows.rows.length;
-    const more = await fetchRows(run.queryId, from, from + ROW_WINDOW);
-    if (more) {
-      set({
+    const st = get();
+    if (!st.run || !st.rows || st.loadingMore) return;
+    const nq = st.nodeQuery;
+
+    if (!nq) {
+      if (st.rows.rows.length >= st.run.rowCount) return;
+      set({ loadingMore: true });
+      const more = await fetchRows(st.run.queryId, st.rows.rows.length, st.rows.rows.length + ROW_WINDOW);
+      set((s) => ({
         loadingMore: false,
-        rows: {
-          ...rows,
-          rows: [...rows.rows, ...more.rows],
-          rowPages: [...rows.rowPages, ...more.rowPages],
-        },
-      });
-    } else {
-      set({ loadingMore: false });
+        rows: more && s.rows ? { ...s.rows, rows: [...s.rows.rows, ...more.rows], rowPages: [...s.rows.rowPages, ...more.rowPages] } : s.rows,
+      }));
+      return;
     }
+
+    set({ loadingMore: true });
+    // 1) More rows of the current run batch.
+    const more = await fetchRows(nq.batchQueryId, nq.batchLoaded, nq.batchLoaded + ROW_WINDOW);
+    if (more && more.rows.length > 0) {
+      set((s) => ({
+        loadingMore: false,
+        nodeQuery: s.nodeQuery ? { ...s.nodeQuery, batchLoaded: nq.batchLoaded + more.rows.length } : null,
+        rows: s.rows ? { ...s.rows, rows: [...s.rows.rows, ...more.rows], rowPages: [...s.rows.rowPages, ...more.rowPages] } : s.rows,
+      }));
+      return;
+    }
+    // 2) Current batch done → run the next run batch and append.
+    if (nq.nextAfter != null) {
+      const batch = await fetchPageRowidRuns(nq.page, nq.nextAfter, RUN_BATCH);
+      if (batch && batch.table && batch.runs.length > 0) {
+        const summary = await runQuery(pageRowsSql(batch.table, batch.runs));
+        if (!summary.error) {
+          const first = await fetchRows(summary.queryId, 0, ROW_WINDOW);
+          set((s) => ({
+            loadingMore: false,
+            nodeQuery: { page: nq.page, overflow: nq.overflow, nextAfter: batch.nextAfter,
+                         batchQueryId: summary.queryId, batchLoaded: first?.rows.length ?? 0 },
+            rows: first && s.rows ? { ...s.rows, rows: [...s.rows.rows, ...first.rows], rowPages: [...s.rows.rowPages, ...first.rowPages] } : s.rows,
+            run: s.run ? { ...s.run, pageCount: 0, accesses: s.run.accesses + summary.accesses,
+                           profile: { pages: mergeProfile(s.run.profile.pages, summary.profile.pages) } } : s.run,
+          }));
+          // pageCount = union size (recomputed from the merged profile).
+          set((s) => ({ run: s.run ? { ...s.run, pageCount: s.run.profile.pages.length } : s.run }));
+          return;
+        }
+      }
+    }
+    // 3) Fully exhausted — stop and report the true loaded total.
+    set((s) => ({ loadingMore: false, nodeQuery: null,
+                  run: s.run && s.rows ? { ...s.run, rowCount: s.rows.rows.length } : s.run }));
   },
 }));

@@ -287,8 +287,11 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .rt-pin-head { z-index: 5; background: #1f2229; }
 .rt-even { background: rgba(255,255,255,.02); }
 .rt-sel { outline: 1px solid var(--accent); outline-offset: -1px; z-index: 1; }
+/* A cell contributing bytes to the highlighted (overflow) page. */
+.rt-hl { outline: 1px solid #f0b429; outline-offset: -1px; z-index: 1; }
 .rt-segs { position: absolute; inset: 0; display: flex; pointer-events: none; }
 .rt-seg { flex: 1 1 0; min-width: 0; }
+.rt-seg-hl { box-shadow: inset 0 0 0 2px #f0b429; }
 .rt-val { position: relative; z-index: 1; }
 .rt-resizer { position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize; z-index: 2; }
 .rt-resizer:hover { background: var(--accent); }

@@ -14,14 +14,16 @@ export function QueryLayout() {
   const [editorPct, setEditorPct] = useState(33);
   const viewerRef = useRef<HTMLDivElement>(null);
   const refreshHistory = useQuery((s) => s.refreshHistory);
-  const runSql = useQuery((s) => s.runSql);
+  const runObjectQuery = useQuery((s) => s.runObjectQuery);
+  const runPageQuery = useQuery((s) => s.runPageQuery);
   const objById = useViz((s) => s.objById);
 
   useEffect(() => { void refreshHistory(); }, [refreshHistory]);
 
-  // Activating a node runs the query for the table it resolves to, filling results.
+  // Activating a node fills the results view with that node's rows.
   useRegisterNodeActivation(useMemo(
-    () => makeQueryActivate(objById, runSql), [objById, runSql]));
+    () => makeQueryActivate({ objById, runObjectQuery, runPageQuery }),
+    [objById, runObjectQuery, runPageQuery]));
 
   const startDrag = (e: React.MouseEvent) => {
     e.preventDefault();

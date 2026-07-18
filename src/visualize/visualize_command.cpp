@@ -134,6 +134,17 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
                    res.set_content(body, "application/json");
                });
 
+    // Exact rowid runs of a page's rows, keyset-paginated (for the Query view's
+    // "select this page's rows" node activation).
+    server.Get(R"(/api/page/(\d+)/rowid-runs)",
+               [&db](const httplib::Request& req, httplib::Response& res) {
+                   const std::int64_t n = std::stoll(req.matches[1].str());
+                   res.set_content(
+                       db.pageRowidRunsJson(n, paramInt(req, "after", 0),
+                                            static_cast<int>(paramInt(req, "limit", 500))),
+                       "application/json");
+               });
+
     server.Get("/api/profile/pages", [&db](const httplib::Request& req,
                                            httplib::Response& res) {
         const std::int64_t from = paramInt(req, "from", 1);

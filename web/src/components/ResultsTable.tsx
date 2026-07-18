@@ -29,6 +29,7 @@ export function ResultsTable() {
   const loadMoreRows = useQuery((s) => s.loadMoreRows);
   const selectedCell = useQuery((s) => s.selectedCell);
   const setSelectedCell = useQuery((s) => s.setSelectedCell);
+  const highlightPage = useQuery((s) => s.highlightPage);
 
   const bodyRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<HoverCell | null>(null);
@@ -142,8 +143,11 @@ export function ResultsTable() {
                   const value = dataRows[ri][di];
                   const pages = rows.rowPages[ri]?.[di] ?? [];
                   const selected = selectedCell?.rowIndex === ri && selectedCell?.colIndex === di;
+                  // Emphasize cells whose bytes (partly) live on the highlighted
+                  // (overflow) page, so the overflow node's contribution stands out.
+                  const highlit = highlightPage != null && pages.includes(highlightPage);
                   return (
-                    <div className={"rt-cell" + (selected ? " rt-sel" : "")} key={col.id}
+                    <div className={"rt-cell" + (selected ? " rt-sel" : "") + (highlit ? " rt-hl" : "")} key={col.id}
                          style={{ position: "absolute", left: IDX_W + vc.start, width: vc.size, height: ROW_H }}
                          onClick={() => setSelectedCell({ rowIndex: ri, colIndex: di, column: queryCols[di], value, pages })}
                          onMouseMove={(e) => {
@@ -153,7 +157,8 @@ export function ResultsTable() {
                       {pages.length > 0 && (
                         <div className="rt-segs">
                           {pages.map((p, k) => (
-                            <div className="rt-seg" key={k} style={{ background: colorForPageNumber(p) }} />
+                            <div className={"rt-seg" + (p === highlightPage ? " rt-seg-hl" : "")}
+                                 key={k} style={{ background: colorForPageNumber(p) }} />
                           ))}
                         </div>
                       )}

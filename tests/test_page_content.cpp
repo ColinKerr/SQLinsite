@@ -368,6 +368,76 @@ TEST_CASE("table-interior counts individual rowids and splits runs at gaps") {
     CHECK(covered(140));  // survives, just above the deleted block
 }
 
+TEST_CASE("pageRowidRunsJson serves a page's exact rows, keyset-paginated") {
+    const Fixture fx = buildGappyInteriorFixture();  // deletes id%7==1 and 100..139
+    MapDb map(fx.mapPath);
+    const std::int64_t pageCount = json::parse(map.metaJson())["meta"].value("pageCount", 0);
+    const std::int64_t interior = firstInteriorPage(map);
+    REQUIRE(interior > 0);
+    std::int64_t leaf = 0, overflow = 0;
+    for (std::int64_t n = 2; n <= pageCount; ++n) {
+        const std::string t = map.pageType(n);
+        if (t == "table-leaf" && leaf == 0) leaf = n;
+        if (t == "overflow" && overflow == 0) overflow = n;
+    }
+    REQUIRE(leaf > 0);
+
+    // Gaps are excluded: no deleted rowid appears in any returned run, and runs are
+    // ascending & maximal (the fixture deletes id%7==1, so runs split at those gaps).
+    auto deleted = [](std::int64_t id) { return id % 7 == 1 || (id >= 100 && id <= 139); };
+    auto checkRuns = [&](std::int64_t page) {
+        const auto j = json::parse(map.pageRowidRunsJson(page, 0, 5000));  // all runs, one batch
+        CHECK(j["table"] == "T");
+        CHECK(j["nextAfter"].is_null());
+        std::int64_t sum = 0, prevHi = 0;
+        for (const auto& run : j["runs"]) {
+            const std::int64_t lo = run[0].get<std::int64_t>(), hi = run[1].get<std::int64_t>();
+            CHECK(lo <= hi);
+            if (prevHi) CHECK(lo > prevHi + 1);   // a real gap between maximal runs
+            for (std::int64_t id = lo; id <= hi; ++id) CHECK_FALSE(deleted(id));
+            prevHi = hi;
+            sum += hi - lo + 1;
+        }
+        CHECK(sum == j["totalRowCount"].get<std::int64_t>());
+        CHECK(sum > 0);
+    };
+    checkRuns(leaf);       // a leaf page → its own rows
+    checkRuns(interior);   // an interior page → its whole subtree's rows
+
+    // An overflow page resolves to its owning leaf's rows (same table).
+    if (overflow > 0) {
+        const auto ov = json::parse(map.pageRowidRunsJson(overflow, 0, 5000));
+        CHECK(ov["table"] == "T");
+        CHECK(ov["totalRowCount"].get<std::int64_t>() > 0);
+    }
+
+    // Keyset pagination: a small limit truncates and hands back a cursor; paging by
+    // `nextAfter` yields the rest with no gaps or repeats vs. the one-shot batch.
+    const auto full = json::parse(map.pageRowidRunsJson(interior, 0, 5000));
+    json paged = json::array();
+    std::int64_t after = 0;
+    for (int guard = 0; guard < 1000; ++guard) {
+        const auto b = json::parse(map.pageRowidRunsJson(interior, after, 3));
+        CHECK(b["runs"].size() <= 3);
+        for (const auto& run : b["runs"]) paged.push_back(run);
+        if (b["nextAfter"].is_null()) break;
+        after = b["nextAfter"].get<std::int64_t>();
+    }
+    CHECK(paged == full["runs"]);
+
+    // An index page (no rowid runs) yields the empty shape.
+    std::int64_t idx = 0;
+    for (std::int64_t n = 1; n <= pageCount && idx == 0; ++n) {
+        const std::string t = map.pageType(n);
+        if (t == "index-leaf" || t == "index-interior") idx = n;
+    }
+    if (idx > 0) {
+        const auto j = json::parse(map.pageRowidRunsJson(idx, 0, 5000));
+        CHECK(j["table"].is_null());
+        CHECK(j["runs"].empty());
+    }
+}
+
 TEST_CASE("page_row_runs precomputes contiguous rowid runs for every interior page") {
     const Fixture fx = buildThreeLevelFixture();
     MapQuery m(fx.mapPath);

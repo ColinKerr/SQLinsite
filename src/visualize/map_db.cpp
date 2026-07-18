@@ -480,6 +480,49 @@ std::string MapDb::pageBtreeInfoJson(std::int64_t page) const {
     return out.dump();
 }
 
+std::string MapDb::pageRowidRunsJson(std::int64_t page, std::int64_t after, int limit) const {
+    json out = {{"table", nullptr}, {"runs", json::array()},
+               {"nextAfter", nullptr}, {"totalRowCount", 0}};
+    limit = std::clamp(limit, 1, 5000);
+
+    // The page whose subtree rows we select: the table page itself, or (for an
+    // overflow page) its owner leaf. `runsPage` also carries the objectId we use to
+    // name the table.
+    json pt = queryRows(db_, "SELECT pageType FROM pages WHERE pageNumber=?", {page});
+    if (pt.empty()) return out.dump();
+    const std::string type = pt[0]["pageType"].is_string() ? pt[0]["pageType"].get<std::string>() : "";
+    std::int64_t runsPage = 0;
+    if (type == "table-leaf" || type == "table-interior") runsPage = page;
+    else if (type == "overflow") runsPage = overflowOwner(page);
+    if (runsPage <= 0) return out.dump();
+
+    // The owning table's name (only tables have rowid runs).
+    json nm = queryRows(db_,
+                        "SELECT o.name AS name FROM pages p JOIN objects o ON o.id=p.objectId "
+                        "WHERE p.pageNumber=? AND o.type='table'",
+                        {runsPage});
+    if (nm.empty() || !nm[0]["name"].is_string()) return out.dump();
+    out["table"] = nm[0]["name"];
+
+    // Total rows across all of this page's runs (for the "X of Y" display).
+    json tot = queryRows(db_, "SELECT COALESCE(SUM(rowCount),0) AS n FROM page_row_runs "
+                              "WHERE parentPageNumber=?", {runsPage});
+    out["totalRowCount"] = tot[0]["n"];
+
+    // One extra row tells us whether another batch follows (keyset by startRowId).
+    json runs = queryRows(
+        db_, "SELECT startRowId AS lo, endRowId AS hi FROM page_row_runs "
+             "WHERE parentPageNumber=?1 AND startRowId>?2 ORDER BY startRowId LIMIT ?3",
+        {runsPage, after, limit + 1});
+    const bool more = static_cast<int>(runs.size()) > limit;
+    if (more) runs.erase(runs.begin() + limit);
+    json arr = json::array();
+    for (const json& r : runs) arr.push_back({r["lo"], r["hi"]});
+    out["runs"] = std::move(arr);
+    if (more && !runs.empty()) out["nextAfter"] = runs.back()["lo"];
+    return out.dump();
+}
+
 std::string MapDb::treeRootsJson() const {
     json roots = json::array();
 

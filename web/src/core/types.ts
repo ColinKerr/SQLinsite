@@ -94,6 +94,14 @@ export interface RowsResponse {
   rowPages: number[][][];
   rowCount: number;
 }
+// A batch of a table page's exact rowid runs (keyset-paginated by startRowId), for
+// the Query view's "select this page's rows" node activation.
+export interface PageRowidRuns {
+  table: string | null;             // owning table, or null if the page has no rows
+  runs: [number, number][];         // [lo, hi] inclusive rowid ranges
+  nextAfter: number | null;         // cursor for the next batch, or null when done
+  totalRowCount: number;            // rows across all of the page's runs
+}
 export interface ExplainResult {
   queryPlan?: { columns: string[]; rows: unknown[][] };
   explain?: { columns: string[]; rows: unknown[][] };

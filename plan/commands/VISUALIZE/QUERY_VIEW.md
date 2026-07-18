@@ -15,9 +15,15 @@ The Query view **registers** its node-activation handler with the shared tree. T
 handler runs the query for the activated node and fills the 'results view' with its
 data and profile, exactly as the query control bar's 'Run' does:
 
-- A **table** or **index** node runs that object's data (e.g. `SELECT * FROM
-  <object>`), loading the results table plus the pages/tables profile tabs.
-- Selecting a **page** node scopes the results/profile to that page's rows.
+- Table Grouping node - Runs SQL that selects that objects data.
+- Table interior node - Runs SQL that selects the rows contained by that page and it's child pages.
+- Table leaf node - Runs SQL that selects the rows contained by that page and it's overflow pages.
+- Table leaf overflow node - Runs SQL that selects the rows contained by the owning leaf node and highlights the portion of the data coming from the overflow page.
+- All Index nodes - Do nothing.
+
+Run the SQL by setting the query editor text box to the appropriate SQL then running the query as though the 'Run' button had been pressed
+
+Only run the query if the current contents of the query editor text box is different than the query for the selected node.
 
 Arbitrary SQL — including against views, which are not b-trees and so do not
 appear in the tree — is still run from the query editor.  The editor's
