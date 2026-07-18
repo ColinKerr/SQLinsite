@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import {
   fetchPageContent, fetchTreeChildren, fetchTreeFreelist, fetchTreeObject, fetchTreeOther,
-  fetchTreePath, fetchTreeRoots,
+  fetchTreePath, fetchTreePointerMap, fetchTreeRoots,
 } from "../core/api.ts";
 import type { PageContent, TreeObjectOverview } from "../core/types.ts";
 import {
@@ -68,6 +68,12 @@ async function fetchChildren(node: TreeNode, after = 0): Promise<TreeNode[]> {
     const r = await fetchTreeFreelist(after, WINDOW);
     const kids = (r?.pages ?? []).map((c) => childNode(node.key, c, "freelist-trunk"));
     if (kids.length === WINDOW) kids.push(moreNode(node.key, "freelist", kids[kids.length - 1].page!));
+    return kids;
+  }
+  if (node.kind === "pointermap") {
+    const r = await fetchTreePointerMap(after, WINDOW);
+    const kids = (r?.pages ?? []).map((c) => childNode(node.key, c));
+    if (kids.length === WINDOW) kids.push(moreNode(node.key, "pointermap", kids[kids.length - 1].page!));
     return kids;
   }
   if (node.kind === "other") {

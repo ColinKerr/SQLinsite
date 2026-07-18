@@ -4,7 +4,7 @@ import type { PageBasics, TreeBtree, TreeChild, TreeRoot, TreeSearchMatch } from
 // "table"/"indexes" grouping nodes) and for the "load more" loader rows.
 export interface TreeNode extends PageBasics {
   key: string;
-  kind: "page" | "table" | "indexes" | "freelist" | "other" | "more";
+  kind: "page" | "table" | "indexes" | "freelist" | "pointermap" | "other" | "more";
   label: string;
   page: number | null;
   pageType: string | null;
@@ -17,7 +17,7 @@ export interface TreeNode extends PageBasics {
   indexes?: TreeBtree[];
   // Loader ("more") rows:
   loaderParent?: string;
-  loaderKind?: "freelist" | "other";
+  loaderKind?: "freelist" | "pointermap" | "other";
   after?: number;
 }
 
@@ -43,6 +43,10 @@ export function rootNode(r: TreeRoot): TreeNode {
   if (r.kind === "freelist") {
     return { key: "freelist", kind: "freelist", label: r.label, page: null,
              pageType: "freelist-trunk", hasChildren: true };
+  }
+  if (r.kind === "pointermap") {
+    return { key: "pointermap", kind: "pointermap", label: r.label, page: null,
+             pageType: "pointer-map", hasChildren: true };
   }
   if (r.kind === "other") {
     return { key: "other", kind: "other", label: r.label, page: null,
@@ -122,7 +126,7 @@ export function childNode(parentKey: string, c: TreeChild, edge?: string): TreeN
   };
 }
 
-export function moreNode(parentKey: string, loaderKind: "freelist" | "other", after: number): TreeNode {
+export function moreNode(parentKey: string, loaderKind: "freelist" | "pointermap" | "other", after: number): TreeNode {
   return { key: `${parentKey}>more:${after}`, kind: "more", label: "Load more…", page: null,
            pageType: null, hasChildren: false, loaderParent: parentKey, loaderKind, after };
 }

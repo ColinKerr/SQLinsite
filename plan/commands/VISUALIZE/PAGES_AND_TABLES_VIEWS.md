@@ -35,6 +35,18 @@ A single `<canvas>` per view, sized to its container and scaled for
 - **Symbol → page type** drawn only when blocks are large enough to read.
 - No block or run should be colored 100% black.
 
+### Tables-view bands
+
+The Tables view draws one **band** per group: first every schema object (table /
+index, from `/api/meta`), then a band for each present **structural page group** —
+**Freelist**, **Lock-Byte**, **Pointer-map**, and **All other pages** (unowned pages
+of no other structural group). These mirror the b-tree tree's structural roots (see
+B_TREE_TREE.md). Overflow pages belong to their owning table, so they sit in that
+table's band. Together the bands cover every page in the file — no page is omitted
+from the Tables view. Structural-band blocks are colored per page type (gray ramp);
+object-band blocks by the object palette. Activating any page node (object or
+structural) in the tree scrolls to and selects that page's block in its band.
+
 ### Navigation Panel
 
 Navigation is the shared **B-Tree Tree** panel on the **left** (see
@@ -47,10 +59,20 @@ The Pages and Tables views **register** their node-activation handler with the
 shared tree (the tree updates the selection highlight and calls the handler). The
 handler scrolls the canvas to the node's target:
 
-- **Pages view** — scroll to the node's first **leaf** page (or to a page node's
-  own page).
-- **Tables view** — scroll to the band of the object the node belongs to (the
+#### Linking Behavior
+
+Clicking a tree node **never switches the content view** — it scrolls/selects within
+the view that is already showing (a page node in the Tables view scrolls to that
+page's block inside its object band, not to the Pages grid).
+
+- **Pages view**
+  - Clicking on the table grouping node - scroll to and select the first **leaf** page for the table.
+- **Tables view**
+  - Clicking on the table grouping node - scroll to the band of the object the node belongs to (the
   beginning of that object).
+- **Pages view** and **Tables view**
+  - Clicking on any index grouping node - no action
+  - Clicking on any page node - Scroll to and select the block that represents the page node selected
 
 ### Zoom & pan
 

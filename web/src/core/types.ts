@@ -61,6 +61,17 @@ export interface ObjectPagesResponse {
   pages: ObjectPageRow[];
 }
 
+// A Tables-view structural page group (pages not owned by a schema object):
+// Freelist, Lock-Byte, or All other pages. Rendered as its own band.
+export interface StructuralGroup {
+  key: string; // "freelist" | "lockbyte" | "other"
+  label: string;
+  pageCount: number;
+}
+export interface StructuralGroupsResponse {
+  groups: StructuralGroup[];
+}
+
 export interface ProfilePage {
   pageNumber: number;
   reads: number;
@@ -137,7 +148,7 @@ export interface TreeBtree extends PageBasics {
   hasChildren: number | boolean;
 }
 export interface TreeRoot extends PageBasics {
-  kind: "page" | "table" | "freelist" | "other";
+  kind: "page" | "table" | "freelist" | "pointermap" | "other";
   label: string;
   page: number | null;
   pageType: string | null;

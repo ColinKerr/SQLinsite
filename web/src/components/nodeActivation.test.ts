@@ -68,24 +68,39 @@ describe("makeQueryActivate", () => {
 });
 
 describe("makeCanvasActivate", () => {
-  it("Pages view: a page node scrolls to that page", () => {
-    const goToPage = vi.fn(), setObj = vi.fn();
-    makeCanvasActivate("pages", goToPage, setObj)(node({ page: 5, objectId: 1 }));
-    expect(goToPage).toHaveBeenCalledWith(5);
+  it("a page node selects that page's block in the current view, passing its object + type", () => {
+    const selectPage = vi.fn(), setObj = vi.fn();
+    makeCanvasActivate(selectPage, setObj)(node({ kind: "page", page: 5, objectId: 1, pageType: "table-leaf" }));
+    expect(selectPage).toHaveBeenCalledWith(5, 1, "table-leaf");   // objectId/type locate the band
     expect(setObj).not.toHaveBeenCalled();
   });
 
-  it("an object/grouping node selects the object (controller scrolls to it)", () => {
-    const goToPage = vi.fn(), setObj = vi.fn();
-    makeCanvasActivate("pages", goToPage, setObj)(node({ kind: "table", page: null, objectId: 1 }));
-    expect(setObj).toHaveBeenCalledWith(1);
+  it("a structural page node (no objectId) passes its page type so Tables finds the group band", () => {
+    const selectPage = vi.fn(), setObj = vi.fn();
+    makeCanvasActivate(selectPage, setObj)(node({ kind: "page", page: 2, objectId: null, pageType: "pointer-map" }));
+    expect(selectPage).toHaveBeenCalledWith(2, null, "pointer-map");
+    expect(setObj).not.toHaveBeenCalled();
   });
 
-  it("Tables view: a page node scrolls to its object's band", () => {
-    const goToPage = vi.fn(), setObj = vi.fn();
-    makeCanvasActivate("tables", goToPage, setObj)(node({ page: 5, objectId: 1 }));
-    expect(setObj).toHaveBeenCalledWith(1);   // band, not the individual page
-    expect(goToPage).not.toHaveBeenCalled();
+  it("an index b-tree page node still scrolls to its page (only index *grouping* is inert)", () => {
+    const selectPage = vi.fn(), setObj = vi.fn();
+    makeCanvasActivate(selectPage, setObj)(node({ kind: "page", page: 8, objectId: 2, pageType: "index-leaf" }));
+    expect(selectPage).toHaveBeenCalledWith(8, 2, "index-leaf");
+    expect(setObj).not.toHaveBeenCalled();
+  });
+
+  it("a table grouping node selects the object (first leaf in Pages, band in Tables)", () => {
+    const selectPage = vi.fn(), setObj = vi.fn();
+    makeCanvasActivate(selectPage, setObj)(node({ kind: "table", page: null, objectId: 1 }));
+    expect(setObj).toHaveBeenCalledWith(1);
+    expect(selectPage).not.toHaveBeenCalled();
+  });
+
+  it("the Indexes grouping node does nothing", () => {
+    const selectPage = vi.fn(), setObj = vi.fn();
+    makeCanvasActivate(selectPage, setObj)(node({ kind: "indexes", page: null, objectId: 1 }));
+    expect(selectPage).not.toHaveBeenCalled();
+    expect(setObj).not.toHaveBeenCalled();
   });
 });
 

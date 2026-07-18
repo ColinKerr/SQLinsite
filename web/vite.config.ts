@@ -8,6 +8,16 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   base: "/static/",
+  // Dev only: the app (HMR + source maps) is served by Vite, but its `/api/*`
+  // calls are proxied to a running C++ `visualize serve` backend so the live data
+  // is real. Point at the backend's port (default 8080; override via SQLINSITE_API,
+  // e.g. SQLINSITE_API=http://localhost:9000 npm run dev). In production the C++
+  // server serves both the assets and the API, so no proxy is involved.
+  server: {
+    proxy: {
+      "/api": "http://localhost:8080",
+    },
+  },
   worker: {
     rollupOptions: {
       output: {

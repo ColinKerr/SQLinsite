@@ -1,15 +1,39 @@
-import { fetchObjectPages, fetchPage, fetchPages, fetchRuns } from "../core/api.ts";
+import {
+  fetchObjectPageOrdinal, fetchObjectPages, fetchPage, fetchPages, fetchRuns,
+  fetchStructuralPageOrdinal, fetchStructuralPages,
+} from "../core/api.ts";
 import { BG, GAP, HEADER_H, LOD_THRESHOLD, RANGE_CAP } from "../core/constants.ts";
 import { bestFitBlockPx, cell, colsFor, pagesContentHeight, scrollForPageAtY, topLeftPage, visiblePageRange }
   from "../core/layout.ts";
-import { colorForObject, colorForPage, GLYPH } from "../core/palette.ts";
+import { colorForObject, colorForPage, GLYPH, STRUCTURAL } from "../core/palette.ts";
 import { overlayFill } from "../core/overlay.ts";
-import type { ObjectInfo, ObjectPagesResponse, PagesResponse, Run, RunsResponse, View }
+import type { ObjectPagesResponse, PagesResponse, Run, RunsResponse, View }
   from "../core/types.ts";
 import type { VizState } from "../state/store.ts";
 import type { StoreApi } from "zustand";
 
-interface Band { obj: ObjectInfo; y: number; h: number; }
+// A Tables-view band: a schema object, or a structural page group (Freelist,
+// Lock-Byte, All other pages). `objectId` colors object bands (and fetches their
+// pages); it is null for structural groups, whose blocks are colored per page type
+// and whose pages are fetched by `structuralKey`.
+interface TableGroup {
+  key: string;                  // band identity + page-cache prefix: `o:<id>` | `s:<key>`
+  label: string;                // header text (before the page count)
+  pageCount: number;
+  objectId: number | null;      // schema object id, or null for a structural group
+  structuralKey: string | null; // "freelist" | "lockbyte" | "other", or null
+}
+interface Band { grp: TableGroup; y: number; h: number; }
+
+// The structural Tables-view band a page belongs to, derived from its page type
+// (mirrors the backend's structuralGroupWhere). Used to scroll a structural page
+// node — which carries no objectId — to its band.
+function structuralKeyForPage(pageType: string | null): string {
+  if (pageType === "freelist-trunk" || pageType === "freelist-leaf") return "freelist";
+  if (pageType === "lock-byte") return "lockbyte";
+  if (pageType === "pointer-map") return "pointermap";
+  return "other";
+}
 
 // Owns the canvas + minimap + popup DOM and the hot render loop. Shared UI state
 // (view, blockPx, metric, profile, …) comes from the Zustand store; render-loop
@@ -151,8 +175,8 @@ export class CanvasController {
     const cols = colsFor(this.cssW, bp);
     const c = cell(bp);
     let y = 0;
-    for (const o of this.s.objects) {
-      const rows = Math.max(1, Math.ceil(o.pageCount / cols));
+    for (const grp of this.tableGroups()) {
+      const rows = Math.max(1, Math.ceil(grp.pageCount / cols));
       y += HEADER_H + rows * c + 10;
     }
     return y;
@@ -246,13 +270,43 @@ export class CanvasController {
   }
 
   // ---- tables view --------------------------------------------------------
+  // The ordered Tables-view groups: one band per schema object, then a band per
+  // present structural page group (Freelist, Lock-Byte, All other pages) so every
+  // page in the file appears in some band.
+  private tableGroups(): TableGroup[] {
+    const groups: TableGroup[] = this.s.objects.map((o) => ({
+      key: `o:${o.id}`, label: `${o.name}  ·  ${o.type}`, pageCount: o.pageCount,
+      objectId: o.id, structuralKey: null,
+    }));
+    for (const g of this.s.structuralGroups) {
+      groups.push({ key: `s:${g.key}`, label: g.label, pageCount: g.pageCount,
+                    objectId: null, structuralKey: g.key });
+    }
+    return groups;
+  }
+
+  private fetchGroupPages(grp: TableGroup, from: number, to: number): Promise<ObjectPagesResponse | null> {
+    return grp.objectId != null
+      ? fetchObjectPages(grp.objectId, from, to)
+      : fetchStructuralPages(grp.structuralKey as string, from, to);
+  }
+
+  // A representative band color for the minimap: the object palette color, or a
+  // fixed structural tint (the "All other pages" group is mixed, so use gray).
+  private bandColor(grp: TableGroup): string {
+    if (grp.objectId != null) return colorForObject(grp.objectId);
+    if (grp.structuralKey === "freelist") return STRUCTURAL["freelist-trunk"];
+    if (grp.structuralKey === "lockbyte") return STRUCTURAL["lock-byte"];
+    return STRUCTURAL["unallocated"];
+  }
+
   private rebuildBands() {
     const cols = this.cols();
     this.bands = []; let y = 0;
-    for (const o of this.s.objects) {
-      const rows = Math.max(1, Math.ceil(o.pageCount / cols));
+    for (const grp of this.tableGroups()) {
+      const rows = Math.max(1, Math.ceil(grp.pageCount / cols));
       const h = HEADER_H + rows * this.cell();
-      this.bands.push({ obj: o, y, h }); y += h + 10;
+      this.bands.push({ grp, y, h }); y += h + 10;
     }
     this.tablesHeight = y;
   }
@@ -265,12 +319,12 @@ export class CanvasController {
       const firstRow = Math.max(0, Math.floor((scroll - band.y - HEADER_H) / this.cell()));
       const lastRow = Math.floor((scroll + this.cssH - band.y - HEADER_H) / this.cell());
       const from = Math.max(0, firstRow * cols);
-      const to = Math.min(band.obj.pageCount - 1, (lastRow + 1) * cols);
+      const to = Math.min(band.grp.pageCount - 1, (lastRow + 1) * cols);
       if (to < from || to - from + 1 > RANGE_CAP) continue;
-      const key = `${band.obj.id}:${from}:${to}`;
+      const key = `${band.grp.key}:${from}:${to}`;
       if (this.objPages.has(key)) continue;
       this.objPages.set(key, null);
-      fetchObjectPages(band.obj.id, from, to).then((d) => {
+      this.fetchGroupPages(band.grp, from, to).then((d) => {
         this.objPages.set(key, d); this.scheduleRender();
       });
     }
@@ -285,16 +339,20 @@ export class CanvasController {
       this.ctx.fillStyle = "#e6e8ec"; this.ctx.font = "12px sans-serif";
       this.ctx.textAlign = "left"; this.ctx.textBaseline = "alphabetic";
       this.ctx.fillText(
-        `${band.obj.name}  ·  ${band.obj.type}  ·  ${band.obj.pageCount.toLocaleString()} pages`,
+        `${band.grp.label}  ·  ${band.grp.pageCount.toLocaleString()} pages`,
         2, top + 14,
       );
       for (const [key, data] of this.objPages) {
-        if (!data || !key.startsWith(band.obj.id + ":")) continue;
+        if (!data || !key.startsWith(band.grp.key + ":")) continue;
         for (const p of data.pages) {
           const x = (p.ordinal % cols) * this.cell();
           const y = band.y + HEADER_H + Math.floor(p.ordinal / cols) * this.cell() - scroll;
           if (y > this.cssH || y + bp < 0) continue;
-          this.drawBlock(x, y, colorForObject(band.obj.id), p.pageType, p.pageNumber);
+          this.drawBlock(x, y, colorForPage(band.grp.objectId, p.pageType), p.pageType, p.pageNumber);
+          if (p.pageNumber === this.selected) {
+            this.ctx.strokeStyle = "#6ea8fe"; this.ctx.lineWidth = 2;
+            this.ctx.strokeRect(x + 1, y + 1, bp - 2, bp - 2);
+          }
         }
       }
     }
@@ -334,7 +392,7 @@ export class CanvasController {
       }
     } else {
       for (const band of this.bands) {
-        this.mctx.fillStyle = colorForObject(band.obj.id);
+        this.mctx.fillStyle = this.bandColor(band.grp);
         this.mctx.fillRect(0, band.y * scale, w, Math.max(0.5, band.h * scale));
       }
     }
@@ -360,9 +418,9 @@ export class CanvasController {
       if (innerY < 0) return null;
       const col = Math.floor(mx / this.cell());
       const ordinal = Math.floor(innerY / this.cell()) * cols + col;
-      if (col < 0 || col >= cols || ordinal >= band.obj.pageCount) return null;
+      if (col < 0 || col >= cols || ordinal >= band.grp.pageCount) return null;
       for (const [key, data] of this.objPages) {
-        if (!data || !key.startsWith(band.obj.id + ":")) continue;
+        if (!data || !key.startsWith(band.grp.key + ":")) continue;
         const hit = data.pages.find((p) => p.ordinal === ordinal);
         if (hit) return { pageNumber: hit.pageNumber };
       }
@@ -452,6 +510,42 @@ export class CanvasController {
     this.scheduleRender();
   }
 
+  // Scroll to and select page `n`'s block within the CURRENT view — never switching
+  // views. Public so the shared b-tree tree can navigate from a node click: in the
+  // Pages view the block is centered in the page grid; in the Tables view it is
+  // centered in its band (an object band via objectId, else the structural band for
+  // its page type).
+  selectPageInView(n: number, objectId: number | null, pageType: string | null) {
+    if (this.s.view === "tables") { void this.scrollToPageInBand(n, objectId, pageType); return; }
+    this.scroll.pages = Math.max(0, scrollForPageAtY(n, this.cssH / 2, this.cssW, this.blockPx()));
+    this.selected = n;
+    this.scheduleRender();
+  }
+
+  // Tables view: center page `n`'s block in its band. Bands lay pages out by their
+  // 0-based ordinal within the group (pages aren't contiguous), so we resolve that
+  // ordinal from the server first. Object pages use objectId; structural pages (no
+  // objectId) resolve to their group band via page type.
+  private async scrollToPageInBand(n: number, objectId: number | null, pageType: string | null) {
+    let band: Band | undefined;
+    let ordinal = -1;
+    if (objectId != null) {
+      band = this.bands.find((b) => b.grp.objectId === objectId);
+      if (!band) return;
+      ordinal = (await fetchObjectPageOrdinal(objectId, n))?.ordinal ?? -1;
+    } else {
+      const key = structuralKeyForPage(pageType);
+      band = this.bands.find((b) => b.grp.structuralKey === key);
+      if (!band) return;
+      ordinal = (await fetchStructuralPageOrdinal(key, n))?.ordinal ?? -1;
+    }
+    if (ordinal < 0) return;
+    const rowTop = band.y + HEADER_H + Math.floor(ordinal / this.cols()) * this.cell();
+    this.scroll.tables = Math.max(0, rowTop - this.cssH / 2);
+    this.selected = n;
+    this.scheduleRender();
+  }
+
   // Public: called by the Zoom controls.
   setZoom(px: number, anchorPage?: number, anchorY?: number) {
     if (anchorPage == null && this.s.view === "pages") {
@@ -473,7 +567,7 @@ export class CanvasController {
   fit() {
     if (this.cssW <= 0 || this.cssH <= 0) return;
     const pages = this.s.view === "pages";
-    if (pages ? this.s.pageCount <= 0 : this.s.objects.length === 0) return;
+    if (pages ? this.s.pageCount <= 0 : this.tableGroups().length === 0) return;
     const heightAt = pages
       ? (bp: number) => pagesContentHeight(this.s.pageCount, this.cssW, bp)
       : (bp: number) => this.tablesHeightAt(bp);
@@ -494,7 +588,7 @@ export class CanvasController {
     const obj = this.s.objById.get(id);
     if (!obj) return;
     if (this.s.view === "tables") {
-      const band = this.bands.find((b) => b.obj.id === id);
+      const band = this.bands.find((b) => b.grp.objectId === id);
       if (band) { this.scroll.tables = Math.max(0, band.y); this.scheduleRender(); }
       return;
     }

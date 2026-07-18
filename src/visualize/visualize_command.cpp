@@ -121,6 +121,43 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
         res.set_content(body, "application/json");
     });
 
+    // A page's 0-based ordinal within its object's Tables-view band (for scrolling
+    // to that page's block without leaving the Tables view).
+    server.Get("/api/object/page-ordinal", [&db](const httplib::Request& req,
+                                                 httplib::Response& res) {
+        res.set_content(
+            db.objectPageOrdinalJson(paramInt(req, "objectId", 0), paramInt(req, "page", 0)),
+            "application/json");
+    });
+
+    // Tables-view structural page groups (Freelist, Lock-Byte, All other pages) and
+    // their pages — the non-object bands, so every page appears in some group.
+    server.Get("/api/tables/structural-groups", [&db](const httplib::Request&,
+                                                      httplib::Response& res) {
+        res.set_content(db.structuralGroupsJson(), "application/json");
+    });
+    server.Get("/api/tables/structural-pages", [&db](const httplib::Request& req,
+                                                     httplib::Response& res) {
+        const std::int64_t from = paramInt(req, "from", 0);
+        const std::int64_t to = paramInt(req, "to", from);
+        bool tooLarge = false;
+        std::string body = db.structuralGroupPagesJson(req.get_param_value("key"), from, to, tooLarge);
+        if (tooLarge) {
+            res.status = 413;
+            res.set_content(R"({"error":"range too large"})", "application/json");
+            return;
+        }
+        res.set_content(body, "application/json");
+    });
+    // A structural page's 0-based ordinal within its group band (for scrolling a
+    // structural page node to its band in the Tables view).
+    server.Get("/api/tables/structural-page-ordinal", [&db](const httplib::Request& req,
+                                                            httplib::Response& res) {
+        res.set_content(
+            db.structuralGroupPageOrdinalJson(req.get_param_value("key"), paramInt(req, "page", 0)),
+            "application/json");
+    });
+
     server.Get(R"(/api/page/(\d+))",
                [&db](const httplib::Request& req, httplib::Response& res) {
                    const std::int64_t n = std::stoll(req.matches[1].str());
@@ -162,6 +199,10 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
     });
     server.Get("/api/tree/freelist", [&db](const httplib::Request& req, httplib::Response& res) {
         res.set_content(db.treeFreelistJson(paramInt(req, "after", 0), paramInt(req, "limit", 1000)),
+                        "application/json");
+    });
+    server.Get("/api/tree/pointermap", [&db](const httplib::Request& req, httplib::Response& res) {
+        res.set_content(db.treePointerMapJson(paramInt(req, "after", 0), paramInt(req, "limit", 1000)),
                         "application/json");
     });
     server.Get("/api/tree/other", [&db](const httplib::Request& req, httplib::Response& res) {

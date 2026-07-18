@@ -2,7 +2,7 @@ import { create, createStore, type StateCreator, type StoreApi } from "zustand";
 import { fetchProfilePages, selParam } from "../core/api.ts";
 import { MAX_BLOCK_PX, MIN_BLOCK_PX } from "../core/constants.ts";
 import { Profile } from "../core/profile.ts";
-import type { Meta, Metric, ObjectInfo, Run, SessionInfo, View } from "../core/types.ts";
+import type { Meta, Metric, ObjectInfo, Run, SessionInfo, StructuralGroup, View } from "../core/types.ts";
 
 // Shared UI state. Hot render-loop state (scroll, caches, selected, canvas size)
 // lives inside CanvasController, not here, so canvas panning never re-renders React.
@@ -10,6 +10,7 @@ export interface VizState {
   meta: Meta | null;
   objById: Map<number, ObjectInfo>;
   objects: ObjectInfo[];
+  structuralGroups: StructuralGroup[]; // Tables-view bands for non-object pages
   pageCount: number;
   hasProfile: boolean;
   sessions: SessionInfo[];
@@ -24,7 +25,8 @@ export interface VizState {
   legendWidth: number;
   selectedObject: number | null; // Navigation-panel object id (for history nav)
 
-  initFromMeta(meta: Meta, allRuns: Run[], profile: Profile): void;
+  initFromMeta(meta: Meta, allRuns: Run[], profile: Profile,
+               structuralGroups?: StructuralGroup[]): void;
   setView(v: View): void;
   setBlockPx(px: number): void;
   setMetric(m: Metric): void;
@@ -38,6 +40,7 @@ const creator: StateCreator<VizState> = (set, get) => ({
   meta: null,
   objById: new Map(),
   objects: [],
+  structuralGroups: [],
   pageCount: 0,
   hasProfile: false,
   sessions: [],
@@ -52,7 +55,7 @@ const creator: StateCreator<VizState> = (set, get) => ({
   legendWidth: 240,
   selectedObject: null,
 
-  initFromMeta(meta, allRuns, profile) {
+  initFromMeta(meta, allRuns, profile, structuralGroups = []) {
     const objById = new Map(meta.objects.map((o) => [o.id, o] as const));
     const selLeaves = new Set<number>();
     for (const s of meta.sessions || []) for (const l of s.leaves) selLeaves.add(l.leafId);
@@ -60,6 +63,7 @@ const creator: StateCreator<VizState> = (set, get) => ({
       meta,
       objById,
       objects: meta.objects,
+      structuralGroups,
       pageCount: meta.meta.pageCount,
       hasProfile: !!meta.hasProfile,
       sessions: meta.sessions || [],

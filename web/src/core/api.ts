@@ -1,7 +1,7 @@
 import type {
   Meta, ObjectPagesResponse, PageContent, PageDetail, PagesResponse, ProfilePagesResponse,
-  RunsResponse, TreeChild, TreeObjectResponse, TreePagesResponse, TreePathResponse, TreeRoot,
-  TreeSearchResponse,
+  RunsResponse, StructuralGroupsResponse, TreeChild, TreeObjectResponse, TreePagesResponse,
+  TreePathResponse, TreeRoot, TreeSearchResponse,
 } from "./types.ts";
 
 export async function getJson<T>(url: string): Promise<T | null> {
@@ -26,6 +26,14 @@ export const fetchRuns = (from: number, to: number) =>
   getJson<RunsResponse>(`/api/runs?from=${from}&to=${to}`);
 export const fetchObjectPages = (objectId: number, from: number, to: number) =>
   getJson<ObjectPagesResponse>(`/api/object/pages?objectId=${objectId}&from=${from}&to=${to}`);
+export const fetchObjectPageOrdinal = (objectId: number, page: number) =>
+  getJson<{ ordinal: number }>(`/api/object/page-ordinal?objectId=${objectId}&page=${page}`);
+export const fetchStructuralGroups = () =>
+  getJson<StructuralGroupsResponse>("/api/tables/structural-groups");
+export const fetchStructuralPages = (key: string, from: number, to: number) =>
+  getJson<ObjectPagesResponse>(`/api/tables/structural-pages?key=${key}&from=${from}&to=${to}`);
+export const fetchStructuralPageOrdinal = (key: string, page: number) =>
+  getJson<{ ordinal: number }>(`/api/tables/structural-page-ordinal?key=${key}&page=${page}`);
 export const fetchPage = (n: number) => getJson<PageDetail>(`/api/page/${n}`);
 export const fetchProfilePages = (from: number, to: number, sel: string) =>
   getJson<ProfilePagesResponse>(`/api/profile/pages?from=${from}&to=${to}${sel}`);
@@ -36,6 +44,8 @@ export const fetchTreeChildren = (page: number) =>
   getJson<{ children: TreeChild[] }>(`/api/tree/children?page=${page}`);
 export const fetchTreeFreelist = (after: number, limit: number) =>
   getJson<TreePagesResponse>(`/api/tree/freelist?after=${after}&limit=${limit}`);
+export const fetchTreePointerMap = (after: number, limit: number) =>
+  getJson<TreePagesResponse>(`/api/tree/pointermap?after=${after}&limit=${limit}`);
 export const fetchTreeOther = (after: number, limit: number) =>
   getJson<TreePagesResponse>(`/api/tree/other?after=${after}&limit=${limit}`);
 export const fetchTreePath = (page: number) =>

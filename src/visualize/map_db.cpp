@@ -307,6 +307,84 @@ std::string MapDb::objectPagesJson(std::int64_t objectId, std::int64_t from,
     return json({{"pages", std::move(pages)}}).dump();
 }
 
+std::string MapDb::objectPageOrdinalJson(std::int64_t objectId, std::int64_t page) const {
+    // The page must belong to the object; its ordinal is how many of the object's
+    // pages precede it (pages are laid out in the band ordered by pageNumber).
+    json owns = queryRows(db_, "SELECT 1 FROM pages WHERE pageNumber=?1 AND objectId=?2",
+                          {page, objectId});
+    if (owns.empty()) return json({{"ordinal", -1}}).dump();
+    json n = queryRows(db_, "SELECT COUNT(*) AS n FROM pages WHERE objectId=?1 AND pageNumber<?2",
+                       {objectId, page});
+    return json({{"ordinal", n[0]["n"]}}).dump();
+}
+
+namespace {
+// The `pages` predicate for a Tables-view structural group, or "" for an unknown
+// key. Mirrors the b-tree tree's structural roots: Freelist, Lock-Byte, Pointer-map,
+// and the catch-all "All other pages" (unowned pages of no other structural group).
+const char* structuralGroupWhere(const std::string& key) {
+    if (key == "freelist") return "pageType IN ('freelist-trunk','freelist-leaf')";
+    if (key == "lockbyte") return "pageType='lock-byte'";
+    if (key == "pointermap") return "pageType='pointer-map'";
+    if (key == "other")
+        return "objectId IS NULL AND "
+               "pageType NOT IN ('freelist-trunk','freelist-leaf','lock-byte','pointer-map')";
+    return "";
+}
+}  // namespace
+
+std::string MapDb::structuralGroupsJson() const {
+    struct Group { const char* key; const char* label; };
+    static constexpr Group kGroups[] = {
+        {"freelist", "Freelist"}, {"lockbyte", "Lock-Byte"},
+        {"pointermap", "Pointer-map"}, {"other", "All other pages"}};
+    json groups = json::array();
+    for (const Group& g : kGroups) {
+        json c = queryRows(db_, std::string("SELECT COUNT(*) AS n FROM pages WHERE ") +
+                                    structuralGroupWhere(g.key));
+        if (c[0]["n"].get<std::int64_t>() > 0)
+            groups.push_back({{"key", g.key}, {"label", g.label}, {"pageCount", c[0]["n"]}});
+    }
+    return json({{"groups", std::move(groups)}}).dump();
+}
+
+std::string MapDb::structuralGroupPagesJson(const std::string& key, std::int64_t from,
+                                            std::int64_t to, bool& tooLarge) const {
+    tooLarge = (to - from + 1) > kPageRangeCap;
+    if (tooLarge) return {};
+    const std::string where = structuralGroupWhere(key);
+    if (where.empty()) return json({{"pages", json::array()}}).dump();
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db_,
+                       ("SELECT pageNumber,pageType FROM pages WHERE " + where +
+                        " ORDER BY pageNumber LIMIT ? OFFSET ?").c_str(),
+                       -1, &stmt, nullptr);
+    sqlite3_bind_int64(stmt, 1, to - from + 1);
+    sqlite3_bind_int64(stmt, 2, from);
+    json pages = json::array();
+    std::int64_t ordinal = from;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        pages.push_back({{"ordinal", ordinal++},
+                         {"pageNumber", sqlite3_column_int64(stmt, 0)},
+                         {"pageType",
+                          reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1))}});
+    }
+    sqlite3_finalize(stmt);
+    return json({{"pages", std::move(pages)}}).dump();
+}
+
+std::string MapDb::structuralGroupPageOrdinalJson(const std::string& key,
+                                                  std::int64_t page) const {
+    const std::string where = structuralGroupWhere(key);
+    if (where.empty()) return json({{"ordinal", -1}}).dump();
+    // The page must be in the group; its ordinal is how many group pages precede it.
+    json owns = queryRows(db_, "SELECT 1 FROM pages WHERE pageNumber=?1 AND (" + where + ")", {page});
+    if (owns.empty()) return json({{"ordinal", -1}}).dump();
+    json n = queryRows(db_, "SELECT COUNT(*) AS n FROM pages WHERE (" + where + ") AND pageNumber<?1",
+                       {page});
+    return json({{"ordinal", n[0]["n"]}}).dump();
+}
+
 std::string MapDb::pageJson(std::int64_t pageNumber, const LeafFilter& sel) const {
     json rows = queryRows(db_, "SELECT * FROM pages WHERE pageNumber=?",
                           {pageNumber});
@@ -607,11 +685,20 @@ std::string MapDb::treeRootsJson() const {
         roots.push_back(std::move(node));
     }
 
+    // Pointer-map (virtual) — present when the pointer map exists (auto/incremental
+    // vacuum). Its children are the pointer-map pages.
+    json pm = queryRows(db_, "SELECT EXISTS(SELECT 1 FROM pages WHERE pageType='pointer-map') AS ex");
+    if (!pm.empty() && pm[0]["ex"].get<int>() != 0) {
+        roots.push_back({{"kind", "pointermap"}, {"label", "Pointer-map"}, {"page", nullptr},
+                         {"pageType", "pointer-map"}, {"objectId", nullptr},
+                         {"hasChildren", true}});
+    }
+
     // All other pages (virtual) — only when at least one such page exists.
     json other = queryRows(
         db_,
         "SELECT EXISTS(SELECT 1 FROM pages WHERE pageNumber>1 "
-        "AND pageType NOT IN ('freelist-trunk','freelist-leaf','lock-byte') "
+        "AND pageType NOT IN ('freelist-trunk','freelist-leaf','lock-byte','pointer-map') "
         "AND pageNumber NOT IN (SELECT rootPage FROM objects) "
         "AND pageNumber NOT IN (SELECT toPage FROM pointers)) AS ex");
     if (!other.empty() && other[0]["ex"].get<int>() != 0) {
@@ -752,9 +839,19 @@ std::string MapDb::treeOtherJson(std::int64_t after, std::int64_t limit) const {
             std::string(kChildKinds) + ") AS hasChildren "
         "FROM pages "
         "WHERE pageNumber>1 AND pageNumber>? "
-        "AND pageType NOT IN ('freelist-trunk','freelist-leaf','lock-byte') "
+        "AND pageType NOT IN ('freelist-trunk','freelist-leaf','lock-byte','pointer-map') "
         "AND pageNumber NOT IN (SELECT rootPage FROM objects) "
         "AND pageNumber NOT IN (SELECT toPage FROM pointers) "
+        "ORDER BY pageNumber LIMIT ?";
+    return json{{"pages", queryRows(db_, sql, {after, limit})}}.dump();
+}
+
+std::string MapDb::treePointerMapJson(std::int64_t after, std::int64_t limit) const {
+    // Pointer-map pages have no b-tree children of their own (they are flat arrays).
+    const std::string sql =
+        "SELECT pageNumber AS page, pageType, objectId, " + std::string(kDetailCols) + ", "
+        "0 AS hasChildren "
+        "FROM pages WHERE pageType='pointer-map' AND pageNumber>? "
         "ORDER BY pageNumber LIMIT ?";
     return json{{"pages", queryRows(db_, sql, {after, limit})}}.dump();
 }

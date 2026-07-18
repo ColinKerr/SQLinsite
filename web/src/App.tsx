@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchMeta, fetchProfilePages, fetchRuns } from "./core/api.ts";
+import { fetchMeta, fetchProfilePages, fetchRuns, fetchStructuralGroups } from "./core/api.ts";
 import { formatVersionError } from "./core/version.ts";
 import { Profile } from "./core/profile.ts";
 import { ControllerProvider } from "./state/ControllerContext.tsx";
@@ -27,12 +27,13 @@ export default function App() {
       if (verr) { setError(verr); return; }
       const pageCount = meta.meta.pageCount;
       const runs = await fetchRuns(1, pageCount); // whole-file run map for the minimap
+      const structural = await fetchStructuralGroups(); // Tables-view non-object bands
       let profile = Profile.empty();
       if (meta.hasProfile) {
         const data = await fetchProfilePages(1, pageCount, ""); // all leaves
         profile = new Profile(data ?? { pages: [] });
       }
-      initFromMeta(meta, runs?.runs ?? [], profile);
+      initFromMeta(meta, runs?.runs ?? [], profile, structural?.groups ?? []);
       // History navigation: subscribe to nav changes, seed the stack from
       // localStorage, then restore the position from the URL (or the last one).
       initHistory();

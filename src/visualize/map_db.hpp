@@ -52,6 +52,22 @@ public:
     // Pages owned by one object, by 0-based ordinal window [from, to] (Tables view).
     std::string objectPagesJson(std::int64_t objectId, std::int64_t from,
                                 std::int64_t to, bool& tooLarge) const;
+    // 0-based ordinal of `page` within its object's pages (ordered by pageNumber),
+    // i.e. the block's position in the Tables-view band; -1 if the page isn't in the
+    // object. JSON: {"ordinal":<n>}.
+    std::string objectPageOrdinalJson(std::int64_t objectId, std::int64_t page) const;
+    // The Tables-view structural page groups that are present (pages not owned by a
+    // schema object): Freelist, Lock-Byte, All other pages. Each carries its page
+    // count. JSON: {"groups":[{"key","label","pageCount"}...]}.
+    std::string structuralGroupsJson() const;
+    // Pages of one structural group, by 0-based ordinal window [from, to] (ordered by
+    // pageNumber) — the Tables-view band counterpart of objectPagesJson. `key` is one
+    // of "freelist" | "lockbyte" | "pointermap" | "other"; unknown → empty list.
+    std::string structuralGroupPagesJson(const std::string& key, std::int64_t from,
+                                         std::int64_t to, bool& tooLarge) const;
+    // 0-based ordinal of `page` within its structural group's band, or -1 if the page
+    // isn't in that group (used to scroll a structural page node to its band).
+    std::string structuralGroupPageOrdinalJson(const std::string& key, std::int64_t page) const;
     // Empty string if the page does not exist.
     std::string pageJson(std::int64_t pageNumber, const LeafFilter& sel) const;
     std::string profilePagesJson(std::int64_t from, std::int64_t to,
@@ -98,8 +114,10 @@ public:
     std::string treeChildrenJson(std::int64_t page) const;
     // Freelist trunk pages (children of the Freelist root), keyset-paginated.
     std::string treeFreelistJson(std::int64_t after, std::int64_t limit) const;
-    // Pages under "All other pages": not page 1, not a root, not freelist, and
-    // with no incoming pointer. Keyset-paginated by page number.
+    // Pointer-map pages (children of the Pointer-map root), keyset-paginated.
+    std::string treePointerMapJson(std::int64_t after, std::int64_t limit) const;
+    // Pages under "All other pages": not page 1, not a root, not freelist/pointer-map,
+    // and with no incoming pointer. Keyset-paginated by page number.
     std::string treeOtherJson(std::int64_t after, std::int64_t limit) const;
     // Ancestor chain from a b-tree root down to `page`, so the tree can expand to
     // it: `{path:[{page, edgeKind}]}` root-first (edgeKind null for the root).

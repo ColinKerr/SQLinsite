@@ -42,6 +42,7 @@ shared and behave identically in all views regardless of the active handler.
     - Indexes grouping node, only shown if the table has indexes.  It's children are the index b-trees, the root page for each index serves as the indexes first row.  Node is named the name of the index plus '(index)'
 - The freelist.  The root page is a virtual node whose children are the freelist trunk pages.
 - Lock-Byte root node.  Only shown if the Lock-Byte page exists.  The Lock-Byte page serves as the root node.
+- Pointer-map root node.  Only shown if the pointer map exists.  
 - All other pages.  Only shown if pages exist that are not covered in the root node descriptions above are grouped together under this root node for review, the final implementation will properly categorize these pages.
 
 ## Child nodes and expansion

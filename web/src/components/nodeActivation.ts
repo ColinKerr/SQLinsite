@@ -29,16 +29,21 @@ export function makeQueryActivate(deps: {
   };
 }
 
-// Pages/Tables view: scroll the canvas to the node — the page's own block in Pages
-// view, otherwise the start of the object it belongs to (the controller scrolls to
-// the object's band in Tables and its first block in Pages).
+// Pages/Tables view: link a tree node to the canvas (see PAGES_AND_TABLES_VIEWS.md).
+// A node click never switches the content view.
+//  - Any page node → scroll to and select that page's block in the current view
+//    (its grid cell in Pages, its band cell in Tables — passing the owning objectId
+//    so Tables can locate the band).
+//  - Table grouping node → select the object: the controller scrolls to and selects
+//    the table's first leaf page in the Pages view, or the object's band in Tables.
+//  - Index grouping node (and any other non-table grouping node) → nothing.
 export function makeCanvasActivate(
-  view: string, goToPage: (page: number) => void, setSelectedObject: (id: number) => void,
+  selectPage: (page: number, objectId: number | null, pageType: string | null) => void,
+  setSelectedObject: (id: number) => void,
 ): NodeActivate {
   return (node) => {
-    if (view === "pages" && node.page != null) goToPage(node.page);
-    else if (node.objectId != null) setSelectedObject(node.objectId);
-    else if (node.page != null) goToPage(node.page);
+    if (node.page != null) selectPage(node.page, node.objectId ?? null, node.pageType ?? null);
+    else if (node.kind === "table" && node.objectId != null) setSelectedObject(node.objectId);
   };
 }
 

@@ -104,6 +104,65 @@ Fixture buildGappyInteriorFixture() {
     return fx;
 }
 
+// Deleting a large contiguous tail returns whole pages to the freelist, so the map
+// has freelist-trunk/leaf pages (used to exercise the Tables-view Freelist group).
+Fixture buildFreelistFixture() {
+    Fixture fx;
+    fx.dbPath = tmpPath("pc_free.db");
+    fx.mapPath = tmpPath("pc_free.sqlite");
+    std::remove(fx.dbPath.c_str());
+    std::remove(fx.mapPath.c_str());
+
+    sqlite3* db = nullptr;
+    REQUIRE(sqlite3_open(fx.dbPath.c_str(), &db) == SQLITE_OK);
+    REQUIRE(sqlite3_exec(db, "CREATE TABLE T(id INTEGER PRIMARY KEY, s TEXT)",
+                         nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_stmt* st = nullptr;
+    REQUIRE(sqlite3_prepare_v2(db, "INSERT INTO T(id,s) VALUES (?,?)", -1, &st, nullptr) == SQLITE_OK);
+    const std::string pad(60, 'x');
+    for (int i = 1; i <= 4000; ++i) {
+        sqlite3_bind_int(st, 1, i);
+        sqlite3_bind_text(st, 2, pad.c_str(), -1, SQLITE_STATIC);
+        REQUIRE(sqlite3_step(st) == SQLITE_DONE);
+        sqlite3_reset(st);
+    }
+    sqlite3_finalize(st);
+    REQUIRE(sqlite3_exec(db, "DELETE FROM T WHERE id > 50", nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_close(db);
+    REQUIRE(runMap(MapOptions{fx.dbPath, fx.mapPath}) == 0);
+    return fx;
+}
+
+// Auto-vacuum adds pointer-map pages; a large delete also frees pages to the
+// freelist — so the map has both a Pointer-map and a Freelist structural group.
+Fixture buildAutoVacuumFixture() {
+    Fixture fx;
+    fx.dbPath = tmpPath("pc_av.db");
+    fx.mapPath = tmpPath("pc_av.sqlite");
+    std::remove(fx.dbPath.c_str());
+    std::remove(fx.mapPath.c_str());
+
+    sqlite3* db = nullptr;
+    REQUIRE(sqlite3_open(fx.dbPath.c_str(), &db) == SQLITE_OK);
+    REQUIRE(sqlite3_exec(db, "PRAGMA auto_vacuum=INCREMENTAL", nullptr, nullptr, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_exec(db, "CREATE TABLE T(id INTEGER PRIMARY KEY, s TEXT)",
+                         nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_stmt* st = nullptr;
+    REQUIRE(sqlite3_prepare_v2(db, "INSERT INTO T(id,s) VALUES (?,?)", -1, &st, nullptr) == SQLITE_OK);
+    const std::string pad(60, 'x');
+    for (int i = 1; i <= 4000; ++i) {
+        sqlite3_bind_int(st, 1, i);
+        sqlite3_bind_text(st, 2, pad.c_str(), -1, SQLITE_STATIC);
+        REQUIRE(sqlite3_step(st) == SQLITE_DONE);
+        sqlite3_reset(st);
+    }
+    sqlite3_finalize(st);
+    REQUIRE(sqlite3_exec(db, "DELETE FROM T WHERE id > 50", nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_close(db);
+    REQUIRE(runMap(MapOptions{fx.dbPath, fx.mapPath}) == 0);
+    return fx;
+}
+
 // Wide rows force few rows per leaf → a THREE-level table b-tree, so interior
 // pages that parent other interior pages exist. Scattered deletions add gaps.
 Fixture buildThreeLevelFixture() {
@@ -436,6 +495,124 @@ TEST_CASE("pageRowidRunsJson serves a page's exact rows, keyset-paginated") {
         CHECK(j["table"].is_null());
         CHECK(j["runs"].empty());
     }
+}
+
+TEST_CASE("objectPageOrdinalJson gives a page's position within its object band") {
+    const Fixture fx = buildInteriorFixture();  // one multi-page table T
+    MapDb map(fx.mapPath);
+    MapQuery m(fx.mapPath);
+
+    const std::int64_t objId = m.scalar("SELECT id FROM objects WHERE name='T' AND type='table'");
+    REQUIRE(objId >= 0);
+    const std::int64_t pageCount = m.scalar("SELECT COUNT(*) FROM pages WHERE objectId=" + std::to_string(objId));
+    REQUIRE(pageCount > 2);  // interior + several leaves
+
+    // The first page (lowest pageNumber) is ordinal 0; the last is pageCount-1.
+    const std::int64_t firstPage = m.scalar("SELECT MIN(pageNumber) FROM pages WHERE objectId=" + std::to_string(objId));
+    const std::int64_t lastPage = m.scalar("SELECT MAX(pageNumber) FROM pages WHERE objectId=" + std::to_string(objId));
+    CHECK(json::parse(map.objectPageOrdinalJson(objId, firstPage))["ordinal"].get<std::int64_t>() == 0);
+    CHECK(json::parse(map.objectPageOrdinalJson(objId, lastPage))["ordinal"].get<std::int64_t>() == pageCount - 1);
+
+    // For a middle page, the ordinal equals the count of the object's pages before it.
+    const std::int64_t mid = m.scalar(
+        "SELECT pageNumber FROM pages WHERE objectId=" + std::to_string(objId) +
+        " ORDER BY pageNumber LIMIT 1 OFFSET " + std::to_string(pageCount / 2));
+    const std::int64_t expected = m.scalar(
+        "SELECT COUNT(*) FROM pages WHERE objectId=" + std::to_string(objId) +
+        " AND pageNumber<" + std::to_string(mid));
+    CHECK(json::parse(map.objectPageOrdinalJson(objId, mid))["ordinal"].get<std::int64_t>() == expected);
+
+    // A page that doesn't belong to the object → -1 (page 1 is sqlite_schema, not T).
+    CHECK(json::parse(map.objectPageOrdinalJson(objId, 1))["ordinal"].get<std::int64_t>() == -1);
+    CHECK(json::parse(map.objectPageOrdinalJson(objId, 999999))["ordinal"].get<std::int64_t>() == -1);
+}
+
+TEST_CASE("structural groups expose the Tables-view non-object page bands") {
+    const Fixture fx = buildFreelistFixture();  // a large delete frees whole pages
+    MapDb map(fx.mapPath);
+    MapQuery m(fx.mapPath);
+
+    const std::int64_t freelistPages =
+        m.scalar("SELECT COUNT(*) FROM pages WHERE pageType IN ('freelist-trunk','freelist-leaf')");
+    REQUIRE(freelistPages > 0);  // the fixture must actually produce freelist pages
+
+    const auto groups = json::parse(map.structuralGroupsJson())["groups"];
+    // Only present groups are listed; this fixture has a Freelist group and no
+    // lock-byte page (those need a >1 GiB db) — "other" is present only if there are
+    // unowned non-freelist/non-lock-byte pages.
+    json freelist;
+    bool sawLockByte = false;
+    for (const auto& g : groups) {
+        if (g["key"] == "freelist") freelist = g;
+        if (g["key"] == "lockbyte") sawLockByte = true;
+    }
+    REQUIRE(!freelist.is_null());
+    CHECK(freelist["label"] == "Freelist");
+    CHECK(freelist["pageCount"].get<std::int64_t>() == freelistPages);
+    CHECK_FALSE(sawLockByte);
+
+    // The group's pages come back in pageNumber order with 0-based ordinals, all of
+    // a freelist type.
+    bool tooLarge = false;
+    const auto pages = json::parse(
+        map.structuralGroupPagesJson("freelist", 0, freelistPages - 1, tooLarge))["pages"];
+    CHECK_FALSE(tooLarge);
+    REQUIRE(pages.size() == static_cast<std::size_t>(freelistPages));
+    std::int64_t prev = 0;
+    for (std::size_t i = 0; i < pages.size(); ++i) {
+        CHECK(pages[i]["ordinal"].get<std::int64_t>() == static_cast<std::int64_t>(i));
+        const std::string t = pages[i]["pageType"].get<std::string>();
+        CHECK((t == "freelist-trunk" || t == "freelist-leaf"));
+        const std::int64_t pn = pages[i]["pageNumber"].get<std::int64_t>();
+        if (i > 0) CHECK(pn > prev);  // ascending pageNumber
+        prev = pn;
+    }
+
+    // A windowed slice honors from/to; an unknown key yields an empty band.
+    const auto slice = json::parse(map.structuralGroupPagesJson("freelist", 0, 0, tooLarge))["pages"];
+    CHECK(slice.size() == 1);
+    CHECK(json::parse(map.structuralGroupPagesJson("bogus", 0, 100, tooLarge))["pages"].empty());
+}
+
+TEST_CASE("pointer-map is its own group, separate from All other pages") {
+    const Fixture fx = buildAutoVacuumFixture();  // auto-vacuum → pointer-map pages
+    MapDb map(fx.mapPath);
+    MapQuery m(fx.mapPath);
+
+    const std::int64_t ptrmapPages = m.scalar("SELECT COUNT(*) FROM pages WHERE pageType='pointer-map'");
+    REQUIRE(ptrmapPages > 0);  // the fixture must actually produce pointer-map pages
+
+    const auto groups = json::parse(map.structuralGroupsJson())["groups"];
+    json pointermap, other;
+    for (const auto& g : groups) {
+        if (g["key"] == "pointermap") pointermap = g;
+        if (g["key"] == "other") other = g;
+    }
+    REQUIRE(!pointermap.is_null());
+    CHECK(pointermap["label"] == "Pointer-map");
+    CHECK(pointermap["pageCount"].get<std::int64_t>() == ptrmapPages);
+
+    // Pointer-map pages are NOT double-counted in "All other pages".
+    if (!other.is_null()) {
+        bool tooLarge = false;
+        const auto otherPages = json::parse(
+            map.structuralGroupPagesJson("other", 0, other["pageCount"].get<std::int64_t>() - 1, tooLarge))["pages"];
+        for (const auto& p : otherPages) CHECK(p["pageType"] != "pointer-map");
+    }
+
+    // The b-tree tree surfaces a Pointer-map root whose children are the pages.
+    bool sawPointerMapRoot = false;
+    for (const auto& r : json::parse(map.treeRootsJson())["roots"])
+        if (r["kind"] == "pointermap") sawPointerMapRoot = true;
+    CHECK(sawPointerMapRoot);
+    CHECK(json::parse(map.treePointerMapJson(0, 1000))["pages"].size() ==
+          static_cast<std::size_t>(ptrmapPages));
+
+    // structuralGroupPageOrdinalJson locates a page within its group (and rejects
+    // a page that isn't in the group).
+    const std::int64_t firstPm = m.scalar("SELECT MIN(pageNumber) FROM pages WHERE pageType='pointer-map'");
+    CHECK(json::parse(map.structuralGroupPageOrdinalJson("pointermap", firstPm))["ordinal"].get<std::int64_t>() == 0);
+    CHECK(json::parse(map.structuralGroupPageOrdinalJson("freelist", firstPm))["ordinal"].get<std::int64_t>() == -1);
 }
 
 TEST_CASE("page_row_runs precomputes contiguous rowid runs for every interior page") {
