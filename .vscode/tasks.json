@@ -46,6 +46,30 @@
             "problemMatcher": [ "$gcc" ]
         },
         {
+            // Starts the Vite dev server (HMR + source maps) for debugging the
+            // front-end. Used as the preLaunchTask for the "Frontend (Chrome)"
+            // config. It's a long-running background task: the problemMatcher below
+            // lets VS Code detect when the server is ready (prints "Local:") and
+            // then launch the browser. Its `/api/*` calls proxy to a running C++
+            // backend on :8080 (see web/vite.config.ts) — start one first (e.g. the
+            // "visualize serve --db-file" config, or the full-stack compound).
+            "label": "vite: dev server",
+            "type": "shell",
+            "command": "npm",
+            "args": [ "run", "dev" ],
+            "options": { "cwd": "${workspaceFolder}/web" },
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "vite",
+                "pattern": { "regexp": "^$" },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": ".*VITE v.*",
+                    "endsPattern": ".*Local:.*"
+                }
+            }
+        },
+        {
             "type": "cppbuild",
             "label": "C/C++: clang build active file",
             "command": "/usr/bin/clang",

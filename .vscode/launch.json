@@ -102,6 +102,21 @@
             "pid": "${command:pickMyProcess}"
         },
         {
+            // Debug the FRONT-END in Chrome with source maps and breakpoints in the
+            // TS/TSX source. Its preLaunchTask starts the Vite dev server (HMR); the
+            // app's /api calls proxy to a C++ backend on :8080, so start one first —
+            // either run "visualize serve --db-file (CodeLLDB)" separately, or use
+            // the "Full stack" compound below to launch both together. Uses VS Code's
+            // built-in JavaScript debugger (no extension needed).
+            "name": "Frontend (Chrome + Vite dev)",
+            "type": "chrome",
+            "request": "launch",
+            "url": "http://localhost:5173/",
+            "webRoot": "${workspaceFolder}/web",
+            "sourceMaps": true,
+            "preLaunchTask": "vite: dev server"
+        },
+        {
             // Fallback for users without CodeLLDB: launch `visualize serve` under the
             // Microsoft C/C++ extension's lldb backend (flaky on arm64 — prefer the
             // CodeLLDB config above).
@@ -119,6 +134,21 @@
             "stopAtEntry": false,
             "externalConsole": false,
             "preLaunchTask": "cmake: build sqlinsite (debug)"
+        }
+    ],
+    "compounds": [
+        {
+            // Full stack: launch the C++ server under the debugger (prompts for the
+            // map + db files, serves on :8080) AND the Chrome front-end against the
+            // Vite dev server (which proxies /api to that backend). Breakpoints bind
+            // in both C++ request handlers and the TS/TSX source. Stopping one stops
+            // both. Keep the backend port at 8080 to match the dev-server proxy.
+            "name": "Full stack: backend + frontend",
+            "configurations": [
+                "visualize serve --db-file (CodeLLDB)",
+                "Frontend (Chrome + Vite dev)"
+            ],
+            "stopAll": true
         }
     ],
     "inputs": [

@@ -18,17 +18,7 @@ When a node's body is clicked the tree does its shared work — expands the node
 it is collapsed, moves the shared **selection highlight** to it — and then calls
 the **activation handler the active view has registered**. The tree itself does
 not know what any view does with the node; each view supplies (injects) its
-handler and is free to interpret the node however it likes. The handlers, by view:
-
-- **Pages view** — scrolls the Pages canvas to the node's first **leaf** page (or
-  to the page itself for a page node) and highlights it.
-- **Tables view** — scrolls to the band of the object the node belongs to (its
-  table/index), i.e. the beginning of that object.
-- **Query view** — runs the query for the selected object (e.g. a table or index
-  b-tree node) and fills the Results View with its data and profile, the same way
-  the query control bar's Run does. (See QUERY_VIEW.md.)
-- **Page Tree view** — shows the node's Page Detail, Table Overview, or Index
-  Overview in the pane to the right (see PAGE_TREE_VIEW.md).
+handler and is free to interpret the node however it likes.
 
 Expand/collapse (the chevron), the node search, and the selection highlight are
 shared and behave identically in all views regardless of the active handler.
