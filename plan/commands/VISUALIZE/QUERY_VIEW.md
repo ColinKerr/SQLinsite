@@ -11,7 +11,8 @@ replaces the earlier bespoke schema panel.  Its nodes are the file's b-trees —
 tables and their indexes, plus pages — so navigation is at object/page
 granularity rather than the schema's columns/triggers granularity.
 
-Clicking a node runs the query for that node and fills the 'results view' with its
+The Query view **registers** its node-activation handler with the shared tree. The
+handler runs the query for the activated node and fills the 'results view' with its
 data and profile, exactly as the query control bar's 'Run' does:
 
 - A **table** or **index** node runs that object's data (e.g. `SELECT * FROM

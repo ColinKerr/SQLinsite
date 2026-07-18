@@ -43,7 +43,9 @@ old page-types / tables-indexes list. The information that list carried is alrea
 in the tree: the page-type glyph/color symbology is the tree's key, and each
 node's page count and size are shown on the node.
 
-Clicking a tree node scrolls the canvas to that node's target and highlights it:
+The Pages and Tables views **register** their node-activation handler with the
+shared tree (the tree updates the selection highlight and calls the handler). The
+handler scrolls the canvas to the node's target:
 
 - **Pages view** — scroll to the node's first **leaf** page (or to a page node's
   own page).

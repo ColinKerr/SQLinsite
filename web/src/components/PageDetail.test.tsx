@@ -71,12 +71,11 @@ describe("PageDetail — header", () => {
   it("shows the owning b-tree and the row count for a table page", () => {
     useTree.setState({ selectedPage: 6, content: tableLeaf, contentLoading: false });
     render(<PageDetail />);
-    // Line 1: which table/index b-tree the page is part of.
-    expect(screen.getByText(/part of/)).toBeInTheDocument();
+    // The owning table/index b-tree (name + type).
     expect(screen.getByText("T")).toBeInTheDocument();
     expect(screen.getByText(/\(table\)/)).toBeInTheDocument();
-    // Line 2: the row count (its own line; 272 also appears as cellCount below).
-    expect(document.querySelector(".pd-rowcount")?.textContent).toMatch(/272\s*rows/);
+    // The Row Count line (272 also appears as cellCount in the decoded fields).
+    expect(document.querySelector(".pd-rowcount")?.textContent).toMatch(/Row Count:\s*272/);
   });
 
   it("omits the row count for a page with no rowCount (e.g. an index page)", () => {

@@ -142,6 +142,21 @@ original result before trusting the rowids, then maps rowid → leaf page via th
 map's `cells`. Anything ambiguous (expressions, aggregates, DISTINCT/GROUP BY,
 alias mismatches) is left unresolved.
 
+## Front-end navigation (shared tree + injected selection)
+
+Every view shares one **B-Tree Tree** instance mounted in the left Navigation
+Panel (kept mounted across view switches so its state — selection, expansion,
+scroll, search — is stable). The tree component is **view-agnostic**: it owns only
+the shared concerns (rendering, expand/collapse, node search, the selection
+highlight, reveal/scroll-to-node) and holds no reference to any view's stores or
+behavior. When a node is activated it updates the shared highlight and then calls
+the **node-activation handler the active view registered** — dependency-injection
+rather than a `switch (view)` inside the tree. Each view (Pages/Tables canvas,
+Query, Page Tree) registers its handler when mounted; the handler closes over that
+view's own concerns (canvas controller, query runner, detail/overview loaders).
+This keeps view-specific logic in the views and lets new views define behavior
+without touching the tree.
+
 ## Source layout
 
 ```

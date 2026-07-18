@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "../state/queryStore.ts";
+import { useViz } from "../state/store.ts";
+import { useRegisterNodeActivation } from "../state/treeSelectionStore.ts";
+import { makeQueryActivate } from "./nodeActivation.ts";
 import { QueryEditor } from "./QueryEditor.tsx";
 import { ResultsView } from "./ResultsView.tsx";
 import { CellDetails } from "./CellDetails.tsx";
@@ -11,8 +14,14 @@ export function QueryLayout() {
   const [editorPct, setEditorPct] = useState(33);
   const viewerRef = useRef<HTMLDivElement>(null);
   const refreshHistory = useQuery((s) => s.refreshHistory);
+  const runSql = useQuery((s) => s.runSql);
+  const objById = useViz((s) => s.objById);
 
   useEffect(() => { void refreshHistory(); }, [refreshHistory]);
+
+  // Activating a node runs the query for the table it resolves to, filling results.
+  useRegisterNodeActivation(useMemo(
+    () => makeQueryActivate(objById, runSql), [objById, runSql]));
 
   const startDrag = (e: React.MouseEvent) => {
     e.preventDefault();

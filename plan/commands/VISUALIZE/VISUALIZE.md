@@ -92,9 +92,11 @@ The top bar should be organized in groups from left to right in this order:
 
 Every view lays out the same way: the shared B-Tree Tree Navigation Panel on the
 left (see B_TREE_TREE.md), and that view's own main content on the right. The tree
-is one shared instance kept mounted across view switches, so it looks and behaves
-identically in every view; each view only supplies its own handler for what a node
-click does (scroll the canvas, run a query, show page detail, …).
+is one shared, view-agnostic instance kept mounted across view switches, so it
+looks and behaves identically in every view. It holds no per-view logic; instead
+each view **injects** (registers) its own handler for what activating a node does
+— scroll the canvas, run a query, show page detail, … — and the tree calls the
+active view's handler.
 
 All views must handle billions of pages and or rows.  Pages and Tables tabs sharing a canvas renderer.
 

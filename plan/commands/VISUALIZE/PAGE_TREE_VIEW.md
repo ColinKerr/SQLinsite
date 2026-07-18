@@ -12,12 +12,16 @@ The B-Tree Tree is defined in the B_TREE_TREE.md file.
 
 ### Linking Behavior
 
+The Page Tree view **registers** its node-activation handler with the shared tree
+(see B_TREE_TREE.md). When a node is activated the handler fills the content area
+on the right:
+
 - Table Node
-  - Clicking on a table node shows the TableOverview control for this table in the content area
+  - Activating a table node shows the TableOverview control for this table in the content area
 - Index Grouping Node
-  - Clicking on a index grouping node shows the IndexOverview control for this table in the content area
+  - Activating an index grouping node shows the IndexOverview control for this table in the content area
 - Page Node
-  - Clicking on a page node shows the PageDetail control of the appropriate type for the selected page in the content area
+  - Activating a page node shows the PageDetail control of the appropriate type for the selected page in the content area
 
 ## Table Overview view
 

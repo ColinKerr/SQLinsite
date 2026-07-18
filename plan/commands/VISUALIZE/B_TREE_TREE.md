@@ -4,13 +4,21 @@ The B-Tree Tree is the application's shared **Navigation Panel**. It renders the
 same nodes (roots, tables/indexes, pages, freelist, …) and node control in every
 view; the tree, its node search, selection, expansion state, and scroll position
 are visually unchanged when switching views because it is a single shared instance
-backed by one shared tree state. What differs per view is only how a click on a
-node is handled — each view registers its own node-click handler.
+backed by one shared tree state.
 
-## Per-view node clicks
+The tree is **view-agnostic**: it contains no per-view logic. It owns only the
+shared concerns — rendering, expand/collapse, node search, the selection
+highlight, and revealing/scrolling to a node. What happens when a node is
+**activated** is injected: each view registers its own activation handler, and the
+tree invokes whichever handler the active view registered.
 
-Selecting a node in the tree (the selection highlight is shared across views) does
-different things depending on the active view:
+## Node activation (injected by each view)
+
+When a node's body is clicked the tree does its shared work — expands the node if
+it is collapsed, moves the shared **selection highlight** to it — and then calls
+the **activation handler the active view has registered**. The tree itself does
+not know what any view does with the node; each view supplies (injects) its
+handler and is free to interpret the node however it likes. The handlers, by view:
 
 - **Pages view** — scrolls the Pages canvas to the node's first **leaf** page (or
   to the page itself for a page node) and highlights it.
@@ -19,10 +27,11 @@ different things depending on the active view:
 - **Query view** — runs the query for the selected object (e.g. a table or index
   b-tree node) and fills the Results View with its data and profile, the same way
   the query control bar's Run does. (See QUERY_VIEW.md.)
-- **Page Tree view** — selects the node and shows its Page Detail, Table Overview,
-  or Index Overview in the pane to the right (see PAGE_TREE_VIEW.md).
+- **Page Tree view** — shows the node's Page Detail, Table Overview, or Index
+  Overview in the pane to the right (see PAGE_TREE_VIEW.md).
 
-Expand/collapse (the chevron) and the node search behave identically in all views.
+Expand/collapse (the chevron), the node search, and the selection highlight are
+shared and behave identically in all views regardless of the active handler.
 
 ## Root nodes
 

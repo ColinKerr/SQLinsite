@@ -2,8 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { BTreeTree } from "./BTreeTree.tsx";
 import { useTree } from "../state/treeStore.ts";
-import { useViz } from "../state/store.ts";
-import { useQuery } from "../state/queryStore.ts";
+import { useTreeSelection } from "../state/treeSelectionStore.ts";
 
 function jsonResp(body: unknown) {
   return { ok: true, json: async () => body } as Response;
@@ -14,8 +13,7 @@ class RO { observe() {} unobserve() {} disconnect() {} }
 
 beforeEach(() => {
   vi.stubGlobal("ResizeObserver", RO);
-  // The Page Tree view drives the node-click → detail behavior these tests cover.
-  useViz.setState({ view: "tree" });
+  useTreeSelection.setState({ activate: () => {} });
   useTree.setState({
     roots: null, childrenByKey: {}, expanded: new Set(), loading: new Set(),
     selectedPage: null, selectedKey: null, content: null, overview: null, contentLoading: false,
@@ -88,28 +86,28 @@ describe("BTreeTree click behavior", () => {
   });
 });
 
-describe("BTreeTree per-view node clicks", () => {
-  it("Pages view: clicking a table node scrolls to its object", async () => {
-    useViz.setState({ view: "pages", selectedObject: null,
-      objById: new Map([[1, { id: 1, type: "table", name: "Widget" }]]) as never });
+describe("BTreeTree injected activation", () => {
+  it("invokes the active view's registered handler with the clicked node", async () => {
+    const activate = vi.fn();
+    useTreeSelection.setState({ activate });   // a view has registered its handler
     await useTree.getState().loadRoots();
     render(<BTreeTree />);
 
     fireEvent.click(screen.getByText("Widget"));
-    // The canvas controller subscribes to selectedObject and scrolls to it.
-    expect(useViz.getState().selectedObject).toBe(1);
-    expect(useTree.getState().selectedKey).toBe("t:1"); // shared highlight still updates
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(activate.mock.calls[0][0]).toMatchObject({ key: "t:1", kind: "table", objectId: 1 });
+    // The shared highlight still moves to the node regardless of the handler.
+    expect(useTree.getState().selectedKey).toBe("t:1");
   });
 
-  it("Query view: clicking a table node runs SELECT * FROM the table", async () => {
-    const runSql = vi.fn();
-    useViz.setState({ view: "query",
-      objById: new Map([[1, { id: 1, type: "table", name: "Widget" }]]) as never });
-    useQuery.setState({ runSql: runSql as unknown as (sql: string) => Promise<void> });
+  it("does not invoke the handler when only the chevron is clicked", async () => {
+    const activate = vi.fn();
+    useTreeSelection.setState({ activate });
     await useTree.getState().loadRoots();
     render(<BTreeTree />);
 
-    fireEvent.click(screen.getByText("Widget"));
-    expect(runSql).toHaveBeenCalledWith('SELECT * FROM "Widget";');
+    fireEvent.click(widgetRow().querySelector(".tn-arrow") as HTMLElement);
+    expect(activate).not.toHaveBeenCalled();          // chevron toggles only
+    expect(useTree.getState().expanded.has("t:1")).toBe(true);
   });
 });
