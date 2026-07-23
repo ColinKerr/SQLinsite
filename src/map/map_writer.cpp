@@ -3,7 +3,6 @@
 #include <optional>
 #include <stdexcept>
 
-#include <nlohmann/json.hpp>
 #include <sqlite3.h>
 
 namespace {
@@ -27,16 +26,23 @@ CREATE TABLE pages (
 CREATE INDEX pages_object ON pages(objectId);
 CREATE TABLE cells (
   pageNumber INTEGER, cellIndex INTEGER, rowid INTEGER, leftChild INTEGER,
-  payloadBytes INTEGER, localBytes INTEGER, overflowPage INTEGER, keyJson TEXT,
+  payloadBytes INTEGER, localBytes INTEGER, overflowPage INTEGER,
+  -- Only TABLE-INTERIOR cells are persisted (their leftChild → interior rowid
+  -- ranges). Table-leaf rows are represented compactly by page_row_runs; index
+  -- cells and their keys are decoded on demand from the source (/content).
   PRIMARY KEY (pageNumber, cellIndex)) WITHOUT ROWID;
-CREATE INDEX cells_rowid ON cells(rowid) WHERE rowid IS NOT NULL;
 CREATE INDEX cells_leftChild ON cells(leftChild);
 CREATE TABLE pointers (fromPage INTEGER, toPage INTEGER, kind TEXT);
 CREATE INDEX pointers_from ON pointers(fromPage);
 CREATE INDEX pointers_to ON pointers(toPage);
 CREATE TABLE page_row_runs (
-  parentPageNumber INTEGER, startRowId INTEGER, endRowId INTEGER, rowCount INTEGER);
+  parentPageNumber INTEGER, startRowId INTEGER, endRowId INTEGER, rowCount INTEGER,
+  objectId INTEGER, isLeaf INTEGER);      -- objectId/isLeaf drive rowid → leaf lookup
 CREATE INDEX page_row_runs_parent ON page_row_runs(parentPageNumber);
+-- Point lookup "which table-leaf page holds rowid R" (replaces cells_rowid):
+-- leaf runs of one object are disjoint + ascending, so the run with the largest
+-- startRowId ≤ R that also has endRowId ≥ R is R's leaf.
+CREATE INDEX page_row_runs_leaf ON page_row_runs(objectId, startRowId) WHERE isLeaf=1;
 CREATE TABLE ptrmap (
   pageNumber INTEGER, targetPage INTEGER, entryType INTEGER, parentPage INTEGER,
   PRIMARY KEY (pageNumber, targetPage)) WITHOUT ROWID;
@@ -98,26 +104,6 @@ std::string autoVacuumName(const DbHeader& h) {
     return h.incrementalVacuumFlag != 0 ? "incremental" : "full";
 }
 
-std::string keyJsonFor(const CellInfo& c) {
-    if (c.key.empty()) return {};
-    nlohmann::json arr = nlohmann::json::array();
-    for (const sqlfmt::CellValue& v : c.key) {
-        switch (v.type) {
-            case sqlfmt::CellValue::Type::Null: arr.push_back(nullptr); break;
-            case sqlfmt::CellValue::Type::Int: arr.push_back(v.intValue); break;
-            case sqlfmt::CellValue::Type::Real: arr.push_back(v.realValue); break;
-            case sqlfmt::CellValue::Type::Text:
-                arr.push_back({{"text", v.text}, {"bytes", v.byteSize},
-                               {"truncated", v.truncated}});
-                break;
-            case sqlfmt::CellValue::Type::Blob:
-                arr.push_back({{"blob", v.byteSize}, {"truncated", v.truncated}});
-                break;
-        }
-    }
-    return arr.dump();
-}
-
 }  // namespace
 
 MapWriter::MapWriter(const std::string& path) {
@@ -142,16 +128,21 @@ MapWriter::MapWriter(const std::string& path) {
                     "INSERT INTO pages(pageNumber,pageType,objectId,freeBytes,cellCount,"
                     "firstFreeblock,cellContentStart,fragmentedFreeBytes,rightmostPointer,"
                     "parseError) VALUES (?,?,?,?,?,?,?,?,?,?)");
-    cell_ = prepare(db_, "INSERT INTO cells VALUES (?,?,?,?,?,?,?,?)");
+    cell_ = prepare(db_, "INSERT INTO cells VALUES (?,?,?,?,?,?,?)");
     pointer_ = prepare(db_, "INSERT INTO pointers VALUES (?,?,?)");
     ptrmap_ = prepare(db_, "INSERT INTO ptrmap VALUES (?,?,?,?)");
     run_ = prepare(db_, "INSERT INTO runs VALUES (?,?,?,?)");
     typeCount_ = prepare(db_, "INSERT INTO type_counts VALUES (?,?)");
+    rowRun_ = prepare(db_,
+        "INSERT INTO page_row_runs(parentPageNumber,startRowId,endRowId,rowCount,objectId,isLeaf) "
+        "VALUES (?,?,?,?,?,?)");
+    subtree_ = prepare(db_,
+        "UPDATE pages SET subtreePageCount=?2 WHERE pageNumber=?1");
 }
 
 MapWriter::~MapWriter() {
     for (sqlite3_stmt* s : {meta_, object_, page_, cell_, pointer_, ptrmap_,
-                            run_, typeCount_}) {
+                            run_, typeCount_, rowRun_, subtree_}) {
         sqlite3_finalize(s);
     }
     if (db_ && !committed_) {
@@ -219,7 +210,12 @@ void MapWriter::writePage(const PageInfo& p, std::int64_t objectId) {
     }
     runStep(db_, page_);
 
-    for (std::size_t i = 0; i < p.cells.size(); ++i) {
+    // Only TABLE-INTERIOR cells are persisted (their `leftChild` → cells_leftChild →
+    // interior rowid ranges). Table-leaf rows live compactly in page_row_runs, so
+    // their per-cell rows (the bulk of the map) are not stored; index cells carry
+    // nothing the map reads. All child/overflow edges are still in `pointers`.
+    const bool persistCells = p.type == PageType::TableInterior;
+    for (std::size_t i = 0; persistCells && i < p.cells.size(); ++i) {
         const CellInfo& c = p.cells[i];
         sqlite3_bind_int64(cell_, 1, p.pageNumber);
         sqlite3_bind_int64(cell_, 2, static_cast<std::int64_t>(i));
@@ -228,12 +224,6 @@ void MapWriter::writePage(const PageInfo& p, std::int64_t objectId) {
         sqlite3_bind_int64(cell_, 5, c.payloadBytes);
         sqlite3_bind_int64(cell_, 6, c.localBytes);
         bindOptInt(cell_, 7, c.overflowPage);
-        const std::string keyJson = keyJsonFor(c);
-        if (!keyJson.empty()) {
-            sqlite3_bind_text(cell_, 8, keyJson.c_str(), -1, SQLITE_TRANSIENT);
-        } else {
-            sqlite3_bind_null(cell_, 8);
-        }
         runStep(db_, cell_);
     }
 
@@ -272,61 +262,22 @@ void MapWriter::writeTypeCount(const std::string& pageType, std::int64_t count) 
     runStep(db_, typeCount_);
 }
 
-void MapWriter::writeRowRuns(std::int64_t pageCount) {
-    // For every table b-tree page — interior AND leaf — the maximal contiguous
-    // rowid runs of the rows in its subtree. A table-leaf page is its own subtree
-    // (just its own rowids); an interior page fans out to its descendant leaves.
-    // Including leaf pages lets a consumer look up any child page uniformly (the
-    // "last interior page before the leaves" resolves its leaf children with the
-    // same query as any higher interior page). `reach` seeds every table page and
-    // follows child pointers; the leaf descendants' rowids are collapsed into runs
-    // by a gaps-and-islands GROUP BY. Runs are compact even when rowids have gaps.
-    const std::string sql =
-        "INSERT INTO page_row_runs(parentPageNumber, startRowId, endRowId, rowCount) "
-        "WITH RECURSIVE "
-        "reach(root, pg, depth) AS ("
-        " SELECT pageNumber, pageNumber, 0 FROM pages WHERE pageType IN ('table-interior','table-leaf')"
-        " UNION ALL"
-        " SELECT reach.root, ptr.toPage, reach.depth+1 FROM reach"
-        "  JOIN pointers ptr ON ptr.fromPage=reach.pg AND ptr.kind='child'"
-        "  WHERE reach.depth < " + std::to_string(pageCount + 1) + "), "
-        "leaf_rids(root, rid) AS ("
-        " SELECT reach.root, c.rowid FROM reach"
-        "  JOIN pages p ON p.pageNumber=reach.pg AND p.pageType='table-leaf'"
-        "  JOIN cells c ON c.pageNumber=reach.pg WHERE c.rowid IS NOT NULL), "
-        "isl AS ("
-        " SELECT root, rid, rid - ROW_NUMBER() OVER (PARTITION BY root ORDER BY rid) AS grp"
-        "  FROM leaf_rids) "
-        "SELECT root, MIN(rid), MAX(rid), MAX(rid)-MIN(rid)+1 FROM isl GROUP BY root, grp";
-    if (sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, nullptr) != SQLITE_OK) {
-        fail(db_, "write page_row_runs");
-    }
+void MapWriter::writeRowRun(std::int64_t parentPageNumber, std::int64_t startRowId,
+                            std::int64_t endRowId, std::int64_t objectId, bool isLeaf) {
+    sqlite3_bind_int64(rowRun_, 1, parentPageNumber);
+    sqlite3_bind_int64(rowRun_, 2, startRowId);
+    sqlite3_bind_int64(rowRun_, 3, endRowId);
+    sqlite3_bind_int64(rowRun_, 4, endRowId - startRowId + 1);
+    if (objectId >= 0) sqlite3_bind_int64(rowRun_, 5, objectId);
+    else sqlite3_bind_null(rowRun_, 5);
+    sqlite3_bind_int64(rowRun_, 6, isLeaf ? 1 : 0);
+    runStep(db_, rowRun_);
 }
 
-void MapWriter::writeSubtreeCounts(std::int64_t /*pageCount*/) {
-    // For every page, the number of pages in its subtree (itself plus all pages
-    // reachable through the tree's child/overflow/freelist-leaf edges — the same
-    // edges treeChildren follows). `reach` seeds every page as a root and follows
-    // those edges; UNION dedupes (root, page) pairs so the count is distinct pages
-    // and the recursion terminates even on a malformed cyclic map. Counts are
-    // aggregated once into a temp table (root primary-keyed) so the per-page UPDATE
-    // is a single indexed lookup.
-    const char* sql =
-        "CREATE TEMP TABLE subtree_counts(root INTEGER PRIMARY KEY, c INTEGER);"
-        "INSERT INTO subtree_counts(root, c) "
-        "WITH RECURSIVE reach(root, pg) AS ("
-        " SELECT pageNumber, pageNumber FROM pages"
-        " UNION"
-        " SELECT reach.root, ptr.toPage FROM reach"
-        "  JOIN pointers ptr ON ptr.fromPage=reach.pg"
-        "   AND ptr.kind IN ('child','overflow','freelist-leaf')) "
-        "SELECT root, COUNT(*) FROM reach GROUP BY root;"
-        "UPDATE pages SET subtreePageCount ="
-        " (SELECT c FROM subtree_counts WHERE root=pages.pageNumber);"
-        "DROP TABLE subtree_counts;";
-    if (sqlite3_exec(db_, sql, nullptr, nullptr, nullptr) != SQLITE_OK) {
-        fail(db_, "write subtreePageCount");
-    }
+void MapWriter::writeSubtreeCount(std::int64_t pageNumber, std::int64_t count) {
+    sqlite3_bind_int64(subtree_, 1, pageNumber);
+    sqlite3_bind_int64(subtree_, 2, count);
+    runStep(db_, subtree_);
 }
 
 void MapWriter::commit() {

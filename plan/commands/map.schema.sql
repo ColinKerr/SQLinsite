@@ -43,19 +43,20 @@ CREATE TABLE pages (
 );
 CREATE INDEX pages_object ON pages(objectId);
 
+-- ONLY table-interior cells are stored (their leftChild → interior rowid ranges).
+-- Table-leaf rows are represented compactly by page_row_runs; index cells and their
+-- key values are decoded on demand from the source db (/content), not persisted —
+-- storing per-leaf cells + index keys was the bulk of map size + build time.
 CREATE TABLE cells (
   pageNumber   INTEGER,
   cellIndex    INTEGER,
-  rowid        INTEGER,  -- table-leaf cells only (the row's rowid); NULL otherwise
-                         -- (interior divider keys are boundaries, not real rowids)
-  leftChild    INTEGER,  -- nullable (interior cells)
+  rowid        INTEGER,  -- always NULL now (interior divider keys aren't real rowids)
+  leftChild    INTEGER,  -- the cell's left-child page
   payloadBytes INTEGER,
   localBytes   INTEGER,
   overflowPage INTEGER,  -- nullable
-  keyJson      TEXT,     -- nullable: decoded index key values as a JSON array
   PRIMARY KEY (pageNumber, cellIndex)
 ) WITHOUT ROWID;
-CREATE INDEX cells_rowid ON cells(rowid) WHERE rowid IS NOT NULL;  -- rowid -> leaf page
 CREATE INDEX cells_leftChild ON cells(leftChild);
 
 CREATE TABLE pointers (
@@ -75,9 +76,15 @@ CREATE TABLE page_row_runs (
   parentPageNumber INTEGER,  -- a table-interior or table-leaf page
   startRowId       INTEGER,
   endRowId         INTEGER,
-  rowCount         INTEGER   -- rows in the run = endRowId - startRowId + 1
+  rowCount         INTEGER,  -- rows in the run = endRowId - startRowId + 1
+  objectId         INTEGER,  -- owning table object (for the rowid → leaf lookup)
+  isLeaf           INTEGER   -- 1 if parentPageNumber is a table-leaf page
 );
 CREATE INDEX page_row_runs_parent ON page_row_runs(parentPageNumber);
+-- "Which table-leaf page holds rowid R": among an object's leaf runs (disjoint,
+-- ascending) the one with the largest startRowId ≤ R and endRowId ≥ R. Replaces
+-- the old cells_rowid index now that table-leaf cells aren't stored.
+CREATE INDEX page_row_runs_leaf ON page_row_runs(objectId, startRowId) WHERE isLeaf=1;
 
 CREATE TABLE ptrmap (
   pageNumber INTEGER,  -- the pointer-map page

@@ -1,7 +1,12 @@
 #include "map/map_builder.hpp"
 
+#include <algorithm>
+#include <cstdint>
+#include <functional>
 #include <map>
 #include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <sqlite3.h>
@@ -89,8 +94,24 @@ struct Classification {
     std::vector<std::int64_t> objectId;
 };
 
+// A b-tree page's type from its 1-byte header flag (the physical, authoritative
+// type — correct even for WITHOUT ROWID tables, whose data lives in index b-trees).
+PageType btreeTypeFromByte(const DbFile& db, std::int64_t page) {
+    const std::vector<sqlfmt::Byte>& bytes = db.page(page);
+    const std::size_t off = (page == 1) ? 100 : 0;
+    if (off >= bytes.size()) return PageType::Unallocated;
+    switch (bytes[off]) {
+        case 13: return PageType::TableLeaf;
+        case 5:  return PageType::TableInterior;
+        case 10: return PageType::IndexLeaf;
+        case 2:  return PageType::IndexInterior;
+        default: return PageType::Unallocated;
+    }
+}
+
 Classification classify(const DbFile& db,
-                        const std::vector<SchemaObject>& objects) {
+                        const std::vector<SchemaObject>& objects,
+                        const std::string& sourcePath) {
     const std::int64_t n = db.pageCount();
     Classification cls;
     cls.type.assign(static_cast<std::size_t>(n), PageType::Unallocated);
@@ -109,39 +130,35 @@ Classification classify(const DbFile& db,
         set(lb, PageType::LockByte, -1);
     }
 
-    auto followOverflow = [&](std::int64_t start, std::int64_t obj) {
-        std::int64_t pg = start;
-        int guard = 0;
-        while (pg >= 1 && pg <= n && !assigned[static_cast<std::size_t>(pg - 1)] &&
-               guard++ < n) {
-            PageInfo ov = page_parser::parseOverflow(db, pg);
-            set(pg, PageType::Overflow, obj);
-            pg = ov.header.nextOverflowPage ? *ov.header.nextOverflowPage : 0;
-        }
-    };
-
-    for (std::size_t oi = 0; oi < objects.size(); ++oi) {
-        const std::int64_t root = objects[oi].rootPage;
-        if (root < 1 || root > n) continue;
-        std::vector<std::int64_t> stack{root};
-        int guard = 0;
-        while (!stack.empty() && guard++ < 4 * n + 16) {
-            const std::int64_t pg = stack.back();
-            stack.pop_back();
-            if (pg < 1 || pg > n) continue;
-            if (assigned[static_cast<std::size_t>(pg - 1)]) continue;
-
-            PageInfo pi = page_parser::parseBtree(db, pg);
-            set(pg, pi.type, static_cast<std::int64_t>(oi));
-            for (const Pointer& ptr : pi.pointers) {
-                if (ptr.kind == "child") {
-                    stack.push_back(ptr.toPage);
-                } else if (ptr.kind == "overflow") {
-                    followOverflow(ptr.toPage, static_cast<std::int64_t>(oi));
-                }
+    // Assign every b-tree page (table/index/overflow) to its object using the DBSTAT
+    // virtual table, which walks all b-trees in C and names each page's object — far
+    // cheaper than a C++ tree traversal that parses every page just to follow
+    // pointers. DBSTAT omits freelist/pointer-map/lock-byte pages (handled above and
+    // below). The interior/leaf/table/index distinction comes from each page's own
+    // header byte (authoritative for WITHOUT ROWID tables); overflow pages are named
+    // by DBSTAT directly.
+    std::unordered_map<std::string, std::int64_t> nameToOi;
+    for (std::size_t oi = 0; oi < objects.size(); ++oi)
+        nameToOi.emplace(objects[oi].name, static_cast<std::int64_t>(oi));
+    sqlite3* sdb = nullptr;
+    if (sqlite3_open_v2(sourcePath.c_str(), &sdb, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK) {
+        sqlite3_stmt* st = nullptr;
+        if (sqlite3_prepare_v2(sdb, "SELECT pageno, name, pagetype FROM dbstat", -1, &st,
+                               nullptr) == SQLITE_OK) {
+            while (sqlite3_step(st) == SQLITE_ROW) {
+                const std::int64_t pg = sqlite3_column_int64(st, 0);
+                if (pg < 1 || pg > n || assigned[static_cast<std::size_t>(pg - 1)]) continue;
+                const auto* nm = reinterpret_cast<const char*>(sqlite3_column_text(st, 1));
+                const auto* pt = reinterpret_cast<const char*>(sqlite3_column_text(st, 2));
+                auto it = nameToOi.find(nm ? nm : "");
+                if (it == nameToOi.end()) continue;
+                const bool overflow = pt && std::string(pt) == "overflow";
+                set(pg, overflow ? PageType::Overflow : btreeTypeFromByte(db, pg), it->second);
             }
         }
+        sqlite3_finalize(st);
     }
+    sqlite3_close(sdb);
 
     std::int64_t trunk = db.header().freelistTrunkPage;
     int trunkGuard = 0;
@@ -161,6 +178,24 @@ Classification classify(const DbFile& db,
     }
 
     return cls;
+}
+
+using RowRun = std::pair<std::int64_t, std::int64_t>;  // inclusive [lo, hi]
+
+// Collapses ascending, disjoint rowids/runs into maximal contiguous runs (rowids
+// have gaps from deletions). Input runs must be sorted by lo; adjacent runs
+// (prev.hi + 1 >= next.lo) are merged.
+std::vector<RowRun> mergeRuns(std::vector<RowRun> runs) {
+    std::sort(runs.begin(), runs.end());
+    std::vector<RowRun> out;
+    for (const RowRun& r : runs) {
+        if (!out.empty() && r.first <= out.back().second + 1) {
+            out.back().second = std::max(out.back().second, r.second);
+        } else {
+            out.push_back(r);
+        }
+    }
+    return out;
 }
 
 PageInfo parseByType(const DbFile& db, std::int64_t page, PageType type) {
@@ -187,7 +222,7 @@ void writeMap(const std::string& sourcePath, const std::string& outPath) {
     DbFile db = DbFile::open(sourcePath);
     const std::int64_t n = db.pageCount();
     const std::vector<SchemaObject> objects = readSchema(sourcePath);
-    const Classification cls = classify(db, objects);
+    const Classification cls = classify(db, objects, sourcePath);
 
     MapWriter writer(outPath);
 
@@ -204,6 +239,16 @@ void writeMap(const std::string& sourcePath, const std::string& outPath) {
         }
     };
 
+    // page_row_runs inputs, collected during the single parse pass (see below):
+    // each table-leaf page's own rowid runs, and each table-interior page's child
+    // pages (in b-tree order). Interior subtree runs are merged from these after.
+    std::unordered_map<std::int64_t, std::vector<RowRun>> pageRuns;   // leaf runs
+    std::unordered_map<std::int64_t, std::vector<std::int64_t>> interiorChildren;
+
+    // Subtree edges (child/overflow/freelist-leaf) of every page, for computing
+    // subtreePageCount in C++ (below) instead of a whole-file recursive CTE.
+    std::vector<std::vector<std::int64_t>> subtreeAdj(static_cast<std::size_t>(n) + 1);
+
     for (std::int64_t page = 1; page <= n; ++page) {
         const std::size_t idx = static_cast<std::size_t>(page - 1);
         const PageType type = cls.type[idx];
@@ -212,6 +257,26 @@ void writeMap(const std::string& sourcePath, const std::string& outPath) {
         PageInfo pi = parseByType(db, page, type);
         pi.type = type;  // authoritative classification
         writer.writePage(pi, obj);
+
+        for (const Pointer& ptr : pi.pointers)
+            if (ptr.kind == "child" || ptr.kind == "overflow" || ptr.kind == "freelist-leaf")
+                subtreeAdj[static_cast<std::size_t>(page)].push_back(ptr.toPage);
+
+        if (type == PageType::TableLeaf) {
+            // Cells are in ascending rowid order; collapse them into runs.
+            std::vector<RowRun> runs;
+            for (const CellInfo& c : pi.cells) {
+                if (!c.rowid) continue;
+                const std::int64_t rid = *c.rowid;
+                if (!runs.empty() && rid == runs.back().second + 1) runs.back().second = rid;
+                else runs.push_back({rid, rid});
+            }
+            if (!runs.empty()) pageRuns.emplace(page, std::move(runs));
+        } else if (type == PageType::TableInterior) {
+            std::vector<std::int64_t>& kids = interiorChildren[page];
+            for (const Pointer& ptr : pi.pointers)
+                if (ptr.kind == "child") kids.push_back(ptr.toPage);
+        }
 
         typeCounts[pageTypeName(type)]++;
         if (obj >= 0) ++objectPageCount[static_cast<std::size_t>(obj)];
@@ -228,6 +293,36 @@ void writeMap(const std::string& sourcePath, const std::string& outPath) {
     }
     flushRun();
 
+    // Roll leaf runs up to every table-interior page: an interior page's subtree
+    // runs are the merged runs of all its descendant leaves. Computed bottom-up and
+    // memoized in `pageRuns`; `visiting` guards against a malformed cyclic map.
+    std::unordered_set<std::int64_t> visiting;
+    std::function<const std::vector<RowRun>&(std::int64_t)> subtreeRuns =
+        [&](std::int64_t pg) -> const std::vector<RowRun>& {
+        auto it = pageRuns.find(pg);
+        if (it != pageRuns.end()) return it->second;          // leaf, or already merged
+        static const std::vector<RowRun> kEmpty;
+        auto ci = interiorChildren.find(pg);
+        if (ci == interiorChildren.end() || !visiting.insert(pg).second) return kEmpty;
+        std::vector<RowRun> gathered;
+        for (const std::int64_t child : ci->second) {
+            const std::vector<RowRun>& cr = subtreeRuns(child);
+            gathered.insert(gathered.end(), cr.begin(), cr.end());
+        }
+        visiting.erase(pg);
+        return pageRuns.emplace(pg, mergeRuns(std::move(gathered))).first->second;
+    };
+    for (const auto& [interior, kids] : interiorChildren) {
+        (void)kids;
+        subtreeRuns(interior);
+    }
+    for (const auto& [pg, runs] : pageRuns) {
+        const std::size_t idx = static_cast<std::size_t>(pg - 1);
+        const std::int64_t obj = cls.objectId[idx];
+        const bool isLeaf = cls.type[idx] == PageType::TableLeaf;
+        for (const RowRun& r : runs) writer.writeRowRun(pg, r.first, r.second, obj, isLeaf);
+    }
+
     for (std::size_t oi = 0; oi < objects.size(); ++oi) {
         const SchemaObject& o = objects[oi];
         writer.writeObject({static_cast<std::int64_t>(oi), o.type, o.name,
@@ -239,10 +334,41 @@ void writeMap(const std::string& sourcePath, const std::string& outPath) {
     }
     writer.writeMeta(db.header(), sourcePath, n);
 
-    // Precompute per-interior-page rowid runs from the written cells/pointers.
-    writer.writeRowRuns(n);
-    // Precompute each page's subtree page count (for tree-node size display).
-    writer.writeSubtreeCounts(n);
+    // Each page's subtreePageCount = 1 + Σ its subtree children's counts (the tree's
+    // child/overflow/freelist-leaf edges). Computed bottom-up with an explicit stack
+    // (iterative post-order so a long overflow chain can't overflow the C++ stack);
+    // `state` marks new/on-stack/done and guards against a malformed cyclic map.
+    // Replaces a whole-file recursive CTE that thrashed on very large databases.
+    std::vector<std::int64_t> subtreeCount(static_cast<std::size_t>(n) + 1, 0);
+    std::vector<std::uint8_t> state(static_cast<std::size_t>(n) + 1, 0);  // 0 new,1 open,2 done
+    std::vector<std::int64_t> stack;
+    for (std::int64_t root = 1; root <= n; ++root) {
+        if (state[static_cast<std::size_t>(root)] != 0) continue;
+        stack.push_back(root);
+        while (!stack.empty()) {
+            const std::int64_t pg = stack.back();
+            std::uint8_t& st = state[static_cast<std::size_t>(pg)];
+            const std::vector<std::int64_t>& kids = subtreeAdj[static_cast<std::size_t>(pg)];
+            if (st == 0) {
+                st = 1;
+                for (const std::int64_t to : kids)
+                    if (to >= 1 && to <= n && state[static_cast<std::size_t>(to)] == 0)
+                        stack.push_back(to);
+            } else {
+                if (st == 1) {
+                    std::int64_t c = 1;
+                    for (const std::int64_t to : kids)
+                        if (to >= 1 && to <= n && state[static_cast<std::size_t>(to)] == 2)
+                            c += subtreeCount[static_cast<std::size_t>(to)];
+                    subtreeCount[static_cast<std::size_t>(pg)] = c;
+                    st = 2;
+                }
+                stack.pop_back();
+            }
+        }
+    }
+    for (std::int64_t pg = 1; pg <= n; ++pg)
+        writer.writeSubtreeCount(pg, subtreeCount[static_cast<std::size_t>(pg)]);
 
     writer.commit();
 }

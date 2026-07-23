@@ -26,7 +26,10 @@ class MapWriter {
 public:
     // Bump when the map schema/semantics change incompatibly. The visualizer
     // refuses to open a map whose meta.formatVersion differs (older or newer).
-    static constexpr int kFormatVersion = 2;
+    // v3: dropped cells.keyJson (index keys now decoded on demand from the source).
+    // v4: cells holds only table-interior cells; table-leaf rows live in
+    //     page_row_runs (+objectId/isLeaf for rowid→leaf); pages from DBSTAT.
+    static constexpr int kFormatVersion = 4;
 
     explicit MapWriter(const std::string& path);
     ~MapWriter();
@@ -41,13 +44,16 @@ public:
     void writeRun(std::int64_t startPage, std::int64_t endPage,
                   const std::string& pageType, std::int64_t objectId);
     void writeTypeCount(const std::string& pageType, std::int64_t count);
-    // Precomputes page_row_runs from the already-written cells/pointers/pages
-    // (one INSERT…SELECT). Call after all pages are written, before commit().
-    void writeRowRuns(std::int64_t pageCount);
-    // Fills pages.subtreePageCount (pages in each page's subtree, following the
-    // tree's child/overflow/freelist-leaf edges). Call after all pages/pointers
-    // are written, before commit().
-    void writeSubtreeCounts(std::int64_t pageCount);
+    // Appends one page_row_runs row: a maximal contiguous rowid run [startRowId,
+    // endRowId] of the subtree rooted at `parentPageNumber` (a table b-tree page).
+    // Runs are computed in C++ during the parse pass (see map_builder), so the map
+    // never has to reconstruct them from a `cells` table.
+    void writeRowRun(std::int64_t parentPageNumber, std::int64_t startRowId,
+                     std::int64_t endRowId, std::int64_t objectId, bool isLeaf);
+    // Sets one page's subtreePageCount (pages in its subtree, following the tree's
+    // child/overflow/freelist-leaf edges) — computed in C++ during the parse pass
+    // (see map_builder). Call for every page after all pages are written.
+    void writeSubtreeCount(std::int64_t pageNumber, std::int64_t count);
     void commit();
 
 private:
@@ -60,5 +66,7 @@ private:
     sqlite3_stmt* ptrmap_ = nullptr;
     sqlite3_stmt* run_ = nullptr;
     sqlite3_stmt* typeCount_ = nullptr;
+    sqlite3_stmt* rowRun_ = nullptr;
+    sqlite3_stmt* subtree_ = nullptr;
     bool committed_ = false;
 };

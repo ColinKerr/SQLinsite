@@ -1,6 +1,7 @@
 #include "map/db_file.hpp"
 
 #include <stdexcept>
+#include <utility>
 
 #include <sqlite3.h>
 
@@ -46,51 +47,72 @@ DbFile DbFile::open(const std::string& path) {
         fail("cannot open " + path + ": " + msg);
     }
 
-    sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(
-            db, "SELECT pgno, data FROM sqlite_dbpage('main') ORDER BY pgno", -1,
-            &stmt, nullptr) != SQLITE_OK) {
-        const std::string msg = sqlite3_errmsg(db);
-        sqlite3_close(db);
-        fail("cannot read pages: " + msg);
-    }
-
     DbFile file;
-    int rc;
-    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
-        const std::int64_t pgno = sqlite3_column_int64(stmt, 0);
-        const auto* bytes =
-            static_cast<const sqlfmt::Byte*>(sqlite3_column_blob(stmt, 1));
-        const int len = sqlite3_column_bytes(stmt, 1);
-        if (pgno < 1) {
-            continue;
-        }
-        if (static_cast<std::size_t>(pgno) > file.pages_.size()) {
-            file.pages_.resize(static_cast<std::size_t>(pgno));
-        }
-        file.pages_[static_cast<std::size_t>(pgno) - 1].assign(bytes,
-                                                               bytes + len);
-    }
-    const bool ok = (rc == SQLITE_DONE);
-    const std::string stepErr = ok ? "" : sqlite3_errmsg(db);
-    sqlite3_finalize(stmt);
-    sqlite3_close(db);
-
-    if (!ok) {
-        fail("error reading pages: " + stepErr);
-    }
-    if (file.pages_.empty() || file.pages_[0].size() < 100) {
-        fail("not a SQLite database (no readable page 1)");
+    file.db_ = db;
+    if (sqlite3_prepare_v2(
+            db, "SELECT data FROM sqlite_dbpage('main') WHERE pgno=?1", -1,
+            &file.pageStmt_, nullptr) != SQLITE_OK) {
+        const std::string msg = sqlite3_errmsg(db);
+        fail("cannot read pages: " + msg);  // ~DbFile closes db_
     }
 
-    file.header_ = parseHeader(file.pages_[0]);
+    // Page count from the vtab (authoritative even if the header count is stale).
+    sqlite3_stmt* cnt = nullptr;
+    if (sqlite3_prepare_v2(db, "SELECT max(pgno) FROM sqlite_dbpage('main')", -1,
+                           &cnt, nullptr) == SQLITE_OK &&
+        sqlite3_step(cnt) == SQLITE_ROW) {
+        file.pageCount_ = sqlite3_column_int64(cnt, 0);
+    }
+    sqlite3_finalize(cnt);
+    if (file.pageCount_ < 1) fail("not a SQLite database (no pages)");
+
+    const std::vector<sqlfmt::Byte> page1 = file.page(1);
+    if (page1.size() < 100) fail("not a SQLite database (no readable page 1)");
+    file.header_ = parseHeader(page1);
     return file;
 }
 
-const std::vector<sqlfmt::Byte>& DbFile::page(std::int64_t pageNumber) const {
-    if (pageNumber < 1 ||
-        static_cast<std::size_t>(pageNumber) > pages_.size()) {
+std::vector<sqlfmt::Byte> DbFile::page(std::int64_t pageNumber) const {
+    if (pageNumber < 1 || pageNumber > pageCount_) {
         throw std::out_of_range("page number out of range");
     }
-    return pages_[static_cast<std::size_t>(pageNumber) - 1];
+    sqlite3_reset(pageStmt_);
+    sqlite3_bind_int64(pageStmt_, 1, pageNumber);
+    if (sqlite3_step(pageStmt_) != SQLITE_ROW) {
+        sqlite3_reset(pageStmt_);
+        throw std::runtime_error("map: cannot read page " +
+                                 std::to_string(pageNumber));
+    }
+    const auto* bytes =
+        static_cast<const sqlfmt::Byte*>(sqlite3_column_blob(pageStmt_, 0));
+    const int len = sqlite3_column_bytes(pageStmt_, 0);
+    std::vector<sqlfmt::Byte> out(bytes, bytes + len);
+    sqlite3_reset(pageStmt_);
+    return out;
+}
+
+DbFile::~DbFile() {
+    if (pageStmt_) sqlite3_finalize(pageStmt_);
+    if (db_) sqlite3_close(db_);
+}
+
+DbFile::DbFile(DbFile&& other) noexcept
+    : header_(other.header_), pageCount_(other.pageCount_), db_(other.db_),
+      pageStmt_(other.pageStmt_) {
+    other.db_ = nullptr;
+    other.pageStmt_ = nullptr;
+}
+
+DbFile& DbFile::operator=(DbFile&& other) noexcept {
+    if (this != &other) {
+        if (pageStmt_) sqlite3_finalize(pageStmt_);
+        if (db_) sqlite3_close(db_);
+        header_ = other.header_;
+        pageCount_ = other.pageCount_;
+        db_ = other.db_;
+        pageStmt_ = other.pageStmt_;
+        other.db_ = nullptr;
+        other.pageStmt_ = nullptr;
+    }
+    return *this;
 }

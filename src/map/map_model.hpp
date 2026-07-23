@@ -34,7 +34,6 @@ struct CellInfo {
     std::int64_t payloadBytes = 0;           // declared total payload (leaf/index)
     std::int64_t localBytes = 0;
     std::optional<std::int64_t> overflowPage;
-    std::vector<sqlfmt::CellValue> key;      // index cells (decoded key fields)
 };
 
 struct PtrmapEntry {

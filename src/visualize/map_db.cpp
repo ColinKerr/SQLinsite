@@ -179,9 +179,8 @@ std::unordered_map<std::int64_t, std::int64_t> MapDb::leafPagesForRowids(
     std::unordered_map<std::int64_t, std::int64_t> out;
     if (rowids.empty()) return out;
 
-    // Use a short-lived private connection so the temp table + insert transaction
-    // never touch the shared db_ (which other requests use concurrently). The main
-    // db is read-only; temp storage is still writable.
+    // Short-lived private connection so this never touches the shared db_ (used by
+    // other requests concurrently). The map is read-only.
     sqlite3* db = nullptr;
     if (sqlite3_open_v2(mapPath_.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
@@ -189,36 +188,32 @@ std::unordered_map<std::int64_t, std::int64_t> MapDb::leafPagesForRowids(
     }
     out.reserve(rowids.size());
 
-    // Load the wanted rowids into a temp table, then resolve them all in one query.
-    // The CROSS JOINs force the join order want → cells → pages, so each rowid is a
-    // point lookup (cells_rowid, then pages' INTEGER PRIMARY KEY) rather than a
-    // per-rowid scan of the table's pages.
-    sqlite3_exec(db, "CREATE TEMP TABLE want(rowid INTEGER PRIMARY KEY)", nullptr, nullptr, nullptr);
-    sqlite3_exec(db, "BEGIN", nullptr, nullptr, nullptr);
-    sqlite3_stmt* ins = nullptr;
-    if (sqlite3_prepare_v2(db, "INSERT OR IGNORE INTO want(rowid) VALUES(?1)", -1, &ins, nullptr) ==
-        SQLITE_OK) {
-        for (const std::int64_t rid : rowids) {
-            sqlite3_bind_int64(ins, 1, rid);
-            sqlite3_step(ins);
-            sqlite3_reset(ins);
-        }
+    // Resolve the table's objectId once, then locate each rowid's leaf via a single
+    // indexed lookup on page_row_runs: among this object's leaf runs (disjoint,
+    // ascending — page_row_runs_leaf), the one with the largest startRowId ≤ R is R's
+    // leaf when its endRowId ≥ R. O(log runs) per rowid, no whole-table scan.
+    std::int64_t objId = -1;
+    sqlite3_stmt* obj = nullptr;
+    if (sqlite3_prepare_v2(db, "SELECT id FROM objects WHERE name=?1 AND type='table'",
+                           -1, &obj, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(obj, 1, tableName.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(obj) == SQLITE_ROW) objId = sqlite3_column_int64(obj, 0);
     }
-    sqlite3_finalize(ins);
-    sqlite3_exec(db, "COMMIT", nullptr, nullptr, nullptr);
+    sqlite3_finalize(obj);
+    if (objId < 0) { sqlite3_close(db); return out; }
 
     sqlite3_stmt* sel = nullptr;
     if (sqlite3_prepare_v2(
             db,
-            "SELECT c.rowid, c.pageNumber FROM want w "
-            "CROSS JOIN cells c ON c.rowid = w.rowid "
-            "CROSS JOIN pages p ON p.pageNumber = c.pageNumber "
-            "WHERE p.pageType = 'table-leaf' AND p.objectId = "
-            "(SELECT id FROM objects WHERE name = ?1 AND type = 'table')",
+            "SELECT parentPageNumber FROM page_row_runs "
+            "WHERE objectId=?1 AND isLeaf=1 AND startRowId<=?2 AND endRowId>=?2 "
+            "ORDER BY startRowId DESC LIMIT 1",
             -1, &sel, nullptr) == SQLITE_OK) {
-        sqlite3_bind_text(sel, 1, tableName.c_str(), -1, SQLITE_TRANSIENT);
-        while (sqlite3_step(sel) == SQLITE_ROW) {
-            out[sqlite3_column_int64(sel, 0)] = sqlite3_column_int64(sel, 1);
+        for (const std::int64_t rid : rowids) {
+            sqlite3_bind_int64(sel, 1, objId);
+            sqlite3_bind_int64(sel, 2, rid);
+            if (sqlite3_step(sel) == SQLITE_ROW) out[rid] = sqlite3_column_int64(sel, 0);
+            sqlite3_reset(sel);
         }
     }
     sqlite3_finalize(sel);
@@ -395,7 +390,7 @@ std::string MapDb::pageJson(std::int64_t pageNumber, const LeafFilter& sel) cons
                               {pageNumber});
     j["cells"] = queryRows(db_,
                            "SELECT cellIndex,rowid,leftChild,payloadBytes,localBytes,"
-                           "overflowPage,keyJson FROM cells WHERE pageNumber=? "
+                           "overflowPage FROM cells WHERE pageNumber=? "
                            "ORDER BY cellIndex",
                            {pageNumber});
     j["ptrmap"] = queryRows(db_,

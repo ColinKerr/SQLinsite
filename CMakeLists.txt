@@ -74,6 +74,7 @@ target_compile_definitions(sqlite3 PRIVATE
   SQLITE_ENABLE_COLUMN_METADATA
   SQLITE_THREADSAFE=1
   SQLITE_ENABLE_DBPAGE_VTAB
+  SQLITE_ENABLE_DBSTAT_VTAB   # map builder classifies btree pages via dbstat
 )
 if(NOT MSVC)
   target_compile_options(sqlite3 PRIVATE -w)
