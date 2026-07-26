@@ -11,6 +11,7 @@
 
 #include "visualize/cell_page_map.hpp"
 #include "visualize/map_db.hpp"
+#include "visualize/query_augment.hpp"
 
 // Runs user SQL against the mapped database (opened read-only) for the live-query
 // view. Each run uses a *fresh* connection routed through the sqlinsite VFS so
@@ -58,8 +59,9 @@ private:
     };
 
     const Entry* find(int id) const;
-    void mapRowPages(Entry& entry, const std::vector<std::string>& tables,
-                     const std::vector<int>& colTable);
+    // Fills entry.rowPages: attributes each output column to a FROM instance, re-runs
+    // the query with a rowid per instance, and maps each cell to its pages.
+    void mapRowPages(Entry& entry);
 
     std::string dbPath_;
     int pageSize_;

@@ -1,6 +1,5 @@
 #include "visualize/query_engine.hpp"
 
-#include <map>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -70,43 +69,23 @@ json profilePagesJson(const AggregatingSink& sink) {
     return pages;
 }
 
-// Per-column provenance read from a prepared statement (SQLITE_ENABLE_COLUMN_
-// METADATA). `tables` holds the distinct source tables in first-seen order;
-// `colTable[c]` indexes into it (or -1 when the column has no single source).
-struct ColumnMeta {
-    json columns = json::array();
-    std::vector<std::string> tables;
-    std::vector<int> colTable;
-};
-
-ColumnMeta readColumns(sqlite3_stmt* s) {
-    ColumnMeta m;
-    std::map<std::string, int> index;
+// Per-column provenance from a prepared statement (SQLITE_ENABLE_COLUMN_METADATA):
+// [{name, sourceTable|null, sourceColumn|null}]. sourceTable is the underlying table
+// name (never the FROM-clause alias — see attributeColumns for alias handling).
+json readColumns(sqlite3_stmt* s) {
+    json cols = json::array();
     const int n = sqlite3_column_count(s);
     for (int c = 0; c < n; ++c) {
         const char* name = sqlite3_column_name(s, c);
         const char* tbl = sqlite3_column_table_name(s, c);
         const char* org = sqlite3_column_origin_name(s, c);
-        m.columns.push_back({
+        cols.push_back({
             {"name", name ? name : ""},
             {"sourceTable", tbl ? json(tbl) : json(nullptr)},
             {"sourceColumn", org ? json(org) : json(nullptr)},
         });
-        if (tbl) {
-            auto it = index.find(tbl);
-            if (it == index.end()) {
-                const int idx = static_cast<int>(m.tables.size());
-                m.tables.emplace_back(tbl);
-                index.emplace(tbl, idx);
-                m.colTable.push_back(idx);
-            } else {
-                m.colTable.push_back(it->second);
-            }
-        } else {
-            m.colTable.push_back(-1);
-        }
     }
-    return m;
+    return cols;
 }
 
 }  // namespace
@@ -133,30 +112,136 @@ static std::unordered_map<std::string, int> tableCids(sqlite3* db, const std::st
     return cids;
 }
 
-// Second pass (unprofiled): re-run the query with a `"table".rowid` column
+static bool ieq(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) return false;
+    return true;
+}
+
+// The distinct FROM instances a query's columns map to, plus each output column's
+// instance index (-1 = unmapped). One rowid column is later prepended per used
+// instance, so a self-joined table yields two independent instances (es, rl).
+struct Attribution {
+    std::vector<FromInstance> used;
+    std::vector<int> colInstance;
+};
+
+// Attributes each output column to a FROM instance. A column whose table appears
+// exactly once in the FROM clause is attributed by that table alone (authoritative,
+// no SQL parsing). Only columns of a *self-joined* table need the SELECT-list parse
+// to pick the alias, and those are trusted only when the item widths line up exactly
+// (star widths taken from PRAGMA table_info) — otherwise they stay unmapped rather
+// than risk a wrong page. Columns from a source the FROM parse missed fall back to
+// referencing the table by name (best effort).
+static Attribution attributeColumns(sqlite3* db, const std::string& sql,
+                                    const json& columns) {
+    const int N = static_cast<int>(columns.size());
+    Attribution attr;
+    attr.colInstance.assign(N, -1);
+
+    const std::vector<FromInstance> insts = parseFromInstances(sql);
+    if (insts.empty()) return attr;
+    const std::vector<SelectItem> items = parseSelectItems(sql);
+
+    auto findRef = [&](const std::string& r) -> int {
+        for (std::size_t k = 0; k < insts.size(); ++k)
+            if (ieq(insts[k].ref, r)) return static_cast<int>(k);
+        return -1;
+    };
+
+    // Walk the SELECT list, assigning each output column its instance where the
+    // item makes it explicit; `aligned` holds only while every item's output width
+    // is known exactly (so a self-join attribution can be trusted).
+    std::vector<int> byItem(N, -1);
+    int oc = 0;
+    bool aligned = true;
+    auto expand = [&](int k) {
+        if (!aligned) return;
+        if (k < 0 || insts[static_cast<std::size_t>(k)].table.empty()) { aligned = false; return; }
+        const int cnt = static_cast<int>(tableCids(db, insts[static_cast<std::size_t>(k)].table).size());
+        if (cnt <= 0) { aligned = false; return; }
+        for (int j = 0; j < cnt; ++j) {
+            if (oc < N) byItem[oc++] = k;
+            else { aligned = false; return; }
+        }
+    };
+    for (const SelectItem& it : items) {
+        if (!aligned) break;
+        if (it.kind == SelectItem::Star) {
+            for (std::size_t k = 0; k < insts.size() && aligned; ++k) expand(static_cast<int>(k));
+        } else if (it.kind == SelectItem::TableStar) {
+            expand(findRef(it.alias));
+        } else {
+            if (oc < N) byItem[oc++] = it.alias.empty() ? -1 : findRef(it.alias);
+            else aligned = false;
+        }
+    }
+    if (oc != N) aligned = false;
+
+    std::vector<FromInstance> all = insts;  // may append synthetic name-only instances
+    std::vector<int> chosen(N, -1);
+    for (int c = 0; c < N; ++c) {
+        if (!columns[c]["sourceTable"].is_string()) continue;  // expression / no source
+        const std::string tbl = columns[c]["sourceTable"].get<std::string>();
+        int match = -1, matches = 0;
+        for (std::size_t k = 0; k < insts.size(); ++k)
+            if (!insts[k].table.empty() && ieq(insts[k].table, tbl)) { match = static_cast<int>(k); ++matches; }
+        if (matches == 1) {
+            chosen[c] = match;
+        } else if (matches >= 2) {  // self-join: trust the aligned SELECT-list attribution
+            if (aligned && byItem[c] >= 0 && ieq(insts[static_cast<std::size_t>(byItem[c])].table, tbl))
+                chosen[c] = byItem[c];
+        } else {  // table not seen in FROM parse — reference it by name
+            int syn = -1;
+            for (std::size_t k = 0; k < all.size(); ++k)
+                if (all[k].table == tbl && all[k].ref == tbl) { syn = static_cast<int>(k); break; }
+            if (syn < 0) { syn = static_cast<int>(all.size()); all.push_back({tbl, tbl}); }
+            chosen[c] = syn;
+        }
+    }
+
+    std::vector<int> remap(all.size(), -1);
+    for (int c = 0; c < N; ++c) {
+        const int k = chosen[c];
+        if (k < 0) continue;
+        if (remap[static_cast<std::size_t>(k)] < 0) {
+            remap[static_cast<std::size_t>(k)] = static_cast<int>(attr.used.size());
+            attr.used.push_back(all[static_cast<std::size_t>(k)]);
+        }
+        attr.colInstance[c] = remap[static_cast<std::size_t>(k)];
+    }
+    return attr;
+}
+
+// Second pass (unprofiled): re-run the query with a `<ref>.rowid` column
 // prepended per source table, verify each row's user columns match the original
 // results, and fill entry.rowPages with the pages holding each mapped cell's
 // bytes (leaf plus any overflow pages, computed per-column by CellPageMap). Each
 // cell is an array of page numbers; unresolvable cells stay an empty array
 // (prefer unresolved over wrong).
-void QueryEngine::mapRowPages(Entry& entry, const std::vector<std::string>& tables,
-                             const std::vector<int>& colTable) {
-    const std::size_t userN = colTable.size();
+void QueryEngine::mapRowPages(Entry& entry) {
+    const std::size_t userN = entry.columns.size();
     // Pre-fill with empty arrays so unresolved cells carry no pages.
     entry.rowPages = json::array();
     for (std::size_t r = 0; r < entry.rows.size(); ++r) {
         entry.rowPages.push_back(json(std::vector<json>(userN, json::array())));
     }
-    if (tables.empty()) return;
-
-    const Augmentation aug = augmentWithRowids(entry.sql, tables);
-    if (!aug.ok) return;
 
     sqlite3* db = nullptr;
     if (sqlite3_open_v2(dbPath_.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         sqlite3_close(db);
         return;
     }
+
+    // Attribute each output column to a FROM instance (handles aliases + self-joins),
+    // then re-run with one rowid column prepended per instance.
+    const Attribution attr = attributeColumns(db, entry.sql, entry.columns);
+    const Augmentation aug =
+        attr.used.empty() ? Augmentation{} : augmentWithRowids(entry.sql, attr.used);
+    if (!aug.ok) { sqlite3_close(db); return; }
+    const std::vector<int>& colInstance = attr.colInstance;
 
     // Per-column precise mapper with a retained connection, opened once and reused
     // across runs (reads pages on demand, outside the profiling VFS). If it can't
@@ -171,16 +256,16 @@ void QueryEngine::mapRowPages(Entry& entry, const std::vector<std::string>& tabl
     std::optional<CellPageMap>& cellMap = cellMap_;
 
     sqlite3_stmt* stmt = nullptr;
-    const int D = static_cast<int>(tables.size());
+    const int D = static_cast<int>(attr.used.size());
     if (sqlite3_prepare_v2(db, aug.sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK &&
         sqlite3_column_count(stmt) == D + static_cast<int>(userN)) {
         std::vector<std::unordered_map<std::string, int>> cidMaps;
-        for (const std::string& t : tables) cidMaps.push_back(tableCids(db, t));
+        for (const FromInstance& inst : attr.used) cidMaps.push_back(tableCids(db, inst.table));
         // Each user column's storage index (cid), resolved once — it depends only
         // on the column, not the rowid.
         std::vector<int> colCid(userN, -1);
         for (std::size_t c = 0; c < userN; ++c) {
-            const int ti = colTable[c];
+            const int ti = colInstance[c];
             if (ti < 0 || !cellMap) continue;
             const auto& src = entry.columns[c]["sourceColumn"];
             if (!src.is_string()) continue;
@@ -189,11 +274,12 @@ void QueryEngine::mapRowPages(Entry& entry, const std::vector<std::string>& tabl
         }
 
         // Pass 1: walk the augmented rows, recording each cell that needs a page
-        // (row, column, table, rowid) and collecting the distinct rowids per table.
+        // (row, column, instance, rowid) and collecting the distinct rowids per
+        // instance.
         struct Need { std::int64_t ri; std::size_t c; int ti; std::int64_t rid; };
         std::vector<Need> needs;
-        std::vector<std::vector<std::int64_t>> wanted(tables.size());
-        std::vector<std::unordered_set<std::int64_t>> seen(tables.size());
+        std::vector<std::vector<std::int64_t>> wanted(attr.used.size());
+        std::vector<std::unordered_set<std::int64_t>> seen(attr.used.size());
         std::int64_t ri = 0;
         while (ri < static_cast<std::int64_t>(entry.rows.size()) &&
                sqlite3_step(stmt) == SQLITE_ROW) {
@@ -204,7 +290,7 @@ void QueryEngine::mapRowPages(Entry& entry, const std::vector<std::string>& tabl
             }
             if (match) {
                 for (std::size_t c = 0; c < userN; ++c) {
-                    const int ti = colTable[c];
+                    const int ti = colInstance[c];
                     if (ti < 0 || sqlite3_column_type(stmt, ti) == SQLITE_NULL) continue;
                     const std::int64_t rid = sqlite3_column_int64(stmt, ti);
                     needs.push_back({ri, c, ti, rid});
@@ -214,11 +300,11 @@ void QueryEngine::mapRowPages(Entry& entry, const std::vector<std::string>& tabl
             ++ri;
         }
 
-        // Pass 2: batch-resolve rowid → leaf page per table (one query each) — a
+        // Pass 2: batch-resolve rowid → leaf page per instance (one query each) — a
         // point lookup per rowid, so this stays fast for wide tables (many pages).
-        std::vector<std::unordered_map<std::int64_t, std::int64_t>> pageMaps(tables.size());
-        for (std::size_t ti = 0; ti < tables.size(); ++ti)
-            pageMaps[ti] = map_->leafPagesForRowids(tables[ti], wanted[ti]);
+        std::vector<std::unordered_map<std::int64_t, std::int64_t>> pageMaps(attr.used.size());
+        for (std::size_t ti = 0; ti < attr.used.size(); ++ti)
+            pageMaps[ti] = map_->leafPagesForRowids(attr.used[ti].table, wanted[ti]);
 
         // Pass 3: map each cell's bytes to pages — precise via CellPageMap, else the
         // leaf page (never worse than leaf-only). Unresolved rowids stay empty.
@@ -261,15 +347,13 @@ std::string QueryEngine::runJson(const std::string& sql) {
     Entry entry;
     entry.sql = sql;
     std::string error;
-    ColumnMeta meta;
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         error = sqlite3_errmsg(db);
     } else {
         const int n = sqlite3_column_count(stmt);
-        meta = readColumns(stmt);
-        entry.columns = meta.columns;
+        entry.columns = readColumns(stmt);
         entry.rows = json::array();
         int rc;
         while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
@@ -291,7 +375,7 @@ std::string QueryEngine::runJson(const std::string& sql) {
 
     if (!error.empty()) return json{{"error", error}}.dump();
 
-    mapRowPages(entry, meta.tables, meta.colTable);
+    mapRowPages(entry);
     entry.id = nextId_++;
     entry.pageCount = sink.distinctPages();
     entry.accesses = sink.accesses();
