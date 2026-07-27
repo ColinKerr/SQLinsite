@@ -167,7 +167,7 @@ export const useQuery = create<QueryState>((set, get) => ({
       run: {
         queryId: entry.id, columns: entry.columns, rowCount: entry.rowCount,
         truncated: entry.truncated, pageCount: entry.pageCount, accesses: entry.accesses,
-        profile: entry.profile,
+        profile: entry.profile, profileDeferred: entry.profileDeferred,
       },
     });
   },
@@ -214,11 +214,15 @@ export const useQuery = create<QueryState>((set, get) => ({
             nodeQuery: { page: nq.page, overflow: nq.overflow, nextAfter: batch.nextAfter,
                          batchQueryId: summary.queryId, batchLoaded: first?.rows.length ?? 0 },
             rows: first && s.rows ? { ...s.rows, rows: [...s.rows.rows, ...first.rows], rowPages: [...s.rows.rowPages, ...first.rowPages] } : s.rows,
-            run: s.run ? { ...s.run, pageCount: 0, accesses: s.run.accesses + summary.accesses,
-                           profile: { pages: mergeProfile(s.run.profile.pages, summary.profile.pages) } } : s.run,
+            run: s.run ? { ...s.run, accesses: s.run.accesses + summary.accesses,
+                           // Merge exact page sets when inline; a batch with a deferred
+                           // (large) profile has no pages, so fall back to summing its
+                           // scalar pageCount (batches touch mostly-disjoint pages).
+                           profile: { pages: mergeProfile(s.run.profile.pages, summary.profile.pages) },
+                           pageCount: summary.profile.pages.length
+                             ? mergeProfile(s.run.profile.pages, summary.profile.pages).length
+                             : s.run.pageCount + summary.pageCount } : s.run,
           }));
-          // pageCount = union size (recomputed from the merged profile).
-          set((s) => ({ run: s.run ? { ...s.run, pageCount: s.run.profile.pages.length } : s.run }));
           return;
         }
       }

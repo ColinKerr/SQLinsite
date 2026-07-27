@@ -365,6 +365,14 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
                    const std::int64_t to = paramInt(req, "to", from);
                    res.set_content(engine->rowsJson(id, from, to), "application/json");
                });
+
+    // A run's full per-page profile, fetched on demand for the map overlay (the run
+    // response defers large profiles to keep initial load small).
+    server.Get(R"(/api/query/(\d+)/profile)",
+               [engine](const httplib::Request& req, httplib::Response& res) {
+                   res.set_content(engine->profileJson(std::stoi(req.matches[1].str())),
+                                   "application/json");
+               });
 }
 
 // Reads the map's declared page size from /api/meta so the query engine can map

@@ -1,6 +1,6 @@
 import { getJson } from "./api.ts";
 import type {
-  ExplainResult, HistoryEntry, HistoryItem, PageRowidRuns, RowsResponse, RunSummary,
+  ExplainResult, HistoryEntry, HistoryItem, PageRowidRuns, QueryProfile, RowsResponse, RunSummary,
 } from "./types.ts";
 
 async function postSql<T>(url: string, sql: string): Promise<T> {
@@ -20,3 +20,7 @@ export const fetchHistoryEntry = (id: number) =>
   getJson<HistoryEntry>(`/api/query/history/${id}`);
 export const fetchPageRowidRuns = (page: number, after: number, limit: number) =>
   getJson<PageRowidRuns>(`/api/page/${page}/rowid-runs?after=${after}&limit=${limit}`);
+// The full per-page profile of a run (fetched lazily for the map overlay when the
+// run response deferred a large profile).
+export const fetchQueryProfile = (id: number) =>
+  getJson<QueryProfile>(`/api/query/${id}/profile`);

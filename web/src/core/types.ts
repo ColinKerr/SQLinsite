@@ -94,7 +94,10 @@ export interface RunSummary {
   truncated: boolean;
   pageCount: number;
   accesses: number;
+  // `pages` is empty when profileDeferred: the (large) profile is fetched lazily via
+  // fetchQueryProfile(queryId), used only by the map overlay.
   profile: { pages: ProfilePage[] };
+  profileDeferred?: boolean;
   error?: string;
 }
 export interface RowsResponse {
@@ -123,7 +126,9 @@ export interface HistoryEntry {
   id: number; sql: string; columns: QueryColumn[];
   rowCount: number; truncated: boolean; pageCount: number; accesses: number;
   profile: { pages: ProfilePage[] };
+  profileDeferred?: boolean;
 }
+export interface QueryProfile { pages: ProfilePage[] }
 
 export interface Pointer {
   toPage: number;

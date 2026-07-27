@@ -77,6 +77,20 @@ TEST_CASE("query engine runs, profiles, paginates, explains") {
         CHECK(rows["rowCount"] == 3);
     }
 
+    SUBCASE("small profile is inlined; profileJson returns the full profile") {
+        auto j = json::parse(engine.runJson("SELECT id, v FROM T ORDER BY id"));
+        const int id = j["queryId"].get<int>();
+        // A tiny query stays under the inline cap → profile ships in the run response.
+        CHECK(j["profileDeferred"] == false);
+        CHECK(j["profile"]["pages"].size() >= 1);
+        // The on-demand endpoint returns the same stored profile.
+        auto p = json::parse(engine.profileJson(id));
+        CHECK(p["pages"].is_array());
+        CHECK(p["pages"].size() == j["profile"]["pages"].size());
+        // Unknown id is an error, not a crash.
+        CHECK(json::parse(engine.profileJson(9999)).contains("error"));
+    }
+
     SUBCASE("row slice is clamped to the stored rows") {
         engine.runJson("SELECT id FROM T");
         auto rows = json::parse(engine.rowsJson(1, 1, 999));

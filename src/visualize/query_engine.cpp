@@ -1,5 +1,6 @@
 #include "visualize/query_engine.hpp"
 
+#include <limits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -221,27 +222,17 @@ static Attribution attributeColumns(sqlite3* db, const std::string& sql,
 // bytes (leaf plus any overflow pages, computed per-column by CellPageMap). Each
 // cell is an array of page numbers; unresolvable cells stay an empty array
 // (prefer unresolved over wrong).
-void QueryEngine::mapRowPages(Entry& entry) {
+void QueryEngine::mapRowPages(Entry& entry, const std::vector<FromInstance>& used,
+                             const std::vector<int>& colInstance,
+                             const std::vector<int>& colCid,
+                             const std::vector<std::vector<std::int64_t>>& rowids) {
     const std::size_t userN = entry.columns.size();
     // Pre-fill with empty arrays so unresolved cells carry no pages.
     entry.rowPages = json::array();
     for (std::size_t r = 0; r < entry.rows.size(); ++r) {
         entry.rowPages.push_back(json(std::vector<json>(userN, json::array())));
     }
-
-    sqlite3* db = nullptr;
-    if (sqlite3_open_v2(dbPath_.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
-        sqlite3_close(db);
-        return;
-    }
-
-    // Attribute each output column to a FROM instance (handles aliases + self-joins),
-    // then re-run with one rowid column prepended per instance.
-    const Attribution attr = attributeColumns(db, entry.sql, entry.columns);
-    const Augmentation aug =
-        attr.used.empty() ? Augmentation{} : augmentWithRowids(entry.sql, attr.used);
-    if (!aug.ok) { sqlite3_close(db); return; }
-    const std::vector<int>& colInstance = attr.colInstance;
+    if (used.empty() || rowids.empty()) return;
 
     // Per-column precise mapper with a retained connection, opened once and reused
     // across runs (reads pages on demand, outside the profiling VFS). If it can't
@@ -255,71 +246,43 @@ void QueryEngine::mapRowPages(Entry& entry) {
     }
     std::optional<CellPageMap>& cellMap = cellMap_;
 
-    sqlite3_stmt* stmt = nullptr;
-    const int D = static_cast<int>(attr.used.size());
-    if (sqlite3_prepare_v2(db, aug.sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK &&
-        sqlite3_column_count(stmt) == D + static_cast<int>(userN)) {
-        std::vector<std::unordered_map<std::string, int>> cidMaps;
-        for (const FromInstance& inst : attr.used) cidMaps.push_back(tableCids(db, inst.table));
-        // Each user column's storage index (cid), resolved once — it depends only
-        // on the column, not the rowid.
-        std::vector<int> colCid(userN, -1);
+    const std::size_t D = used.size();
+    constexpr std::int64_t kNone = std::numeric_limits<std::int64_t>::min();
+
+    // Pass 1: from the rowids captured during the single execution, record each cell
+    // that needs a page and collect the distinct rowids per instance.
+    struct Need { std::size_t ri; std::size_t c; int ti; std::int64_t rid; };
+    std::vector<Need> needs;
+    std::vector<std::vector<std::int64_t>> wanted(D);
+    std::vector<std::unordered_set<std::int64_t>> seen(D);
+    for (std::size_t ri = 0; ri < rowids.size() && ri < entry.rows.size(); ++ri) {
         for (std::size_t c = 0; c < userN; ++c) {
             const int ti = colInstance[c];
-            if (ti < 0 || !cellMap) continue;
-            const auto& src = entry.columns[c]["sourceColumn"];
-            if (!src.is_string()) continue;
-            auto cit = cidMaps[ti].find(src.get<std::string>());
-            if (cit != cidMaps[ti].end()) colCid[c] = cit->second;
-        }
-
-        // Pass 1: walk the augmented rows, recording each cell that needs a page
-        // (row, column, instance, rowid) and collecting the distinct rowids per
-        // instance.
-        struct Need { std::int64_t ri; std::size_t c; int ti; std::int64_t rid; };
-        std::vector<Need> needs;
-        std::vector<std::vector<std::int64_t>> wanted(attr.used.size());
-        std::vector<std::unordered_set<std::int64_t>> seen(attr.used.size());
-        std::int64_t ri = 0;
-        while (ri < static_cast<std::int64_t>(entry.rows.size()) &&
-               sqlite3_step(stmt) == SQLITE_ROW) {
-            // Verify user columns match the original row before trusting rowids.
-            bool match = true;
-            for (std::size_t c = 0; c < userN && match; ++c) {
-                if (valueJson(stmt, D + static_cast<int>(c)) != entry.rows[ri][c]) match = false;
-            }
-            if (match) {
-                for (std::size_t c = 0; c < userN; ++c) {
-                    const int ti = colInstance[c];
-                    if (ti < 0 || sqlite3_column_type(stmt, ti) == SQLITE_NULL) continue;
-                    const std::int64_t rid = sqlite3_column_int64(stmt, ti);
-                    needs.push_back({ri, c, ti, rid});
-                    if (seen[ti].insert(rid).second) wanted[ti].push_back(rid);
-                }
-            }
-            ++ri;
-        }
-
-        // Pass 2: batch-resolve rowid → leaf page per instance (one query each) — a
-        // point lookup per rowid, so this stays fast for wide tables (many pages).
-        std::vector<std::unordered_map<std::int64_t, std::int64_t>> pageMaps(attr.used.size());
-        for (std::size_t ti = 0; ti < attr.used.size(); ++ti)
-            pageMaps[ti] = map_->leafPagesForRowids(attr.used[ti].table, wanted[ti]);
-
-        // Pass 3: map each cell's bytes to pages — precise via CellPageMap, else the
-        // leaf page (never worse than leaf-only). Unresolved rowids stay empty.
-        for (const Need& nd : needs) {
-            auto it = pageMaps[nd.ti].find(nd.rid);
-            if (it == pageMaps[nd.ti].end() || it->second == 0) continue;
-            const std::int64_t leaf = it->second;
-            std::vector<std::int64_t> pages;
-            if (cellMap && colCid[nd.c] >= 0) pages = cellMap->pagesForCell(leaf, nd.rid, colCid[nd.c]);
-            if (pages.empty()) pages = {leaf};
-            entry.rowPages[nd.ri][nd.c] = pages;
+            if (ti < 0 || static_cast<std::size_t>(ti) >= D) continue;
+            const std::int64_t rid = rowids[ri][static_cast<std::size_t>(ti)];
+            if (rid == kNone) continue;
+            needs.push_back({ri, c, ti, rid});
+            if (seen[ti].insert(rid).second) wanted[ti].push_back(rid);
         }
     }
-    sqlite3_finalize(stmt);
-    sqlite3_close(db);
+
+    // Pass 2: batch-resolve rowid → leaf page per instance (one query each) — a
+    // point lookup per rowid, so this stays fast for wide tables (many pages).
+    std::vector<std::unordered_map<std::int64_t, std::int64_t>> pageMaps(D);
+    for (std::size_t ti = 0; ti < D; ++ti)
+        pageMaps[ti] = map_->leafPagesForRowids(used[ti].table, wanted[ti]);
+
+    // Pass 3: map each cell's bytes to pages — precise via CellPageMap, else the
+    // leaf page (never worse than leaf-only). Unresolved rowids stay empty.
+    for (const Need& nd : needs) {
+        auto it = pageMaps[static_cast<std::size_t>(nd.ti)].find(nd.rid);
+        if (it == pageMaps[static_cast<std::size_t>(nd.ti)].end() || it->second == 0) continue;
+        const std::int64_t leaf = it->second;
+        std::vector<std::int64_t> pages;
+        if (cellMap && colCid[nd.c] >= 0) pages = cellMap->pagesForCell(leaf, nd.rid, colCid[nd.c]);
+        if (pages.empty()) pages = {leaf};
+        entry.rowPages[nd.ri][nd.c] = pages;
+    }
 }
 
 std::string QueryEngine::runJson(const std::string& sql) {
@@ -348,38 +311,106 @@ std::string QueryEngine::runJson(const std::string& sql) {
     entry.sql = sql;
     std::string error;
 
-    sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+    // Row→page mapping is done in a SINGLE execution: we first prepare the plain
+    // query only to read column metadata (no stepping), attribute each column to a
+    // FROM instance, and build an augmented query with a rowid column prepended per
+    // instance. That augmented query is then the one actually executed and profiled,
+    // so its rows ARE the displayed results and the rowids come for free — no second
+    // execution of a potentially expensive query. If augmentation isn't applicable
+    // we execute the plain query and simply skip mapping.
+    std::vector<FromInstance> used;     // instances a rowid column is collected for
+    std::vector<int> colInstance;       // user column → index into `used` (-1 = none)
+    std::vector<int> colCid;            // user column → record-field index (-1 = leaf-only)
+    std::string runSql = sql;           // the statement actually executed
+    int D = 0;                          // prepended rowid columns (0 = no mapping)
+
+    sqlite3_stmt* meta = nullptr;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &meta, nullptr) != SQLITE_OK) {
         error = sqlite3_errmsg(db);
     } else {
-        const int n = sqlite3_column_count(stmt);
-        entry.columns = readColumns(stmt);
-        entry.rows = json::array();
-        int rc;
-        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
-            ++entry.rowCount;
-            if (entry.rowCount <= kRowCap) {
-                json r = json::array();
-                for (int c = 0; c < n; ++c) r.push_back(valueJson(stmt, c));
-                entry.rows.push_back(std::move(r));
-            } else {
-                entry.truncated = true;
+        entry.columns = readColumns(meta);
+        sqlite3_finalize(meta);
+        const std::size_t userN = entry.columns.size();
+
+        const Attribution attr = attributeColumns(db, sql, entry.columns);
+        const Augmentation aug =
+            attr.used.empty() ? Augmentation{} : augmentWithRowids(sql, attr.used);
+        if (aug.ok) {
+            std::vector<std::unordered_map<std::string, int>> cidMaps;
+            for (const FromInstance& inst : attr.used) cidMaps.push_back(tableCids(db, inst.table));
+            colCid.assign(userN, -1);
+            for (std::size_t c = 0; c < userN; ++c) {
+                const int ti = attr.colInstance[c];
+                if (ti < 0) continue;
+                const auto& src = entry.columns[c]["sourceColumn"];
+                if (!src.is_string()) continue;
+                auto cit = cidMaps[static_cast<std::size_t>(ti)].find(src.get<std::string>());
+                if (cit != cidMaps[static_cast<std::size_t>(ti)].end()) colCid[c] = cit->second;
             }
+            used = attr.used;
+            colInstance = attr.colInstance;
+            runSql = aug.sql;
+            D = static_cast<int>(used.size());
         }
-        if (rc != SQLITE_DONE) error = sqlite3_errmsg(db);
-        sqlite3_finalize(stmt);
     }
 
-    ctx.out = nullptr;  // stop measuring
+    std::vector<std::vector<std::int64_t>> rowids;  // [stored row][instance]; INT64_MIN = NULL
+    if (error.empty()) {
+        constexpr std::int64_t kNone = std::numeric_limits<std::int64_t>::min();
+        const int userN = static_cast<int>(entry.columns.size());
+        sqlite3_stmt* stmt = nullptr;
+        // Execute the augmented query; if it unexpectedly fails to prepare or its
+        // shape doesn't match, fall back to the plain query with no mapping.
+        if (sqlite3_prepare_v2(db, runSql.c_str(), -1, &stmt, nullptr) != SQLITE_OK ||
+            sqlite3_column_count(stmt) != D + userN) {
+            if (stmt) { sqlite3_finalize(stmt); stmt = nullptr; }
+            D = 0;
+            used.clear();
+            if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
+                error = sqlite3_errmsg(db);
+        }
+        if (error.empty()) {
+            entry.rows = json::array();
+            int rc;
+            while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+                ++entry.rowCount;
+                if (entry.rowCount <= kRowCap) {
+                    json r = json::array();
+                    for (int c = 0; c < userN; ++c) r.push_back(valueJson(stmt, D + c));
+                    entry.rows.push_back(std::move(r));
+                    if (D > 0) {
+                        std::vector<std::int64_t> rr(static_cast<std::size_t>(D));
+                        for (int ti = 0; ti < D; ++ti)
+                            rr[static_cast<std::size_t>(ti)] =
+                                sqlite3_column_type(stmt, ti) == SQLITE_NULL
+                                    ? kNone : sqlite3_column_int64(stmt, ti);
+                        rowids.push_back(std::move(rr));
+                    }
+                } else {
+                    entry.truncated = true;
+                }
+            }
+            if (rc != SQLITE_DONE) error = sqlite3_errmsg(db);
+            sqlite3_finalize(stmt);
+        }
+    }
+
+    ctx.out = nullptr;  // stop measuring (mapping below reads the map/cellMap dbs)
     sqlite3_close(db);
 
     if (!error.empty()) return json{{"error", error}}.dump();
 
-    mapRowPages(entry);
+    mapRowPages(entry, used, colInstance, colCid, rowids);
     entry.id = nextId_++;
     entry.pageCount = sink.distinctPages();
     entry.accesses = sink.accesses();
     entry.profilePages = profilePagesJson(sink);
+    // The per-page profile can be huge (a wide analytical query touches hundreds of
+    // thousands of pages). It's only needed by the map overlay (a secondary tab), so
+    // keep the run response small: inline it only when small, otherwise defer it to
+    // an on-demand /api/query/:id/profile fetch. The full profile stays stored here.
+    const bool deferProfile =
+        static_cast<std::int64_t>(entry.profilePages.size()) > kInlineProfileCap;
     json summary = {
         {"queryId", entry.id},
         {"columns", entry.columns},
@@ -387,10 +418,18 @@ std::string QueryEngine::runJson(const std::string& sql) {
         {"truncated", entry.truncated},
         {"pageCount", entry.pageCount},
         {"accesses", entry.accesses},
-        {"profile", {{"pages", entry.profilePages}}},
+        {"profileDeferred", deferProfile},
+        {"profile", {{"pages", deferProfile ? json::array() : entry.profilePages}}},
     };
     history_.push_back(std::move(entry));
     return summary.dump();
+}
+
+std::string QueryEngine::profileJson(int id) const {
+    std::lock_guard<std::mutex> lock(mu_);
+    const Entry* e = find(id);
+    if (e == nullptr) return R"({"error":"no such query"})";
+    return json{{"pages", e->profilePages}}.dump();
 }
 
 const QueryEngine::Entry* QueryEngine::find(int id) const {
@@ -447,10 +486,13 @@ std::string QueryEngine::historyEntryJson(int id) const {
     std::lock_guard<std::mutex> lock(mu_);
     const Entry* e = find(id);
     if (e == nullptr) return R"({"error":"no such query"})";
+    const bool deferProfile =
+        static_cast<std::int64_t>(e->profilePages.size()) > kInlineProfileCap;
     return json{
         {"id", e->id}, {"sql", e->sql}, {"columns", e->columns},
         {"rowCount", e->rowCount}, {"truncated", e->truncated},
         {"pageCount", e->pageCount}, {"accesses", e->accesses},
-        {"profile", {{"pages", e->profilePages}}},
+        {"profileDeferred", deferProfile},
+        {"profile", {{"pages", deferProfile ? json::array() : e->profilePages}}},
     }.dump();
 }

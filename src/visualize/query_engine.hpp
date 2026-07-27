@@ -21,6 +21,10 @@ class QueryEngine {
 public:
     // Largest number of result rows captured/stored per run.
     static constexpr std::int64_t kRowCap = 100000;
+    // A run's per-page profile is inlined in the run/history response only when it
+    // has at most this many pages; larger profiles are deferred to an on-demand
+    // /api/query/:id/profile fetch so the initial response stays small.
+    static constexpr std::int64_t kInlineProfileCap = 20000;
 
     // `map` supplies rowid→page lookups for row→page mapping; it must outlive
     // this engine (owned alongside it by the server).
@@ -41,8 +45,11 @@ public:
     // Past runs, newest first: [{id, sql, pageCount, accesses}].
     std::string historyJson() const;
     // A stored run's metadata (no rows): {id, sql, columns, rowCount, pageCount,
-    // accesses, profile:{pages}} or {error}.
+    // accesses, profileDeferred, profile:{pages}} or {error}.
     std::string historyEntryJson(int id) const;
+    // A stored run's full per-page profile: {pages:[{pageNumber,reads,writes}...]}
+    // or {error}. Fetched on demand for the map overlay (see kInlineProfileCap).
+    std::string profileJson(int id) const;
 
 private:
     struct Entry {
@@ -59,9 +66,14 @@ private:
     };
 
     const Entry* find(int id) const;
-    // Fills entry.rowPages: attributes each output column to a FROM instance, re-runs
-    // the query with a rowid per instance, and maps each cell to its pages.
-    void mapRowPages(Entry& entry);
+    // Fills entry.rowPages from rowids captured during the single query execution.
+    // `used` are the FROM instances a rowid column was collected for; `colInstance[c]`
+    // indexes into it (-1 = unmapped); `colCid[c]` is the column's record-field index
+    // for precise cell mapping (-1 = leaf-only); `rowids[r][ti]` is stored row r's
+    // rowid for instance ti (INT64_MIN = NULL/absent). No query re-execution.
+    void mapRowPages(Entry& entry, const std::vector<FromInstance>& used,
+                     const std::vector<int>& colInstance, const std::vector<int>& colCid,
+                     const std::vector<std::vector<std::int64_t>>& rowids);
 
     std::string dbPath_;
     int pageSize_;
