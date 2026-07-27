@@ -13,6 +13,8 @@
 #include "visualize/map_db.hpp"
 #include "visualize/query_augment.hpp"
 
+struct sqlite3;  // forward decl for the in-flight-connection pointer (cancel)
+
 // Runs user SQL against the mapped database (opened read-only) for the live-query
 // view. Each run uses a *fresh* connection routed through the sqlinsite VFS so
 // page access is measured with a cold cache. Runs are serialized (the VFS
@@ -51,6 +53,10 @@ public:
     // or {error}. Fetched on demand for the map overlay (see kInlineProfileCap).
     std::string profileJson(int id) const;
 
+    // Interrupts the query currently executing in runJson (if any), from another
+    // thread, so a long run can be canceled. Safe to call when idle (no-op).
+    void cancel();
+
 private:
     struct Entry {
         int id = 0;
@@ -79,6 +85,11 @@ private:
     int pageSize_;
     const MapDb* map_;
     mutable std::mutex mu_;
+    // The connection of the in-flight runJson, so cancel() can sqlite3_interrupt it
+    // from another (request) thread. Guarded by activeMu_ — a SEPARATE lock, because
+    // runJson holds mu_ for the whole run and cancel() must not block on it.
+    std::mutex activeMu_;
+    sqlite3* activeDb_ = nullptr;
     std::vector<Entry> history_;
     int nextId_ = 1;
     // Per-column cell→page mapper with a retained read-only connection, opened

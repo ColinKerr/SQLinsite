@@ -25,7 +25,6 @@ export function ResultsTable() {
   const rows = useQuery((s) => s.rows);
   const run = useQuery((s) => s.run);
   const error = useQuery((s) => s.error);
-  const running = useQuery((s) => s.running);
   const loadMoreRows = useQuery((s) => s.loadMoreRows);
   const selectedCell = useQuery((s) => s.selectedCell);
   const setSelectedCell = useQuery((s) => s.setSelectedCell);
@@ -95,7 +94,7 @@ export function ResultsTable() {
   useEffect(() => { colVirtualizer.measure(); }, [columnSizing, run?.queryId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (error) return <div className="results-msg error">{error}</div>;
-  if (running && !rows) return <div className="results-msg muted">Running…</div>;
+  // (The "running" state is rendered by ResultsView as a spinner + Cancel overlay.)
   if (!rows || !run) return <div className="results-msg muted">Run a query to see results.</div>;
 
   const vCols = colVirtualizer.getVirtualItems();

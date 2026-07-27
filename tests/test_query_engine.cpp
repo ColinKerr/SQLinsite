@@ -77,6 +77,14 @@ TEST_CASE("query engine runs, profiles, paginates, explains") {
         CHECK(rows["rowCount"] == 3);
     }
 
+    SUBCASE("cancel is a safe no-op when idle and a normal run isn't cancelled") {
+        engine.cancel();  // nothing running → must not crash
+        auto j = json::parse(engine.runJson("SELECT id, v FROM T"));
+        CHECK_FALSE(j.contains("error"));
+        CHECK(j.value("cancelled", false) == false);
+        engine.cancel();  // after the run finished → still a no-op
+    }
+
     SUBCASE("small profile is inlined; profileJson returns the full profile") {
         auto j = json::parse(engine.runJson("SELECT id, v FROM T ORDER BY id"));
         const int id = j["queryId"].get<int>();

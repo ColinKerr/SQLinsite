@@ -42,6 +42,8 @@ The query editor has a 'query control bar' at the top with following controls: '
 ### Query Control Bar
 
  - 'Run' Button - Runs the SQL query in the query editor using a fresh db connection on each run to ensure no prior pages are cached.  The query is run using the code behind the `sqlinsite profile` command.  The results returned by the query are loaded into the 'results view'.  The query and the profile results are stored in the history to be retrieved later.
+   - While a query is running — from the moment Run is pressed (or a tree node is activated to run a query) until results are returned — the 'results view' shows a **spinner** and a **Cancel** button in place of the results, regardless of which tab is active and on every run (not just the first).
+   - The **Cancel** button stops the in-flight query: it aborts the client request and interrupts the running query on the server (`POST /api/query/cancel` → `sqlite3_interrupt`), then returns the results view to its pre-run state (any previously shown results/error are left in place). Cancel is a no-op when no query is running.
  - 'History' button - shows a drop down with each previous query run and the number of pages loaded when running that query.  Selecting one of the previously run queries sets the query in the 'query editor', loads up the profile results and sets the 'results view' to show results as though they had just hit the Run button with the old query.
  - 'Format' button - Pretty formats the SQL query currently in the 'query editor'
  - 'Explain' button - Runs the SQL query currently in the 'query editor' twice, once prefixed with `EXPLAIN QUERY PLAN` and once prefixed with `EXPLAIN`.  The results are shown in 'explain results'.

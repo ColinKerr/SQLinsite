@@ -3,12 +3,19 @@ import type {
   ExplainResult, HistoryEntry, HistoryItem, PageRowidRuns, QueryProfile, RowsResponse, RunSummary,
 } from "./types.ts";
 
-async function postSql<T>(url: string, sql: string): Promise<T> {
-  const r = await fetch(url, { method: "POST", body: sql, headers: { "Content-Type": "text/plain" } });
+async function postSql<T>(url: string, sql: string, signal?: AbortSignal): Promise<T> {
+  const r = await fetch(url, {
+    method: "POST", body: sql, headers: { "Content-Type": "text/plain" }, signal,
+  });
   return (await r.json()) as T;
 }
 
-export const runQuery = (sql: string) => postSql<RunSummary>("/api/query/run", sql);
+// `signal` lets a run be aborted client-side (see cancelQuery for the server side).
+export const runQuery = (sql: string, signal?: AbortSignal) =>
+  postSql<RunSummary>("/api/query/run", sql, signal);
+// Interrupts the query currently executing on the server (fire-and-forget).
+export const cancelQuery = () =>
+  fetch("/api/query/cancel", { method: "POST" }).catch(() => {});
 export const explainQuery = (sql: string) => postSql<ExplainResult>("/api/query/explain", sql);
 export const fetchRows = (id: number, from: number, to: number) =>
   getJson<RowsResponse>(`/api/query/${id}/rows?from=${from}&to=${to}`);

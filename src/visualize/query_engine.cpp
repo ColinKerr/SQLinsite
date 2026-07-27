@@ -294,8 +294,11 @@ std::string QueryEngine::runJson(const std::string& sql) {
     if (sqlite3_open_v2(dbPath_.c_str(), &db, SQLITE_OPEN_READONLY, kSQLINSITEVfsName) != SQLITE_OK) {
         json e = {{"error", std::string("cannot open db: ") + sqlite3_errmsg(db)}};
         sqlite3_close(db);
-        return e.dump();
+        return e.dump();  // (activeDb_ not set yet)
     }
+
+    // Publish the connection so cancel() (another thread) can interrupt it.
+    { std::lock_guard<std::mutex> a(activeMu_); activeDb_ = db; }
 
     ProfilingContext& ctx = profilingContext();
     ctx.sessionName = "query";
@@ -396,8 +399,14 @@ std::string QueryEngine::runJson(const std::string& sql) {
     }
 
     ctx.out = nullptr;  // stop measuring (mapping below reads the map/cellMap dbs)
+    // A cancel() interrupt surfaces as SQLITE_INTERRUPT on the prepare/step that was
+    // running. Report it as {cancelled} (not an error) so the client returns quietly
+    // to its pre-run state. Read the code before clearing/closing the connection.
+    const bool cancelled = !error.empty() && sqlite3_errcode(db) == SQLITE_INTERRUPT;
+    { std::lock_guard<std::mutex> a(activeMu_); activeDb_ = nullptr; }
     sqlite3_close(db);
 
+    if (cancelled) return json{{"cancelled", true}}.dump();
     if (!error.empty()) return json{{"error", error}}.dump();
 
     mapRowPages(entry, used, colInstance, colCid, rowids);
@@ -430,6 +439,12 @@ std::string QueryEngine::profileJson(int id) const {
     const Entry* e = find(id);
     if (e == nullptr) return R"({"error":"no such query"})";
     return json{{"pages", e->profilePages}}.dump();
+}
+
+void QueryEngine::cancel() {
+    // Runs on a request thread while runJson holds mu_; use activeMu_ only.
+    std::lock_guard<std::mutex> a(activeMu_);
+    if (activeDb_) sqlite3_interrupt(activeDb_);
 }
 
 const QueryEngine::Entry* QueryEngine::find(int id) const {

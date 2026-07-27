@@ -98,6 +98,7 @@ export interface RunSummary {
   // fetchQueryProfile(queryId), used only by the map overlay.
   profile: { pages: ProfilePage[] };
   profileDeferred?: boolean;
+  cancelled?: boolean;   // the run was interrupted via /api/query/cancel
   error?: string;
 }
 export interface RowsResponse {

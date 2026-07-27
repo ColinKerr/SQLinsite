@@ -58,8 +58,10 @@ the selected sessions/queries.
 | Method/Path | Returns |
 |---|---|
 | `GET /api/schema` | schema tree (tables/views → columns/indexes/triggers) joined to map page counts |
-| `POST /api/query/run` (body = SQL) | `{queryId, columns[with provenance], rowCount, truncated, pageCount, accesses, profile}` (400 on SQL error) |
+| `POST /api/query/run` (body = SQL) | `{queryId, columns[with provenance], rowCount, truncated, pageCount, accesses, profile, profileDeferred}` (400 on SQL error; `{cancelled:true}` if interrupted). Large profiles are deferred (empty `profile.pages`, `profileDeferred:true`) and fetched via `/profile` |
+| `POST /api/query/cancel` | interrupts the in-flight run (served on another thread); that run returns `{cancelled:true}` |
 | `GET /api/query/:id/rows?from&to` | a row window `{columns, rows, rowPages, rowCount}` (per-cell page, or null) |
+| `GET /api/query/:id/profile` | a run's full per-page profile `{pages}` (fetched on demand for the map overlay) |
 | `POST /api/query/explain` (body = SQL) | `{queryPlan, explain}` |
 | `GET /api/query/history[/:id]` | past runs (list, or one run's metadata for restore) |
 

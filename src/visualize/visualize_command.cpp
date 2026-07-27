@@ -348,6 +348,13 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
         res.set_content(engine->explainJson(req.body), "application/json");
     });
 
+    // Interrupts the in-flight /api/query/run (served on another thread), so a long
+    // query can be canceled; that run then returns {cancelled:true}.
+    server.Post("/api/query/cancel", [engine](const httplib::Request&, httplib::Response& res) {
+        engine->cancel();
+        res.set_content(R"({"ok":true})", "application/json");
+    });
+
     server.Get(R"(/api/query/history)", [engine](const httplib::Request&, httplib::Response& res) {
         res.set_content(engine->historyJson(), "application/json");
     });

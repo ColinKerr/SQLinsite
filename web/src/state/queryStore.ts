@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import {
-  explainQuery, fetchHistory, fetchHistoryEntry, fetchPageRowidRuns, fetchRows, runQuery,
+  cancelQuery, explainQuery, fetchHistory, fetchHistoryEntry, fetchPageRowidRuns, fetchRows, runQuery,
 } from "../core/queryApi.ts";
 import { pageRowsSql, qi } from "../core/pageQuery.ts";
 import type {
@@ -34,6 +34,12 @@ const ROW_WINDOW = 1000;
 // How many rowid runs to request per batch (kept under SQLite's expression limits).
 const RUN_BATCH = 500;
 
+// The in-flight run's abort controller, so cancelRun() can abort the client fetch
+// (the server side is interrupted separately via cancelQuery). Module-level because
+// it's imperative plumbing, not rendered state.
+let runAbort: AbortController | null = null;
+const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortError";
+
 // Merges profile page lists (union by page number, summing reads/writes).
 function mergeProfile(a: ProfilePage[], b: ProfilePage[]): ProfilePage[] {
   const byPage = new Map<number, ProfilePage>();
@@ -66,6 +72,7 @@ export interface QueryState {
   setSelectedCell(cell: SelectedCell | null): void;
   setHighlightPage(page: number | null): void;
   runCurrent(): Promise<void>;
+  cancelRun(): void;
   runSql(sql: string): Promise<void>;
   runObjectQuery(table: string): Promise<void>;
   runPageQuery(page: number, overflow: boolean): Promise<void>;
@@ -101,14 +108,29 @@ export const useQuery = create<QueryState>((set, get) => ({
     if (!sql || get().running) return;
     // A manual run is a plain single query — clear any node-query pagination/highlight.
     set({ running: true, error: null, selectedCell: null, nodeQuery: null, highlightPage: null });
-    const summary = await runQuery(sql);
-    if (summary.error) {
-      set({ running: false, error: summary.error });
-      return;
+    runAbort = new AbortController();
+    try {
+      const summary = await runQuery(sql, runAbort.signal);
+      if (summary.cancelled) { set({ running: false }); return; }  // user pressed Cancel
+      if (summary.error) { set({ running: false, error: summary.error }); return; }
+      const rows = await fetchRows(summary.queryId, 0, ROW_WINDOW);
+      set({ running: false, run: summary, rows, resultsTab: "table" });
+      void get().refreshHistory();
+    } catch (e) {
+      if (isAbort(e)) { set({ running: false }); return; }  // cancel aborted the fetch
+      set({ running: false, error: e instanceof Error ? e.message : "query failed" });
+    } finally {
+      runAbort = null;
     }
-    const rows = await fetchRows(summary.queryId, 0, ROW_WINDOW);
-    set({ running: false, run: summary, rows, resultsTab: "table" });
-    void get().refreshHistory();
+  },
+
+  // Stops the in-flight run: abort the client fetch and interrupt the server query,
+  // then drop the running state (leaving any prior results/error untouched).
+  cancelRun() {
+    if (!get().running) return;
+    runAbort?.abort();
+    void cancelQuery();
+    set({ running: false });
   },
   async runSql(sql) {
     set({ sql });
@@ -133,20 +155,29 @@ export const useQuery = create<QueryState>((set, get) => ({
       return;
     }
     set({ sql, running: true, error: null, selectedCell: null, resultsTab: "table" });
-    const summary = await runQuery(sql);
-    if (summary.error) { set({ running: false, error: summary.error }); return; }
-    const rows = await fetchRows(summary.queryId, 0, ROW_WINDOW);
-    set({
-      running: false,
-      run: { ...summary, rowCount: batch.totalRowCount },  // page total across all batches
-      rows,
-      highlightPage: overflow ? page : null,
-      nodeQuery: {
-        page, overflow, nextAfter: batch.nextAfter,
-        batchQueryId: summary.queryId, batchLoaded: rows?.rows.length ?? 0,
-      },
-    });
-    void get().refreshHistory();
+    runAbort = new AbortController();
+    try {
+      const summary = await runQuery(sql, runAbort.signal);
+      if (summary.cancelled) { set({ running: false }); return; }
+      if (summary.error) { set({ running: false, error: summary.error }); return; }
+      const rows = await fetchRows(summary.queryId, 0, ROW_WINDOW);
+      set({
+        running: false,
+        run: { ...summary, rowCount: batch.totalRowCount },  // page total across all batches
+        rows,
+        highlightPage: overflow ? page : null,
+        nodeQuery: {
+          page, overflow, nextAfter: batch.nextAfter,
+          batchQueryId: summary.queryId, batchLoaded: rows?.rows.length ?? 0,
+        },
+      });
+      void get().refreshHistory();
+    } catch (e) {
+      if (isAbort(e)) { set({ running: false }); return; }
+      set({ running: false, error: e instanceof Error ? e.message : "query failed" });
+    } finally {
+      runAbort = null;
+    }
   },
 
   async doExplain() {
