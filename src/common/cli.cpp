@@ -150,6 +150,8 @@ ParsedCli parseVisualizeServe(const std::vector<std::string>& args,
             target = &options.mapFile;
         } else if (flag.name == "--profile-file") {
             target = &options.profileFile;
+        } else if (flag.name == "--db-file") {
+            target = &options.dbFile;
         } else if (flag.name == "--port") {
             target = &value;
         } else {
@@ -204,7 +206,7 @@ std::string usageText() {
            "                          [--timing raw|relative] [--quiet]\n"
            "       sqlinsite map      --test-file <db> --out-file <json>\n"
            "       sqlinsite visualize serve --map-file <json> "
-           "[--profile-file <csv>] [--port <n>]\n"
+           "[--profile-file <csv>] [--db-file <db>] [--port <n>]\n"
            "       sqlinsite --help\n";
 }
 

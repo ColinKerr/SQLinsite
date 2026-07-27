@@ -2,9 +2,13 @@
 /build/
 /cmake-build-*/
 
+# Web (front-end) — node deps, Vite cache, and build output (never committed)
+/web/node_modules/
+/web/.vite/
+/web_build/
+
 # Editor / OS
 .DS_Store
-.vscode/
 .idea/
 
 # Test/run artifacts

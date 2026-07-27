@@ -25,24 +25,36 @@ struct DbHeader {
     std::int64_t sqliteVersionNumber = 0;
 };
 
-// Loads a SQLite database file's pages and header via the sqlite_dbpage vtab.
+struct sqlite3;
+struct sqlite3_stmt;
+
+// Streams a SQLite database file's pages on demand via the sqlite_dbpage vtab.
+// Rather than loading the whole file into memory up front (an 8 GB db needs 8 GB
+// of RSS and thrashes on smaller machines), it keeps the source connection open
+// and fetches one page at a time — SQLite's page cache plus the OS file cache hold
+// what's hot, keeping the builder's own footprint tiny.
 class DbFile {
 public:
     // Throws std::runtime_error if the file cannot be opened or is not a
     // SQLite database.
     static DbFile open(const std::string& path);
 
+    ~DbFile();
+    DbFile(DbFile&& other) noexcept;
+    DbFile& operator=(DbFile&& other) noexcept;
+    DbFile(const DbFile&) = delete;
+    DbFile& operator=(const DbFile&) = delete;
+
     const DbHeader& header() const { return header_; }
     int pageSize() const { return header_.pageSize; }
     int usableSize() const {
         return header_.pageSize - header_.reservedBytesPerPage;
     }
-    std::int64_t pageCount() const {
-        return static_cast<std::int64_t>(pages_.size());
-    }
+    std::int64_t pageCount() const { return pageCount_; }
 
-    // 1-based page access; throws std::out_of_range for invalid numbers.
-    const std::vector<sqlfmt::Byte>& page(std::int64_t pageNumber) const;
+    // 1-based page access (a fresh copy of the page's bytes); throws for invalid
+    // numbers or a read error.
+    std::vector<sqlfmt::Byte> page(std::int64_t pageNumber) const;
 
     bool autoVacuum() const { return header_.largestRootBtreePage != 0; }
     bool incrementalVacuum() const {
@@ -50,6 +62,10 @@ public:
     }
 
 private:
+    DbFile() = default;
+
     DbHeader header_;
-    std::vector<std::vector<sqlfmt::Byte>> pages_;  // index 0 == page 1
+    std::int64_t pageCount_ = 0;
+    ::sqlite3* db_ = nullptr;
+    ::sqlite3_stmt* pageStmt_ = nullptr;  // "SELECT data FROM sqlite_dbpage WHERE pgno=?"
 };

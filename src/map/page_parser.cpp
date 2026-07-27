@@ -1,7 +1,5 @@
 #include "map/page_parser.hpp"
 
-#include <algorithm>
-
 #include "map/sqlite_format.hpp"
 
 namespace page_parser {
@@ -37,20 +35,6 @@ std::int64_t computeFreeBytes(const std::vector<Byte>& page,
         addr = static_cast<int>(sqlfmt::readBE16(page.data() + addr));
     }
     return gap + freeblocks + bh.fragmentedFreeBytes;
-}
-
-// Decodes an index key record from the local payload bytes.
-std::vector<sqlfmt::CellValue> decodeKey(const Byte* payload,
-                                         std::size_t localLen) {
-    std::vector<sqlfmt::CellValue> key;
-    const sqlfmt::RecordHeader rh = sqlfmt::parseRecordHeader(payload, localLen);
-    std::size_t pos = rh.headerSize;
-    for (const std::uint64_t serial : rh.serialTypes) {
-        const std::size_t avail = pos < localLen ? localLen - pos : 0;
-        key.push_back(sqlfmt::decodeValue(serial, payload + pos, avail));
-        pos += sqlfmt::serialTypeSize(serial);
-    }
-    return key;
 }
 
 }  // namespace
@@ -106,9 +90,11 @@ PageInfo parseBtree(const DbFile& db, std::int64_t pageNumber) {
         std::size_t remaining = static_cast<std::size_t>(pageSize - cell);
 
         if (tableInterior) {
+            // Interior cells carry a 4-byte left-child pointer and an integer
+            // divider key. That key is a b-tree boundary (it can even be stale
+            // after deletions), NOT a real row's rowid — rowid is a table-leaf-only
+            // concept, so it is deliberately left unset here.
             c.leftChild = sqlfmt::readBE32(p);
-            const sqlfmt::Varint rowid = sqlfmt::readVarint(p + 4, remaining - 4);
-            c.rowid = static_cast<std::int64_t>(rowid.value);
             info.pointers.push_back({*c.leftChild, "child"});
         } else if (tableLeaf) {
             const sqlfmt::Varint payload = sqlfmt::readVarint(p, remaining);
@@ -141,11 +127,13 @@ PageInfo parseBtree(const DbFile& db, std::int64_t pageNumber) {
             const sqlfmt::PayloadSplit split =
                 sqlfmt::localPayload(payload.value, usable, false);
             c.localBytes = static_cast<std::int64_t>(split.localBytes);
+            // Index key fields are NOT decoded/stored in the map: the map records
+            // only the cell's structure (payload/local bytes, overflow). The Page
+            // Detail view decodes keys on demand from the source db (see
+            // page_content.cpp / the /content endpoint), so persisting them here
+            // would be dead weight — index keyJson was the bulk of map size + build
+            // time. See PAGES_AND_TABLES_VIEWS / map perf notes.
             const int payloadStart = keyStart + payload.length;
-            const std::size_t localAvail = std::min<std::size_t>(
-                split.localBytes,
-                payloadStart < pageSize ? pageSize - payloadStart : 0);
-            c.key = decodeKey(page.data() + payloadStart, localAvail);
             if (split.hasOverflow) {
                 const int ovOffset = payloadStart + static_cast<int>(split.localBytes);
                 if (ovOffset + 4 <= pageSize) {
@@ -156,10 +144,6 @@ PageInfo parseBtree(const DbFile& db, std::int64_t pageNumber) {
             (void)indexLeaf;
         }
 
-        if (c.rowid) {
-            info.rowidMin = info.rowidMin ? std::min(*info.rowidMin, *c.rowid) : *c.rowid;
-            info.rowidMax = info.rowidMax ? std::max(*info.rowidMax, *c.rowid) : *c.rowid;
-        }
         info.cells.push_back(std::move(c));
     }
 

@@ -24,3 +24,4 @@
 - Prefer the latest stable version of a dependency over an older version.
 - Check the return code of every SQLite C API call and fail loudly with the SQLite error message.
 - Keep the VFS shim layer free of profiling policy; it reads from the profiling context and delegates everything else to the underlying VFS.
+- Web build output should not be committed it should go into a `web_build` directory that is in the .gitignore.

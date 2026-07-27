@@ -15,40 +15,55 @@ page-number range so it never loads the whole map into memory. A database may
 have up to 4,294,967,294 pages, so the map is built and consumed **incrementally**
 — never as one in-memory blob or JSON document.
 
-> Change note: earlier versions emitted a single JSON document. That does not
-> scale (the browser had to parse the entire map), so the output is now a SQLite
-> file with indexes that support range queries. JSON output is removed.
-
 ## Approach
 
-- **Raw page bytes come from the `SQLITE_DBPAGE` virtual table.** We read each
-  page's exact bytes through SQLite:
-  `SELECT pgno, data FROM sqlite_dbpage('main') ORDER BY pgno`
-  ([docs](https://www3.sqlite.org/matrix/dbpage.html)). Requires the amalgamation
-  built with `SQLITE_ENABLE_DBPAGE_VTAB`.
-- **We decode the bytes ourselves** (full fidelity): header fields, cells,
-  rowids/keys, and overflow/child/freelist pointers — none exposed by `PRAGMA`s.
+- **Raw page bytes come from the `SQLITE_DBPAGE` virtual table, read on demand.**
+  We fetch one page at a time by number —
+  `SELECT data FROM sqlite_dbpage('main') WHERE pgno=?`
+  ([docs](https://www3.sqlite.org/matrix/dbpage.html)) — keeping the source
+  connection open rather than loading the whole file into memory. An 8 GB database
+  would otherwise need 8 GB of RSS and thrash on smaller machines; on-demand reads
+  keep the builder's own footprint to a few hundred MB while SQLite's page cache
+  and the OS file cache hold what's hot. Requires the amalgamation built with
+  `SQLITE_ENABLE_DBPAGE_VTAB`.
+- **We decode the page/cell *structure* ourselves**: header fields, cell offsets,
+  table rowids, payload/overflow split, and overflow/child/freelist pointers — none
+  exposed by `PRAGMA`s. **Index key *values* are not decoded or stored** by the map;
+  the visualizer decodes them on demand from the source db (the `/content` endpoint)
+  — persisting them was the bulk of map size and build time on index-heavy files.
 - **Schema names come from SQLite.**
   `SELECT type, name, tbl_name, rootpage, sql FROM sqlite_schema` gives the
   authoritative `rootpage → object` mapping.
-- **Object assignment is by b-tree walk** from each `rootpage`, descending
-  interior children and following overflow chains.
-- **Remaining pages are classified structurally** (freelist from the header,
-  pointer-map pages at computed intervals under auto-vacuum, the lock-byte page,
-  else `unallocated`).
-- **Streaming write.** The builder writes rows to the output database inside one
-  transaction as it parses, rather than materializing every page in memory. The
-  only per-page state retained is a compact `owner` array (object id per page)
-  used to coalesce runs; truly pathological sizes are out of scope, but the
-  *visualizer* scales regardless because it queries ranges.
+- **Object assignment uses the `DBSTAT` virtual table.** `SELECT pageno, name,
+  pagetype FROM dbstat` walks every b-tree in C and names the object that owns each
+  page (including overflow pages) — far cheaper than a C++ tree traversal that
+  parsed every page just to follow pointers. The interior/leaf and table/index
+  distinction comes from each page's own header byte (authoritative even for
+  `WITHOUT ROWID` tables, whose rows live in index b-trees). Requires
+  `SQLITE_ENABLE_DBSTAT_VTAB`.
+- **Non-b-tree pages are classified structurally** — `DBSTAT` omits them — from the
+  header (freelist trunk/leaf), computed intervals (pointer-map under auto-vacuum),
+  the lock-byte page, else `unallocated`.
+- **One streaming parse pass, then C++ roll-ups.** The builder reads each page once,
+  writing `pages`/`cells`/`pointers`/`ptrmap`/`runs` as it goes, and while parsing
+  it collects the compact edges it needs (leaf rowid runs, interior children, and
+  the child/overflow/freelist-leaf adjacency). After the pass, the two derived
+  tables are computed **in C++** from that state, not via whole-file recursive CTEs
+  (which materialize huge temp b-trees and dominated build time on large files):
+  `page_row_runs` by rolling leaf runs up the tree, and `subtreePageCount` by an
+  iterative bottom-up sum. Per-page state is a few hundred MB even for a 2 M-page
+  db; the *visualizer* scales regardless because it queries ranges.
 
-### Full file-format fidelity
+### Fidelity
 
-Everything in the file-format spec is decoded: the 100-byte database header; all
-b-tree page types (table/index, leaf/interior); record varints, headers, serial
-types and values (rowids, index keys, payload sizes); overflow chains; freelist
-trunk/leaf pages; pointer-map pages (auto/incremental vacuum); and the lock-byte
-page.
+The map records the full page/cell **structure** of the file-format spec: the
+100-byte database header; all b-tree page types (table/index, leaf/interior);
+record varints/headers/serial types, table rowids and payload/overflow sizes;
+overflow chains; freelist trunk/leaf pages; pointer-map pages (auto/incremental
+vacuum); and the lock-byte page. Index key **values** and full per-cell payload
+decoding are done on demand at visualize time from the source db, not persisted in
+the map — so the source db must be supplied (`--db-file`) for the deepest per-page
+inspection, while the Pages/Tables/Query/Tree views run from the map alone.
 
 ## Page numbering
 
@@ -81,23 +96,34 @@ CREATE TABLE pages (             -- one row per page; pageNumber is the rowid
   pageNumber INTEGER PRIMARY KEY,
   pageType TEXT, objectId INTEGER,
   freeBytes INTEGER, cellCount INTEGER,
-  rowidMin INTEGER, rowidMax INTEGER,
   firstFreeblock INTEGER, cellContentStart INTEGER,
   fragmentedFreeBytes INTEGER, rightmostPointer INTEGER,
-  parseError TEXT);
+  parseError TEXT,
+  subtreePageCount INTEGER);      -- pages in this page's subtree (self + child/overflow/freelist-leaf descendants)
 CREATE INDEX pages_object ON pages(objectId);
 
-CREATE TABLE cells (             -- full per-cell detail
+CREATE TABLE cells (             -- ONLY table-interior cells (leftChild pointers)
   pageNumber INTEGER, cellIndex INTEGER,
-  rowid INTEGER, leftChild INTEGER,
+  rowid INTEGER,                 -- always NULL now (kept for column compatibility)
+  leftChild INTEGER,             -- the cell's left-child page
   payloadBytes INTEGER, localBytes INTEGER,
-  overflowPage INTEGER, keyJson TEXT,   -- decoded index key values, JSON array
-  PRIMARY KEY (pageNumber, cellIndex)) WITHOUT ROWID;
+  overflowPage INTEGER,          -- table-leaf rows live in page_row_runs; index cells
+  PRIMARY KEY (pageNumber, cellIndex)) WITHOUT ROWID;  -- + keys decoded on demand (/content)
+CREATE INDEX cells_leftChild ON cells(leftChild);
 
 CREATE TABLE pointers (
   fromPage INTEGER, toPage INTEGER, kind TEXT);  -- child|overflow|freelist-*|ptrmap-parent
 CREATE INDEX pointers_from ON pointers(fromPage);
 CREATE INDEX pointers_to   ON pointers(toPage);
+
+CREATE TABLE page_row_runs (    -- contiguous rowid runs of each table page's subtree
+  parentPageNumber INTEGER,     -- a table-interior OR table-leaf page
+  startRowId INTEGER, endRowId INTEGER,
+  rowCount INTEGER,             -- endRowId - startRowId + 1
+  objectId INTEGER, isLeaf INTEGER);  -- drive the rowid → leaf-page lookup
+CREATE INDEX page_row_runs_parent ON page_row_runs(parentPageNumber);
+CREATE INDEX page_row_runs_leaf ON page_row_runs(objectId, startRowId) WHERE isLeaf=1;
+                                -- rowid → table-leaf page (replaces cells_rowid)
 
 CREATE TABLE ptrmap (            -- pointer-map entries (auto_vacuum)
   pageNumber INTEGER, targetPage INTEGER,
@@ -117,6 +143,8 @@ CREATE TABLE type_counts (       -- pages per type, precomputed for the legend
 type) are precomputed during the single pass so the visualizer's legend can show
 counts without scanning the `pages` table.
 
+The current map format version is **4** (`MapWriter::kFormatVersion`, written into `meta.formatVersion`). Bump it whenever the schema or semantics change incompatibly. (v3 dropped stored index keys; v4 stores only table-interior cells and moved rowid→leaf into `page_row_runs`.) `/api/meta` reports both the map's `meta.formatVersion` and the build's `expectedFormatVersion`; when loading the map the visualizer compares them and, if they differ (the map is **older or newer** than this build understands), shows an error message and asks the user to regenerate the map with `sqlinsite map` instead of rendering it.
+
 ### Why `runs`
 
 A *run* is a maximal range `[startPage, endPage]` of consecutive pages with the
@@ -126,14 +154,37 @@ zoomed out (one run can represent millions of pages). They are computed in the
 single sequential pass and indexed by `startPage`; an overlap query is
 `WHERE startPage <= :to AND endPage >= :from`.
 
+### Why `page_row_runs`
+
+Distinct from `runs` (page-number spans): `page_row_runs` stores, for **every**
+table b-tree page — interior *and* leaf — the maximal contiguous **rowid** runs of
+that page's subtree (a leaf is its own subtree; rowids aren't contiguous —
+deletions leave gaps). It is computed **in C++ during the single parse pass**: each
+table-leaf page's rowids are collapsed into runs as it is read, then interior pages'
+runs are merged up the tree from their children (an earlier version used a
+whole-file recursive CTE, which materialized a huge temp b-tree and dominated build
+time on large databases). The visualizer can then answer "what rows does this page
+cover" without descending the b-tree at request time. Because leaf pages are
+included too, the Table Interior Cell control resolves every direct child with the
+**same** `page_row_runs` lookup — the "last interior page before the leaves" works
+exactly like any higher interior page, no leaf special-case. The `objectId`/`isLeaf`
+columns (with the partial `page_row_runs_leaf` index) also make "which table-leaf
+page holds rowid R" an O(log n) point lookup, replacing the dropped `cells(rowid)`
+index. `subtreePageCount` is computed the same way — an iterative bottom-up sum over
+the child/overflow/freelist-leaf edges collected during the pass, not a recursive
+CTE.
+
 ### Indexing rationale
 
 - `pages.pageNumber` is the rowid → O(log n) range scans for a viewport.
-- `cells` and `ptrmap` are keyed by page → fetched only when one page is
-  inspected (zoomed-in popup).
+- `cells` (table-interior only) and `ptrmap` are keyed by page → fetched only when
+  one page is inspected (interior rowid ranges).
 - `pointers(fromPage)` for a page's outgoing links; `pointers(toPage)` for
   "what points here" (used by clickable links / back-navigation).
 - `runs(startPage)` for zoomed-out level-of-detail queries.
+- `page_row_runs(parentPageNumber)` to fetch one page's rowid runs; the partial
+  `page_row_runs(objectId, startRowId) WHERE isLeaf=1` maps a result rowid straight
+  to its table-leaf page for Query-view cell coloring (replaces `cells(rowid)`).
 
 ## Edge cases
 
@@ -149,8 +200,11 @@ single sequential pass and indexed by `startPage`; an overlap query is
   auto-vacuum DB with pointer-map pages, a post-delete DB with freelist pages),
   run `map`, then open the output with SQLite and assert:
   - `meta`/`objects` rows; `pages` count == `meta.pageCount`; page types.
-  - object→page assignment via `pages.objectId`; rowid ranges.
+  - object→page assignment via `pages.objectId`.
   - every `pointers.toPage` is a valid page number.
   - `runs` cover all pages with no gaps or overlaps and respect object/type
     boundaries.
-  - `cells` rows exist for a known table/index page with expected rowids/keys.
+  - `cells` holds only table-interior cells (their `leftChild`); table-leaf rows are
+    recorded in `page_row_runs` (`isLeaf=1`) and rowid→leaf resolves through it.
+  - `subtreePageCount` is non-null for every page and satisfies `parent = 1 + Σ
+    children` over the child/overflow/freelist-leaf edges.

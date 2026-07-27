@@ -1,0 +1,180 @@
+{
+    "version": "0.2.0",
+    // These debug the C++ test binary. They build (and, if needed, configure) a
+    // Debug build in cmake-build-debug/ first (preLaunchTask), so breakpoints bind
+    // and stepping is clean — the default build/ is Release (-O2, no -g).
+    //
+    // On Apple Silicon the RECOMMENDED debugger is CodeLLDB (extension id
+    // vadimcn.vscode-lldb) — the Microsoft cppdbg path uses lldb-mi, which is flaky
+    // on arm64 (breakpoints may not bind). Install CodeLLDB for the "(CodeLLDB)"
+    // configs; the "(cppdbg)" config is a fallback using your installed C/C++ ext.
+    "configurations": [
+        {
+            "name": "C++ tests: all (CodeLLDB)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/cmake-build-debug/tests/sqlinsite_tests",
+            "args": [],
+            "cwd": "${workspaceFolder}/cmake-build-debug/tests",
+            "preLaunchTask": "cmake: build tests (debug)",
+            // Break on every C++ throw (in addition to your source breakpoints).
+            // Delete this line to instead use the BREAKPOINTS panel's "C++: on
+            // throw" filter, or when the whole suite's expected throws get noisy.
+            "preRunCommands": [ "breakpoint set -E c++" ]
+        },
+        {
+            "name": "C++ tests: by name (CodeLLDB)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/cmake-build-debug/tests/sqlinsite_tests",
+            // Prompts for a doctest filter, e.g. *interior* — run only that case so
+            // break-on-exception isn't tripped by every other test's expected throws.
+            "args": [ "--test-case=${input:testCase}" ],
+            "cwd": "${workspaceFolder}/cmake-build-debug/tests",
+            "preLaunchTask": "cmake: build tests (debug)",
+            "preRunCommands": [ "breakpoint set -E c++" ]
+        },
+        {
+            "name": "C++ tests: all (cppdbg fallback)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/cmake-build-debug/tests/sqlinsite_tests",
+            "args": [],
+            "cwd": "${workspaceFolder}/cmake-build-debug/tests",
+            "MIMode": "lldb",
+            "stopAtEntry": false,
+            "externalConsole": false,
+            "preLaunchTask": "cmake: build tests (debug)",
+            "setupCommands": [
+                {
+                    "description": "Break on all C++ exceptions",
+                    "text": "-interpreter-exec console \"break set -E c++\"",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+
+        {
+            // Starts the app (`visualize serve`) under the debugger and debugs the
+            // C++ server process from launch — set breakpoints in any request
+            // handler and they bind immediately. Output (including the URL to open)
+            // shows in the integrated terminal; stop with the debug toolbar or ^C.
+            // Prompts for the map file (and port). Needs CodeLLDB (vadimcn.vscode-lldb).
+            "name": "visualize serve (CodeLLDB)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/cmake-build-debug/sqlinsite",
+            "args": [
+                "visualize", "serve",
+                "--map-file", "${input:mapFile}",
+                "--port", "${input:port}"
+            ],
+            "cwd": "${workspaceFolder}",
+            "terminal": "integrated",
+            "preLaunchTask": "cmake: build sqlinsite (debug)"
+        },
+        {
+            // Same, but also passes --db-file so the live Query view is enabled.
+            "name": "visualize serve --db-file (CodeLLDB)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/cmake-build-debug/sqlinsite",
+            "args": [
+                "visualize", "serve",
+                "--map-file", "${input:mapFile}",
+                "--db-file", "${input:dbFile}",
+                "--port", "${input:port}"
+            ],
+            "cwd": "${workspaceFolder}",
+            "terminal": "integrated",
+            "preLaunchTask": "cmake: build sqlinsite (debug)"
+        },
+        {
+            // Attach to an already-running sqlinsite process (e.g. one you started
+            // yourself in a terminal). For usable symbols/stepping, run the Debug
+            // binary at cmake-build-debug/sqlinsite; attaching to the Release
+            // build/sqlinsite works but is optimized (-O2). Pick the process when
+            // prompted. Needs CodeLLDB.
+            "name": "Attach to sqlinsite (CodeLLDB)",
+            "type": "lldb",
+            "request": "attach",
+            "program": "${workspaceFolder}/cmake-build-debug/sqlinsite",
+            "pid": "${command:pickMyProcess}"
+        },
+        {
+            // Debug the FRONT-END in Chrome with source maps and breakpoints in the
+            // TS/TSX source. Its preLaunchTask starts the Vite dev server (HMR); the
+            // app's /api calls proxy to a C++ backend on :8080, so start one first —
+            // either run "visualize serve --db-file (CodeLLDB)" separately, or use
+            // the "Full stack" compound below to launch both together. Uses VS Code's
+            // built-in JavaScript debugger (no extension needed).
+            "name": "Frontend (Chrome + Vite dev)",
+            "type": "chrome",
+            "request": "launch",
+            "url": "http://localhost:5173/",
+            "webRoot": "${workspaceFolder}/web",
+            "sourceMaps": true,
+            "preLaunchTask": "vite: dev server"
+        },
+        {
+            // Fallback for users without CodeLLDB: launch `visualize serve` under the
+            // Microsoft C/C++ extension's lldb backend (flaky on arm64 — prefer the
+            // CodeLLDB config above).
+            "name": "visualize serve (cppdbg fallback)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/cmake-build-debug/sqlinsite",
+            "args": [
+                "visualize", "serve",
+                "--map-file", "${input:mapFile}",
+                "--port", "${input:port}"
+            ],
+            "cwd": "${workspaceFolder}",
+            "MIMode": "lldb",
+            "stopAtEntry": false,
+            "externalConsole": false,
+            "preLaunchTask": "cmake: build sqlinsite (debug)"
+        }
+    ],
+    "compounds": [
+        {
+            // Full stack: launch the C++ server under the debugger (prompts for the
+            // map + db files, serves on :8080) AND the Chrome front-end against the
+            // Vite dev server (which proxies /api to that backend). Breakpoints bind
+            // in both C++ request handlers and the TS/TSX source. Stopping one stops
+            // both. Keep the backend port at 8080 to match the dev-server proxy.
+            "name": "Full stack: backend + frontend",
+            "configurations": [
+                "visualize serve --db-file (CodeLLDB)",
+                "Frontend (Chrome + Vite dev)"
+            ],
+            "stopAll": true
+        }
+    ],
+    "inputs": [
+        {
+            "id": "testCase",
+            "type": "promptString",
+            "description": "doctest --test-case filter (wildcards ok, e.g. *interior*)",
+            "default": "*"
+        },
+        {
+            "id": "mapFile",
+            "type": "promptString",
+            "description": "Path to the map file (sqlinsite map output)",
+            "default": "${workspaceFolder}/map.sqlite"
+        },
+        {
+            "id": "dbFile",
+            "type": "promptString",
+            "description": "Path to the source SQLite db (enables the live Query view)",
+            "default": "${workspaceFolder}/source.db"
+        },
+        {
+            "id": "port",
+            "type": "promptString",
+            "description": "Port for the local server (0 = pick a free port)",
+            "default": "8080"
+        }
+    ]
+}

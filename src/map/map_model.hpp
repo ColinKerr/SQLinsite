@@ -34,7 +34,6 @@ struct CellInfo {
     std::int64_t payloadBytes = 0;           // declared total payload (leaf/index)
     std::int64_t localBytes = 0;
     std::optional<std::int64_t> overflowPage;
-    std::vector<sqlfmt::CellValue> key;      // index cells (decoded key fields)
 };
 
 struct PtrmapEntry {
@@ -62,8 +61,6 @@ struct PageInfo {
     PageHeaderInfo header;
     std::int64_t freeBytes = 0;
     std::vector<CellInfo> cells;
-    std::optional<std::int64_t> rowidMin;
-    std::optional<std::int64_t> rowidMax;
     std::vector<Pointer> pointers;
     std::vector<PtrmapEntry> ptrmapEntries;
     std::optional<std::string> parseError;

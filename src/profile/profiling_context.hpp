@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <string>
 
-class CsvWriter;
+class AccessSink;
 
 // Bridges the VFS layer (which knows nothing about statements) to the profile
 // loop. The profile command updates the fields before executing each statement;
@@ -13,7 +13,7 @@ struct ProfilingContext {
     std::string sessionName;
     int statementIndex = 0;  // 0-based index within the session
     int pageSize = 0;        // discovered from the DB header before measuring
-    CsvWriter* out = nullptr;
+    AccessSink* out = nullptr;
 
     // When true, logged timestamps are rebased to `timeBaseline` so they start
     // near zero (see --timing relative).

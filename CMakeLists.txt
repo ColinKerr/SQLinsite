@@ -12,7 +12,6 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(FetchContent)
-include(embed_assets)
 
 FetchContent_Declare(
   nlohmann_json
@@ -32,12 +31,41 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(httplib)
 
-# Embed the visualize front-end assets into the binary (plain canvas JS, no D3).
-sqlinsite_embed_assets(SQLINSITE_EMBEDDED_ASSETS
-  "${CMAKE_CURRENT_SOURCE_DIR}/assets/index.html"
-  "${CMAKE_CURRENT_SOURCE_DIR}/assets/app.js"
-  "${CMAKE_CURRENT_SOURCE_DIR}/assets/style.css"
-)
+# --- Front-end (React + TS + Vite) -----------------------------------------
+# The front-end is built as part of the normal build (never committed): the
+# `frontend` target runs the Vite build into web_build/ (gitignored), then a
+# build-time step embeds that directory into a C++ byte-array source. Requires
+# Node/npm. Build just the front-end with `cmake --build build --target frontend`.
+find_program(NPM_EXECUTABLE npm REQUIRED)
+
+set(WEB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/web")
+set(WEB_BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/web_build")
+set(FRONTEND_STAMP "${CMAKE_CURRENT_BINARY_DIR}/frontend.stamp")
+file(GLOB_RECURSE WEB_SOURCES CONFIGURE_DEPENDS "${WEB_DIR}/src/*")
+
+add_custom_command(
+  OUTPUT "${FRONTEND_STAMP}"
+  COMMAND ${NPM_EXECUTABLE} install --no-audit --no-fund
+  COMMAND ${NPM_EXECUTABLE} run build
+  COMMAND ${CMAKE_COMMAND} -E touch "${FRONTEND_STAMP}"
+  WORKING_DIRECTORY "${WEB_DIR}"
+  DEPENDS ${WEB_SOURCES}
+          "${WEB_DIR}/package.json" "${WEB_DIR}/vite.config.ts"
+          "${WEB_DIR}/tsconfig.json" "${WEB_DIR}/index.html"
+  COMMENT "Building front-end (web/ -> web_build/)"
+  USES_TERMINAL
+  VERBATIM)
+add_custom_target(frontend DEPENDS "${FRONTEND_STAMP}")
+
+# Embed web_build/ into a generated C++ source (served by filename from /static/).
+set(SQLINSITE_EMBEDDED_ASSETS "${CMAKE_CURRENT_BINARY_DIR}/embedded_assets_generated.cpp")
+add_custom_command(
+  OUTPUT "${SQLINSITE_EMBEDDED_ASSETS}"
+  COMMAND ${CMAKE_COMMAND} -DIN_DIR=${WEB_BUILD_DIR} -DOUT=${SQLINSITE_EMBEDDED_ASSETS}
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate_embedded_assets.cmake"
+  DEPENDS "${FRONTEND_STAMP}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate_embedded_assets.cmake"
+  COMMENT "Embedding front-end assets (web_build/ -> binary)"
+  VERBATIM)
 
 # --- Vendored SQLite (see third_party/sqlite/README.md, version 3.53.3) ---
 add_library(sqlite3 STATIC third_party/sqlite/sqlite3.c)
@@ -46,6 +74,7 @@ target_compile_definitions(sqlite3 PRIVATE
   SQLITE_ENABLE_COLUMN_METADATA
   SQLITE_THREADSAFE=1
   SQLITE_ENABLE_DBPAGE_VTAB
+  SQLITE_ENABLE_DBSTAT_VTAB   # map builder classifies btree pages via dbstat
 )
 if(NOT MSVC)
   target_compile_options(sqlite3 PRIVATE -w)
@@ -67,6 +96,10 @@ add_library(sqlinsite_core STATIC
   src/visualize/profile_reader.cpp
   src/visualize/run_coalesce.cpp
   src/visualize/map_db.cpp
+  src/visualize/query_augment.cpp
+  src/visualize/cell_page_map.cpp
+  src/visualize/page_content.cpp
+  src/visualize/query_engine.cpp
   src/visualize/visualize_command.cpp
   ${SQLINSITE_EMBEDDED_ASSETS}
 )
@@ -77,6 +110,10 @@ target_link_libraries(sqlinsite_core PUBLIC
 # --- CLI binary ---
 add_executable(sqlinsite src/main.cpp)
 target_link_libraries(sqlinsite PRIVATE sqlinsite_core)
+
+# Build just the native backend (pulls the front-end only if it is out of date):
+#   cmake --build build --target backend
+add_custom_target(backend DEPENDS sqlinsite)
 
 # --- Overhead benchmark (dev tool; not part of ctest) ---
 add_executable(sqlinsite_bench bench/overhead.cpp)

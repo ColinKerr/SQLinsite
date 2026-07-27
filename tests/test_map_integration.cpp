@@ -82,10 +82,19 @@ TEST_CASE("maps a table, index, and overflow row to SQLite") {
                    "SELECT COUNT(*) FROM pages p JOIN objects o ON o.id=p.objectId "
                    "WHERE o.name='Fruit' AND p.pageType='overflow'") == 1);
 
-    // Index page has decoded keys persisted as JSON.
+    // The cells table holds ONLY table-interior cells (their leftChild → interior
+    // rowid ranges). Table-leaf rows are represented by page_row_runs; index cells
+    // and decoded keys are not persisted (keys decoded on demand from the source).
+    CHECK(queryInt(map,
+                   "SELECT COUNT(*) FROM pragma_table_info('cells') WHERE name='keyJson'") == 0);
     CHECK(queryInt(map,
                    "SELECT COUNT(*) FROM cells c JOIN pages p ON p.pageNumber=c.pageNumber "
-                   "WHERE p.pageType='index-leaf' AND c.keyJson IS NOT NULL") >= 1);
+                   "WHERE p.pageType<>'table-interior'") == 0);
+    // Table-leaf rows are recorded as page_row_runs (isLeaf=1) instead of cells.
+    CHECK(queryInt(map,
+                   "SELECT COUNT(*) FROM page_row_runs prr JOIN pages p "
+                   "ON p.pageNumber=prr.parentPageNumber "
+                   "WHERE prr.isLeaf=1 AND p.pageType='table-leaf'") >= 1);
 
     // Every pointer references a valid page.
     CHECK(queryInt(map,
@@ -136,6 +145,44 @@ TEST_CASE("maps freelist pages after deletes") {
     CHECK(queryInt(map,
                    "SELECT COUNT(*) FROM pages WHERE pageType IN "
                    "('freelist-trunk','freelist-leaf')") > 0);
+}
+
+TEST_CASE("subtreePageCount covers each page's subtree") {
+    const std::string path = tmpPath("map_subtree.db");
+    std::string sql =
+        "CREATE TABLE T(id INTEGER PRIMARY KEY, s TEXT);"
+        "CREATE INDEX T_s ON T(s); BEGIN;";
+    // Enough rows (with padding) to force a multi-level b-tree (interior pages).
+    for (int i = 1; i <= 2000; ++i)
+        sql += "INSERT INTO T VALUES(" + std::to_string(i) + ",'" +
+               std::string(60, 'x') + "');";
+    sql += "COMMIT;";
+    buildDb(path, sql.c_str());
+    const std::string map = mapOf(path, "map_subtree.sqlite");
+
+    // Every page is counted (>=1, never NULL) — including a multi-level table.
+    CHECK(queryInt(map, "SELECT pageType FROM pages WHERE pageType='table-interior' LIMIT 1") >= 0);
+    CHECK(queryInt(map, "SELECT COUNT(*) FROM pages WHERE subtreePageCount IS NULL") == 0);
+    CHECK(queryInt(map, "SELECT MIN(subtreePageCount) FROM pages") >= 1);
+
+    // A b-tree root's subtree count equals the object's page count.
+    CHECK(queryInt(map,
+                   "SELECT COUNT(*) FROM objects o JOIN pages p ON p.pageNumber=o.rootPage "
+                   "WHERE p.subtreePageCount <> o.pageCount") == 0);
+
+    // A page with no tree out-edges (a leaf) counts only itself.
+    CHECK(queryInt(map,
+                   "SELECT COUNT(*) FROM pages p WHERE p.subtreePageCount <> 1 "
+                   "AND NOT EXISTS(SELECT 1 FROM pointers WHERE fromPage=p.pageNumber "
+                   "AND kind IN ('child','overflow','freelist-leaf'))") == 0);
+
+    // A parent's subtree = 1 + the sum of its children's subtrees (disjoint tree).
+    CHECK(queryInt(map,
+                   "SELECT COUNT(*) FROM pages p WHERE p.subtreePageCount <> 1 + "
+                   "COALESCE((SELECT SUM(c.subtreePageCount) FROM pointers ptr "
+                   "JOIN pages c ON c.pageNumber=ptr.toPage "
+                   "WHERE ptr.fromPage=p.pageNumber AND "
+                   "ptr.kind IN ('child','overflow','freelist-leaf')),0)") == 0);
 }
 
 TEST_CASE("map rejects a non-database file") {
