@@ -36,7 +36,7 @@ function ControlBar() {
             {history.map((h) => (
               <div className="hist-item" key={h.id} onClick={() => { setHistOpen(false); void loadHistory(h.id); }}>
                 <span className="hist-sql">{h.sql}</span>
-                <span className="count">{h.pageCount.toLocaleString()}p</span>
+                <span className="muted">{h.pageCount.toLocaleString()}p</span>
               </div>
             ))}
           </div>

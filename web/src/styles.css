@@ -83,7 +83,7 @@ header button.split-main:disabled, header button.split-caret:disabled {
 .dropdown { position: relative; }
 .dropdown-btn[aria-expanded="true"] { border-color: var(--accent); }
 .dropdown-panel {
-  position: absolute; right: 0; top: calc(100% + 6px);
+  position: absolute; left: 0; top: calc(100% + 6px);
   min-width: 220px; max-height: 70vh; overflow: auto;
   background: var(--panel); border: 1px solid #3a3f4a; border-radius: 7px;
   padding: 8px 10px; z-index: 30;
