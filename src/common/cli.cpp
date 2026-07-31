@@ -201,11 +201,11 @@ ParsedCli parseVisualize(const std::vector<std::string>& args,
 }  // namespace
 
 std::string usageText() {
-    return "Usage: sqlinsite profile  --test-file <db> --statements <json> "
+    return "Usage: sqlinsite profile  --test-file <db> --statements <db> "
            "--out-file <csv>\n"
            "                          [--timing raw|relative] [--quiet]\n"
-           "       sqlinsite map      --test-file <db> --out-file <json>\n"
-           "       sqlinsite visualize serve --map-file <json> "
+           "       sqlinsite map      --test-file <db> --out-file <db>\n"
+           "       sqlinsite visualize serve --map-file <db> "
            "[--profile-file <csv>] [--db-file <db>] [--port <n>]\n"
            "       sqlinsite --help\n";
 }
