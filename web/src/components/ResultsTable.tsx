@@ -6,6 +6,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useQuery } from "../state/queryStore.ts";
 import { colorForPageNumber } from "../core/palette.ts";
 import { fitColumnWidths, formatCellText } from "../core/columnFit.ts";
+import { formatCount } from "../core/format.ts";
 
 const ROW_H = 24;
 const HEADER_H = 26;
@@ -172,8 +173,8 @@ export function ResultsTable() {
       </div>
       {hover && <HoverTip hover={hover} column={queryCols[hover.c]} />}
       <div className="rt-foot muted">
-        showing {dataRows.length.toLocaleString()} of {run.rowCount.toLocaleString()} rows
-        {run.truncated ? " (truncated)" : ""} · {run.pageCount.toLocaleString()} pages · {run.accesses.toLocaleString()} accesses
+        showing {formatCount(dataRows.length)} of {formatCount(run.rowCount)} rows
+        {run.truncated ? " (truncated)" : ""} · {formatCount(run.pageCount)} pages · {formatCount(run.accesses)} accesses
       </div>
     </div>
   );

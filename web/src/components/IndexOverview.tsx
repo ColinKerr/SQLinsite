@@ -1,5 +1,6 @@
 import { useTree } from "../state/treeStore.ts";
 import { useViz } from "../state/store.ts";
+import { formatCount } from "../core/format.ts";
 import { IndexTable } from "./IndexTable.tsx";
 
 // Right-hand pane shown when a table's "Indexes" grouping node is selected: the
@@ -21,7 +22,7 @@ export function IndexOverview() {
           Indexes · <span className="muted">{name}</span>
         </div>
         <div className="pd-headerfields">
-          <span className="pd-field"><b>indexes</b> {indexes.length}</span>
+          <span className="pd-field"><b>indexes</b> {formatCount(indexes.length)}</span>
         </div>
       </div>
 

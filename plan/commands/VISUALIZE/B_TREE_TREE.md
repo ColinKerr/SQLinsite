@@ -59,10 +59,8 @@ All nodes, including grouping nodes, have an icon followed by the node name foll
 
 Page nodes are styled by page type with type included in the tree key.
 
-### Formatting for Sizes in bytes
-
-Size in bytes is formatted in kilobytes (KB), megabytes (MB) or gigabytes (GB) ensuring value is never more than 4 digits including decimal digits.
-
 ### Page Layout
 
 The tree key is fixed at the bottom and the tree itself fills the entire remaining vertical space above the key.
+
+See FORMATTING_RULES.md for rules on how to format types of values

@@ -1,7 +1,7 @@
 import { useTree } from "../state/treeStore.ts";
 import { useViz } from "../state/store.ts";
-import { formatBytes } from "../core/format.ts";
-import { PageCard } from "./PageDetail.tsx";
+import { formatBytes, formatCount } from "../core/format.ts";
+import { PageCard } from "./PageCard.tsx";
 import { IndexTable } from "./IndexTable.tsx";
 
 // Right-hand pane shown when a table grouping node is selected in the b-tree tree:
@@ -25,11 +25,11 @@ export function TableOverview() {
             <span className="pd-owner">root <PageCard page={rootPage} onClick={revealPage} /></span>}
         </div>
         <div className="pd-headerfields">
-          {rowCount != null && <span className="pd-field"><b>rows</b> {rowCount}</span>}
-          {pageCount != null && <span className="pd-field"><b>pages</b> {pageCount}</span>}
+          {rowCount != null && <span className="pd-field"><b>rows</b> {formatCount(rowCount)}</span>}
+          {pageCount != null && <span className="pd-field"><b>pages</b> {formatCount(pageCount)}</span>}
           {pageCount != null && pageSize > 0 &&
             <span className="pd-field"><b>size</b> {formatBytes(pageCount * pageSize)}</span>}
-          <span className="pd-field"><b>indexes</b> {indexes.length}</span>
+          <span className="pd-field"><b>indexes</b> {formatCount(indexes.length)}</span>
         </div>
       </div>
 

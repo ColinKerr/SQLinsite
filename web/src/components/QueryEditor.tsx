@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { formatSql } from "../core/formatSql.ts";
+import { formatCount } from "../core/format.ts";
 import { useQuery } from "../state/queryStore.ts";
 
 function ControlBar() {
@@ -36,7 +37,7 @@ function ControlBar() {
             {history.map((h) => (
               <div className="hist-item" key={h.id} onClick={() => { setHistOpen(false); void loadHistory(h.id); }}>
                 <span className="hist-sql">{h.sql}</span>
-                <span className="muted">{h.pageCount.toLocaleString()}p</span>
+                <span className="muted">{formatCount(h.pageCount)}p</span>
               </div>
             ))}
           </div>

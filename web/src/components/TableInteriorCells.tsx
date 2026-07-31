@@ -1,7 +1,8 @@
 import { useMemo, type RefObject } from "react";
 import { type ColumnDef, flexRender, getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import type { PageContent, RowRun } from "../core/types.ts";
-import { PageCard } from "./PageDetail.tsx";
+import { formatSectorBytes, formatCount } from "../core/format.ts";
+import { PageCard } from "./PageCard.tsx";
 
 // One control row: a divider cell, or the synthetic final "rightmost" pointer row.
 interface IntRow {
@@ -17,7 +18,7 @@ interface IntRow {
 // Per-column <td> class (the header/value markup itself comes from the column defs).
 const TD_CLASS: Record<string, string> = { cell: "muted", bytes: "muted", rowids: "int-rowids" };
 
-const bytes = (offset: number, len: number) => `${offset}–${offset + len} (${len}B)`;
+const bytes = (offset: number, len: number) => `${offset}–${offset + len} (${formatSectorBytes(len)})`;
 // Rowids aren't contiguous (deletions leave gaps): render the runs as a mix of
 // ranges "s–e" and single ids "s", e.g. "1–4, 6, 11–60".
 const rowRuns = (runs?: RowRun[]) =>
@@ -67,7 +68,7 @@ export function TableInteriorCells({ content, hover, setHover, rowRefs, onNav, p
 
   const columns = useMemo<ColumnDef<IntRow>[]>(() => [
     { id: "cell", header: "Cell (record)", cell: ({ row }) => row.original.label },
-    { id: "count", header: "Row Count", cell: ({ row }) => row.original.rowCount ?? "—" },
+    { id: "count", header: "Row Count", cell: ({ row }) => row.original.rowCount != null ? formatCount(row.original.rowCount) : "—" },
     { id: "bytes", header: "Bytes", cell: ({ row }) => row.original.bytesText },
     {
       id: "page", header: "Page",

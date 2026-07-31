@@ -1,6 +1,6 @@
 import type { TreeObjectIndex } from "../core/types.ts";
-import { formatBytes } from "../core/format.ts";
-import { PageCard } from "./PageDetail.tsx";
+import { formatBytes, formatCount } from "../core/format.ts";
+import { PageCard } from "./PageCard.tsx";
 
 // The indexes table shared by the Table Overview and Index Overview. Columns:
 // Name / Pages / Size / Root, plus a Statement column (the CREATE INDEX SQL) when
@@ -24,7 +24,7 @@ export function IndexTable({ indexes, pageSize, showStatement, onNav }: {
         {indexes.map((ix) => (
           <tr key={ix.name}>
             <td>{ix.name}</td>
-            <td className="muted">{ix.pageCount ?? "—"}</td>
+            <td className="muted">{ix.pageCount != null ? formatCount(ix.pageCount) : "—"}</td>
             <td className="muted">
               {ix.pageCount != null && pageSize > 0 ? formatBytes(ix.pageCount * pageSize) : "—"}
             </td>

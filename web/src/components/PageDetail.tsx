@@ -2,33 +2,16 @@ import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useTree } from "../state/treeStore.ts";
 import type { PageCell, PageColumn, PageSegment } from "../core/types.ts";
 import { regionColor, regionLabel, pageTypeDesc } from "../core/pageTypes.ts";
-import { colorForPage, colorForPageNumber, GLYPH } from "../core/palette.ts";
+import { colorForPageNumber } from "../core/palette.ts";
+import { formatSectorBytes, formatCount } from "../core/format.ts";
+import { PageCard } from "./PageCard.tsx";
 import { TableInteriorCells } from "./TableInteriorCells.tsx";
 
 function valueText(c: PageColumn): string {
   if (c.type === "null") return "NULL";
-  if (c.type === "blob") return `BLOB(${c.bytes ?? 0} bytes)`;
+  if (c.type === "blob") return `BLOB(${formatSectorBytes(c.bytes ?? 0)})`;
   if (c.type === "text") return `"${String(c.value ?? "")}"${c.truncated ? "…" : ""}`;
   return String(c.value);
-}
-
-// A small graphical page representation matching a b-tree tree node: type glyph +
-// color + page number. Clicking navigates to that page and expands+selects it in
-// the tree.
-export function PageCard({ page, pageType, label, colorByNumber, onClick }:
-                  { page: number; pageType?: string; label?: string; colorByNumber?: boolean;
-                    onClick: (p: number) => void }) {
-  // `colorByNumber` gives each page a distinct color (used for overflow value
-  // segments so the control matches its coloured slice of the value).
-  const glyphBg = colorByNumber ? colorForPageNumber(page) : colorForPage(null, pageType ?? "");
-  return (
-    <button className="pgcard" onClick={() => onClick(page)} title={pageType ? pageTypeDesc(pageType) : `page ${page}`}>
-      <span className="pgcard-glyph" style={{ background: glyphBg }}>
-        {pageType ? (GLYPH[pageType] ?? "·") : "·"}
-      </span>
-      <span className="pgcard-num">{label ?? `p${page}`}</span>
-    </button>
-  );
 }
 
 // Right-hand pane: a fixed header/schematic section over a scrolling "Full Page
@@ -79,7 +62,7 @@ export function PageDetail() {
         {/* Row count of this page's subtree (table-interior / table-leaf pages). */}
         {content.rowCount != null && (
           <div className="pd-head pd-rowcount">
-            <b>Row Count: </b> {content.rowCount.toLocaleString()}
+            <b>Row Count: </b> {formatCount(content.rowCount)}
           </div>
         )}
 
@@ -101,7 +84,7 @@ export function PageDetail() {
                  style={{ width: `${(r.length / total) * 100}%`, background: regionColor(r.kind) }}
                  onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}
                  onClick={() => { scrollToRegion(i); }}
-                 title={`${regionLabel(r.kind)} — ${r.length} bytes @ ${r.offset}`} />
+                 title={`${regionLabel(r.kind)} — ${formatSectorBytes(r.length)} @ ${r.offset}`} />
           ))}
         </div>
         <div className="pd-head">
@@ -121,7 +104,7 @@ export function PageDetail() {
                   <div className="pd-rowhead">
                     <span className="pd-swatch" style={{ background: regionColor(r.kind) }} />
                     <span className="pd-rkind">{regionLabel(r.kind)}</span>
-                    <span className="pd-range muted">{r.offset}–{r.offset + r.length} ({r.length}B)</span>
+                    <span className="pd-range muted">{r.offset}–{r.offset + r.length} ({formatSectorBytes(r.length)})</span>
                   </div>
                 </div>,
               );
@@ -162,7 +145,7 @@ export function PageDetail() {
                     <div className="pd-rowhead">
                       <span className="pd-swatch" style={{ background: regionColor(r.kind) }} />
                       <span className="pd-rkind">{regionLabel(r.kind)}{r.cellIndex != null ? ` #${r.cellIndex}` : ""}</span>
-                      <span className="pd-range muted">{r.offset}–{r.offset + r.length} ({r.length}B)</span>
+                      <span className="pd-range muted">{r.offset}–{r.offset + r.length} ({formatSectorBytes(r.length)})</span>
                     </div>
                     {cell && <CellData cell={cell} onNav={revealPage} typeOf={pointerType} leafPage={leafPage} />}
                   </div>,
@@ -204,7 +187,7 @@ function TypeSegments({ column, leafPage, onNav }:
           <PageCard page={column.segments[0].page} pageType="overflow" colorByNumber onClick={onNav} /> :
           <span className="pd-bytes">{column.segments.map((s, k) => (
             <span key={k}>{" "}{s.page === leafPage
-              ? <span className="pd-seg-leaf">{s.bytes} B</span>
+              ? <span className="pd-seg-leaf">{formatSectorBytes(s.bytes)}</span>
               : <span key={k}>{k > 0 ? ", " : ""}<Segment seg={s} leafPage={leafPage} column={column} forTypeColumn={true} onNav={onNav} /></span>}</span>
           ))}</span>
       )}
@@ -254,7 +237,7 @@ function ValueSegments({ column, leafPage, onNav }:
 function Segment({ seg, leafPage, column, forTypeColumn, onNav }:
                   { seg: PageSegment; leafPage: number; column: PageColumn; forTypeColumn: boolean; onNav: (p: number) => void }) {
   
-  const text = forTypeColumn || column.type == "blob" ? `${seg.bytes} B` : column.type === "int" || column.type === "real" ? valueText(column) : seg.text;
+  const text = forTypeColumn || column.type == "blob" ? formatSectorBytes(seg.bytes) : column.type === "int" || column.type === "real" ? valueText(column) : seg.text;
   if (seg.page === leafPage)
     return <span className="pd-seg-leaf">{text}</span>;
   

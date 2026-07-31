@@ -1,4 +1,5 @@
 import { useViz } from "../state/store.ts";
+import { formatCount } from "../core/format.ts";
 
 // Session information → Map Information: total pages, and the number of distinct
 // pages accessed by the current profile selection (unique pages, not a sum of
@@ -9,8 +10,8 @@ export function SessionInfo() {
   const profile = useViz((s) => s.profile);
   const metric = useViz((s) => s.metric);
 
-  let text = `${pageCount.toLocaleString()} pages`;
-  if (hasProfile) text += ` · ${profile.identifiedPages(metric).toLocaleString()} accessed`;
+  let text = `${formatCount(pageCount)} pages`;
+  if (hasProfile) text += ` · ${formatCount(profile.identifiedPages(metric))} accessed`;
 
   return (
     <div className="bar-group" id="session-info">

@@ -7,6 +7,7 @@ import { bestFitBlockPx, cell, colsFor, pagesContentHeight, scrollForPageAtY, to
   from "../core/layout.ts";
 import { colorForObject, colorForPage, GLYPH, STRUCTURAL } from "../core/palette.ts";
 import { overlayFill } from "../core/overlay.ts";
+import { formatCount } from "../core/format.ts";
 import type { ObjectPagesResponse, PagesResponse, Run, RunsResponse, View }
   from "../core/types.ts";
 import type { VizState } from "../state/store.ts";
@@ -339,7 +340,7 @@ export class CanvasController {
       this.ctx.fillStyle = "#e6e8ec"; this.ctx.font = "12px sans-serif";
       this.ctx.textAlign = "left"; this.ctx.textBaseline = "alphabetic";
       this.ctx.fillText(
-        `${band.grp.label}  ·  ${band.grp.pageCount.toLocaleString()} pages`,
+        `${band.grp.label}  ·  ${formatCount(band.grp.pageCount)} pages`,
         2, top + 14,
       );
       for (const [key, data] of this.objPages) {

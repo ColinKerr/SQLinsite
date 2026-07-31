@@ -1,6 +1,6 @@
 import type { TreeNode } from "../core/treeModel.ts";
 import { colorForPage, GLYPH } from "../core/palette.ts";
-import { formatBytes } from "../core/format.ts";
+import { formatBytes, formatCount } from "../core/format.ts";
 
 // The visual content of a b-tree tree node — icon (page-type glyph / table color
 // block / Indexes folder) + name + muted subtree size (pages · bytes). Shared by
@@ -25,7 +25,7 @@ export function TreeNodeContent({ node, pageSize }: { node: TreeNode; pageSize: 
       {/* Subtree size (this node + its children): page count and bytes, muted. */}
       {node.subtreePageCount != null && (
         <span className="tn-size muted">
-          {node.subtreePageCount} {node.subtreePageCount === 1 ? "page" : "pages"}
+          {formatCount(node.subtreePageCount)} {node.subtreePageCount === 1 ? "page" : "pages"}
           {pageSize > 0 && ` · ${formatBytes(node.subtreePageCount * pageSize)}`}
         </span>
       )}
