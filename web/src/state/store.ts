@@ -1,5 +1,5 @@
 import { create, createStore, type StateCreator, type StoreApi } from "zustand";
-import { fetchProfilePages, selParam } from "../core/api.ts";
+import { fetchProfilePages, fetchStructuralGroups, selParam } from "../core/api.ts";
 import { MAX_BLOCK_PX, MIN_BLOCK_PX } from "../core/constants.ts";
 import { Profile } from "../core/profile.ts";
 import type { Meta, Metric, ObjectInfo, Run, SessionInfo, StructuralGroup, View } from "../core/types.ts";
@@ -11,6 +11,7 @@ export interface VizState {
   objById: Map<number, ObjectInfo>;
   objects: ObjectInfo[];
   structuralGroups: StructuralGroup[]; // Tables-view bands for non-object pages
+  structuralGroupsLoaded: boolean; // lazily fetched on first Tables-view entry
   pageCount: number;
   hasProfile: boolean;
   sessions: SessionInfo[];
@@ -27,6 +28,7 @@ export interface VizState {
 
   initFromMeta(meta: Meta, allRuns: Run[], profile: Profile,
                structuralGroups?: StructuralGroup[]): void;
+  ensureStructuralGroups(): Promise<void>;
   setView(v: View): void;
   setBlockPx(px: number): void;
   setMetric(m: Metric): void;
@@ -41,6 +43,7 @@ const creator: StateCreator<VizState> = (set, get) => ({
   objById: new Map(),
   objects: [],
   structuralGroups: [],
+  structuralGroupsLoaded: false,
   pageCount: 0,
   hasProfile: false,
   sessions: [],
@@ -64,6 +67,7 @@ const creator: StateCreator<VizState> = (set, get) => ({
       objById,
       objects: meta.objects,
       structuralGroups,
+      structuralGroupsLoaded: structuralGroups.length > 0,
       pageCount: meta.meta.pageCount,
       hasProfile: !!meta.hasProfile,
       sessions: meta.sessions || [],
@@ -75,7 +79,18 @@ const creator: StateCreator<VizState> = (set, get) => ({
     });
   },
 
-  setView: (v) => set({ view: v }),
+  // Switching to Tables lazily loads its structural-page bands (a heavy map query
+  // on large files) so it never blocks the initial load of the other views.
+  ensureStructuralGroups: async () => {
+    if (get().structuralGroupsLoaded) return;
+    set({ structuralGroupsLoaded: true }); // guard against concurrent double-fetch
+    const res = await fetchStructuralGroups();
+    set({ structuralGroups: res?.groups ?? [] });
+  },
+  setView: (v) => {
+    set({ view: v });
+    if (v === "tables") void get().ensureStructuralGroups();
+  },
   setBlockPx: (px) => set({ blockPx: Math.max(MIN_BLOCK_PX, Math.min(MAX_BLOCK_PX, px)) }),
   setMetric: (m) => set({ metric: m }),
   setLeaves: (next) => set({ selLeaves: new Set(next) }),

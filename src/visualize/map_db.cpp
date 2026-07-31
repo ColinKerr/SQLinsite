@@ -689,13 +689,16 @@ std::string MapDb::treeRootsJson() const {
                          {"hasChildren", true}});
     }
 
-    // All other pages (virtual) — only when at least one such page exists.
+    // All other pages (virtual) — only when at least one such page exists. Uses
+    // the same "unowned + non-structural" definition as structuralGroupsJson
+    // (objectId IS NULL): the map assigns an objectId to every page reachable from
+    // an object b-tree (root/child/overflow), so objectId IS NULL is exactly the
+    // set of unowned pages. The pages_object index serves it as a seek, versus the
+    // old form (NOT IN the whole pointers table) which full-scanned `pages`.
     json other = queryRows(
         db_,
-        "SELECT EXISTS(SELECT 1 FROM pages WHERE pageNumber>1 "
-        "AND pageType NOT IN ('freelist-trunk','freelist-leaf','lock-byte','pointer-map') "
-        "AND pageNumber NOT IN (SELECT rootPage FROM objects) "
-        "AND pageNumber NOT IN (SELECT toPage FROM pointers)) AS ex");
+        "SELECT EXISTS(SELECT 1 FROM pages WHERE pageNumber>1 AND (" +
+            std::string(structuralGroupWhere("other")) + ")) AS ex");
     if (!other.empty() && other[0]["ex"].get<int>() != 0) {
         roots.push_back({{"kind", "other"}, {"label", "All other pages"}, {"page", nullptr},
                          {"pageType", nullptr}, {"objectId", nullptr}, {"hasChildren", true}});

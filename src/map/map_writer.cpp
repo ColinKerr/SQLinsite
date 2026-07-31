@@ -24,6 +24,10 @@ CREATE TABLE pages (
   firstFreeblock INTEGER, cellContentStart INTEGER, fragmentedFreeBytes INTEGER,
   rightmostPointer INTEGER, parseError TEXT, subtreePageCount INTEGER);
 CREATE INDEX pages_object ON pages(objectId);
+-- Serves the pageType filters in structuralGroupsJson (COUNT per group) and
+-- treeRootsJson (freelist/lock-byte/pointer-map existence checks) so they seek
+-- instead of full-scanning `pages` (one row per db page) on large files.
+CREATE INDEX pages_type ON pages(pageType);
 CREATE TABLE cells (
   pageNumber INTEGER, cellIndex INTEGER, rowid INTEGER, leftChild INTEGER,
   payloadBytes INTEGER, localBytes INTEGER, overflowPage INTEGER,

@@ -125,6 +125,33 @@ TEST_CASE("tree roots group each table's b-tree and indexes under one node") {
     CHECK(uNode["indexes"].empty());
 }
 
+TEST_CASE("tree roots show 'All other pages' only for unowned non-structural pages") {
+    const std::string mapPath = buildIndexedMapFixture();
+
+    auto hasOther = [](const std::string& path) {
+        MapDb db(path);
+        auto roots = nlohmann::json::parse(db.treeRootsJson())["roots"];
+        for (const auto& r : roots)
+            if (r.value("kind", "") == "other" && r.value("label", "") == "All other pages")
+                return true;
+        return false;
+    };
+
+    // A well-formed map assigns every page to an object → no "other" node.
+    CHECK_FALSE(hasOther(mapPath));
+
+    // Mark one page unowned + non-structural (objectId NULL, a b-tree type). The
+    // "other" node must appear — driven by objectId IS NULL, served by pages_object.
+    sqlite3* m = nullptr;
+    REQUIRE(sqlite3_open(mapPath.c_str(), &m) == SQLITE_OK);
+    REQUIRE(sqlite3_exec(m,
+                         "UPDATE pages SET objectId=NULL, pageType='table-leaf' "
+                         "WHERE pageNumber=(SELECT MAX(pageNumber) FROM pages)",
+                         nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_close(m);
+    CHECK(hasOther(mapPath));
+}
+
 TEST_CASE("tree object overview reports a table's rows and indexes") {
     MapDb db(buildIndexedMapFixture());
     auto roots = nlohmann::json::parse(db.treeRootsJson())["roots"];

@@ -1,6 +1,8 @@
 # Build output
 /build/
 /cmake-build-*/
+/perf/results/
+/perf/node_modules/
 
 # Web (front-end) — node deps, Vite cache, and build output (never committed)
 /web/node_modules/
