@@ -105,6 +105,11 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
         res.set_content(db.runsJson(from, to, profiled, paramLeaves(req)),
                         "application/json");
     });
+    server.Get("/api/minimap", [&db](const httplib::Request& req,
+                                     httplib::Response& res) {
+        res.set_content(db.minimapJson(static_cast<int>(paramInt(req, "buckets", 2000))),
+                        "application/json");
+    });
 
     server.Get("/api/object/pages", [&db](const httplib::Request& req,
                                           httplib::Response& res) {

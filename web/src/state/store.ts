@@ -2,7 +2,7 @@ import { create, createStore, type StateCreator, type StoreApi } from "zustand";
 import { fetchProfilePages, fetchStructuralGroups, selParam } from "../core/api.ts";
 import { MAX_BLOCK_PX, MIN_BLOCK_PX } from "../core/constants.ts";
 import { Profile } from "../core/profile.ts";
-import type { Meta, Metric, ObjectInfo, Run, SessionInfo, StructuralGroup, View } from "../core/types.ts";
+import type { Meta, Metric, MinimapBucket, ObjectInfo, SessionInfo, StructuralGroup, View } from "../core/types.ts";
 
 // Shared UI state. Hot render-loop state (scroll, caches, selected, canvas size)
 // lives inside CanvasController, not here, so canvas panning never re-renders React.
@@ -15,7 +15,7 @@ export interface VizState {
   pageCount: number;
   hasProfile: boolean;
   sessions: SessionInfo[];
-  allRuns: Run[];
+  minimap: MinimapBucket[]; // whole-file object-colored overview (Pages minimap)
 
   view: View;
   blockPx: number;
@@ -26,7 +26,7 @@ export interface VizState {
   legendWidth: number;
   selectedObject: number | null; // Navigation-panel object id (for history nav)
 
-  initFromMeta(meta: Meta, allRuns: Run[], profile: Profile,
+  initFromMeta(meta: Meta, minimap: MinimapBucket[], profile: Profile,
                structuralGroups?: StructuralGroup[]): void;
   ensureStructuralGroups(): Promise<void>;
   setView(v: View): void;
@@ -47,7 +47,7 @@ const creator: StateCreator<VizState> = (set, get) => ({
   pageCount: 0,
   hasProfile: false,
   sessions: [],
-  allRuns: [],
+  minimap: [],
 
   view: "pages",
   blockPx: 12,
@@ -58,7 +58,7 @@ const creator: StateCreator<VizState> = (set, get) => ({
   legendWidth: 240,
   selectedObject: null,
 
-  initFromMeta(meta, allRuns, profile, structuralGroups = []) {
+  initFromMeta(meta, minimap, profile, structuralGroups = []) {
     const objById = new Map(meta.objects.map((o) => [o.id, o] as const));
     const selLeaves = new Set<number>();
     for (const s of meta.sessions || []) for (const l of s.leaves) selLeaves.add(l.leafId);
@@ -71,7 +71,7 @@ const creator: StateCreator<VizState> = (set, get) => ({
       pageCount: meta.meta.pageCount,
       hasProfile: !!meta.hasProfile,
       sessions: meta.sessions || [],
-      allRuns,
+      minimap,
       selLeaves,
       leafCount: selLeaves.size,
       metric: meta.hasProfile ? "total" : "none",

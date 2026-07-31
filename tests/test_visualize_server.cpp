@@ -174,6 +174,46 @@ TEST_CASE("tree object overview reports a table's rows and indexes") {
     CHECK(db.treeObjectOverviewJson(999999).empty());
 }
 
+TEST_CASE("minimap returns a bounded object-colored overview covering the whole file") {
+    MapDb db(buildIndexedMapFixture());
+
+    // Capped bucket count, contiguous, and covering exactly [1, pageCount].
+    auto mm = nlohmann::json::parse(db.minimapJson(4));
+    const std::int64_t pageCount = mm["pageCount"].get<std::int64_t>();
+    REQUIRE(pageCount > 0);
+    auto buckets = mm["buckets"];
+    REQUIRE(buckets.is_array());
+    REQUIRE_FALSE(buckets.empty());
+    CHECK(buckets.size() <= 4);
+    CHECK(buckets.front()["startPage"] == 1);
+    CHECK(buckets.back()["endPage"] == pageCount);
+    std::int64_t covered = 0;
+    for (std::size_t i = 0; i < buckets.size(); ++i) {
+        if (i > 0)
+            CHECK(buckets[i]["startPage"].get<std::int64_t>() ==
+                  buckets[i - 1]["endPage"].get<std::int64_t>() + 1);
+        covered += buckets[i]["endPage"].get<std::int64_t>() -
+                   buckets[i]["startPage"].get<std::int64_t>() + 1;
+        // objectId is null (unowned) or a real object id (0 is the schema/page-1).
+        if (!buckets[i]["objectId"].is_null()) CHECK(buckets[i]["objectId"].get<std::int64_t>() >= 0);
+    }
+    CHECK(covered == pageCount);
+
+    // At full resolution the real objects appear: table T owns pages, so some
+    // bucket must carry its objectId.
+    auto roots = nlohmann::json::parse(db.treeRootsJson())["roots"];
+    std::int64_t tId = 0;
+    for (const auto& r : roots)
+        if (r.value("kind", "") == "table" && r.value("label", "") == "T")
+            tId = r["objectId"].get<std::int64_t>();
+    REQUIRE(tId > 0);
+    auto full = nlohmann::json::parse(db.minimapJson(100000))["buckets"];
+    bool sawT = false;
+    for (const auto& b : full)
+        if (!b["objectId"].is_null() && b["objectId"].get<std::int64_t>() == tId) sawT = true;
+    CHECK(sawT);
+}
+
 TEST_CASE("tree search finds pages by page-number prefix") {
     // A table large enough for page numbers to reach three digits.
     const std::string dbPath = tmpPath("viz_search_src.db");

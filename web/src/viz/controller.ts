@@ -385,10 +385,12 @@ export class CanvasController {
     const scale = h / contentH;
     if (this.s.view === "pages") {
       const cols = this.cols();
-      for (const run of this.s.allRuns) {
-        const rowS = Math.floor((run.startPage - 1) / cols);
-        const rowE = Math.floor((run.endPage - 1) / cols);
-        this.mctx.fillStyle = colorForPage(run.objectId, run.pageType);
+      // Colored by owning table/index (structural/unowned → neutral). The buckets
+      // are a downsampled whole-file overview (see /api/minimap), not the run map.
+      for (const bkt of this.s.minimap) {
+        const rowS = Math.floor((bkt.startPage - 1) / cols);
+        const rowE = Math.floor((bkt.endPage - 1) / cols);
+        this.mctx.fillStyle = bkt.objectId != null ? colorForObject(bkt.objectId) : STRUCTURAL["unallocated"];
         this.mctx.fillRect(0, rowS * this.cell() * scale, w, Math.max(0.5, (rowE - rowS + 1) * this.cell() * scale));
       }
     } else {

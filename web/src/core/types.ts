@@ -51,6 +51,17 @@ export interface Run {
 export interface RunsResponse {
   runs: Run[];
 }
+// A whole-file minimap span, colored by the object that owns most of it
+// (objectId null = unowned/structural). See /api/minimap.
+export interface MinimapBucket {
+  startPage: number;
+  endPage: number;
+  objectId: number | null;
+}
+export interface MinimapResponse {
+  pageCount: number;
+  buckets: MinimapBucket[];
+}
 
 export interface ObjectPageRow {
   ordinal: number;

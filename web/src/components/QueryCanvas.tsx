@@ -11,7 +11,7 @@ import { CanvasHost } from "./CanvasHost.tsx";
 export function QueryCanvas({ sub }: { sub: "pages" | "tables" }) {
   const run = useQuery((s) => s.run);
   const meta = useViz((s) => s.meta);
-  const allRuns = useViz((s) => s.allRuns);
+  const minimap = useViz((s) => s.minimap);
   const storeRef = useRef<VizStore>();
   if (!storeRef.current) storeRef.current = createVizStore();
   const store = storeRef.current;
@@ -22,7 +22,7 @@ export function QueryCanvas({ sub }: { sub: "pages" | "tables" }) {
     // Force hasProfile so the overlay is always active for the run.
     const apply = (pages: ProfilePage[]) => {
       if (cancelled) return;
-      store.getState().initFromMeta({ ...meta, hasProfile: true }, allRuns, new Profile({ pages }));
+      store.getState().initFromMeta({ ...meta, hasProfile: true }, minimap, new Profile({ pages }));
       store.getState().setView(sub);
     };
     const inline = run?.profile.pages ?? [];
@@ -34,7 +34,7 @@ export function QueryCanvas({ sub }: { sub: "pages" | "tables" }) {
       apply(inline);
     }
     return () => { cancelled = true; };
-  }, [run, meta, allRuns, sub, store]);
+  }, [run, meta, minimap, sub, store]);
 
   if (!run) return <div className="results-msg muted">Run a query to see its page profile.</div>;
   return <div className="query-canvas"><CanvasHost store={store} /></div>;

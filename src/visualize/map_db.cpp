@@ -5,6 +5,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -275,6 +276,71 @@ std::string MapDb::runsJson(std::int64_t from, std::int64_t to, bool profiled,
                         {"objectId", r.objectId ? json(*r.objectId) : json(nullptr)}});
     }
     return json({{"runs", std::move(runs)}}).dump();
+}
+
+std::string MapDb::minimapJson(int buckets) const {
+    if (buckets < 1) buckets = 1;
+    if (minimapCacheBuckets_ == buckets && !minimapCache_.empty()) return minimapCache_;
+
+    json m = queryRows(db_, "SELECT pageCount FROM meta LIMIT 1");
+    const std::int64_t pageCount =
+        (!m.empty() && !m[0]["pageCount"].is_null()) ? m[0]["pageCount"].get<std::int64_t>() : 0;
+    if (pageCount <= 0) {
+        return json({{"pageCount", 0}, {"buckets", json::array()}}).dump();
+    }
+    // Never more buckets than pages; page b (1-based) → bucket (b-1)*n/pageCount,
+    // bucket k spans pages [k*pageCount/n + 1, (k+1)*pageCount/n].
+    const std::int64_t n = std::min<std::int64_t>(buckets, pageCount);
+
+    // Tally owned pages per object within each bucket, from the runs table (which
+    // coalesces every page, owned or not). objectId -1 stands in for NULL/unowned.
+    std::vector<std::unordered_map<std::int64_t, std::int64_t>> tally(static_cast<std::size_t>(n));
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db_, "SELECT startPage,endPage,objectId FROM runs", -1, &stmt, nullptr);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const std::int64_t s = sqlite3_column_int64(stmt, 0);
+        const std::int64_t e = sqlite3_column_int64(stmt, 1);
+        const std::int64_t obj =
+            sqlite3_column_type(stmt, 2) == SQLITE_NULL ? -1 : sqlite3_column_int64(stmt, 2);
+        // Split the run at bucket boundaries, adding each slice to its bucket.
+        std::int64_t p = std::max<std::int64_t>(1, s);
+        while (p <= e) {
+            std::int64_t k = (p - 1) * n / pageCount;
+            if (k >= n) k = n - 1;
+            std::int64_t bucketEnd = (k + 1) * pageCount / n; // last page of bucket k
+            const std::int64_t segEnd = std::min(e, std::max(p, bucketEnd));
+            tally[static_cast<std::size_t>(k)][obj] += segEnd - p + 1;
+            p = segEnd + 1;
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    // Dominant object per bucket (most pages; ties → smaller objectId for determinism).
+    std::vector<std::int64_t> dom(static_cast<std::size_t>(n), -1);
+    for (std::int64_t k = 0; k < n; ++k) {
+        std::int64_t best = -1, bestCount = -1;
+        for (const auto& [obj, cnt] : tally[static_cast<std::size_t>(k)]) {
+            if (cnt > bestCount || (cnt == bestCount && obj < best)) { best = obj; bestCount = cnt; }
+        }
+        dom[static_cast<std::size_t>(k)] = best;
+    }
+
+    // Emit contiguous spans, merging adjacent buckets with the same dominant object.
+    json arr = json::array();
+    for (std::int64_t k = 0; k < n;) {
+        std::int64_t k2 = k;
+        while (k2 + 1 < n && dom[static_cast<std::size_t>(k2 + 1)] == dom[static_cast<std::size_t>(k)]) ++k2;
+        const std::int64_t startPage = k * pageCount / n + 1;
+        const std::int64_t endPage = (k2 + 1) * pageCount / n;
+        const std::int64_t obj = dom[static_cast<std::size_t>(k)];
+        arr.push_back({{"startPage", startPage}, {"endPage", endPage},
+                       {"objectId", obj < 0 ? json(nullptr) : json(obj)}});
+        k = k2 + 1;
+    }
+
+    minimapCache_ = json({{"pageCount", pageCount}, {"buckets", std::move(arr)}}).dump();
+    minimapCacheBuckets_ = buckets;
+    return minimapCache_;
 }
 
 std::string MapDb::objectPagesJson(std::int64_t objectId, std::int64_t from,

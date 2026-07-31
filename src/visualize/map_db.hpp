@@ -49,6 +49,12 @@ public:
     // runs are recomputed to the contiguous spans accessed by the selected leaves.
     std::string runsJson(std::int64_t from, std::int64_t to, bool profiled,
                          const LeafFilter& sel) const;
+    // A downsampled, object-colored overview of the whole file for the minimap:
+    // the page space split into at most `buckets` contiguous spans, each labelled
+    // with the object owning the most pages in it (objectId null = unowned). Derived
+    // from the runs table in one pass and cached (the map is static). JSON:
+    // {"pageCount":<n>, "buckets":[{"startPage","endPage","objectId"}...]}.
+    std::string minimapJson(int buckets) const;
     // Pages owned by one object, by 0-based ordinal window [from, to] (Tables view).
     std::string objectPagesJson(std::int64_t objectId, std::int64_t from,
                                 std::int64_t to, bool& tooLarge) const;
@@ -135,4 +141,6 @@ private:
     bool hasProfile_ = false;
     bool hasDb_ = false;
     std::vector<ProfileLeaf> leaves_;  // profile session/statement manifest
+    mutable std::string minimapCache_; // cached minimapJson (map is static)
+    mutable int minimapCacheBuckets_ = -1;
 };
