@@ -1,14 +1,43 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
 #include "visualize/profile_reader.hpp"
 
 struct sqlite3;
+
+// A pool of read-only SQLite connections to the map, one lazily opened per calling
+// (httplib worker) thread and reused. Because SQLITE_THREADSAFE=1 serializes every
+// operation on a single connection, sharing one connection would serialize all map
+// reads; per-thread connections let concurrent reads run in parallel (a read-only
+// DB has no writer, so unlimited concurrent readers are safe). Converts implicitly
+// to the calling thread's connection so query code can keep using it as a sqlite3*.
+class ReadPool {
+public:
+    ReadPool() = default;
+    ~ReadPool();
+    ReadPool(const ReadPool&) = delete;
+    ReadPool& operator=(const ReadPool&) = delete;
+
+    // `onOpen` runs once on each newly opened connection (e.g. to build its private
+    // TEMP profile table). Must be called before any use.
+    void init(std::string path, std::function<void(sqlite3*)> onOpen);
+    // The calling thread's connection (opened on first use); null on open failure.
+    operator sqlite3*() const;
+
+private:
+    std::string path_;
+    std::function<void(sqlite3*)> onOpen_;
+    mutable std::mutex mu_;
+    mutable std::unordered_map<std::thread::id, sqlite3*> conns_;
+};
 
 // Opens a `sqlinsite map` SQLite file read-only and answers the visualize
 // query API. Optionally holds an in-memory profile table for overlays.
@@ -136,11 +165,18 @@ public:
     std::string treeSearchJson(const std::string& query, int limit) const;
 
 private:
-    sqlite3* db_ = nullptr;
+    // Builds the private TEMP `profile` table on a freshly opened pool connection
+    // (each connection is independent, so overlays need their own copy).
+    void onConnOpen(sqlite3* c) const;
+    void populateProfile(sqlite3* c) const;
+
+    ReadPool db_;                      // per-thread read-only connections (see above)
     std::string mapPath_;              // for opening short-lived private connections
     bool hasProfile_ = false;
     bool hasDb_ = false;
     std::vector<ProfileLeaf> leaves_;  // profile session/statement manifest
+    std::vector<LeafPageAccess> profileRows_; // retained to seed each connection's profile table
+    mutable std::mutex minimapMu_;     // guards the minimap cache across threads
     mutable std::string minimapCache_; // cached minimapJson (map is static)
     mutable int minimapCacheBuckets_ = -1;
 };

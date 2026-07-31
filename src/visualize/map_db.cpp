@@ -86,37 +86,81 @@ bool tableExists(sqlite3* db, const char* name) {
 
 }  // namespace
 
+ReadPool::~ReadPool() {
+    for (auto& [id, c] : conns_) sqlite3_close(c);
+}
+
+void ReadPool::init(std::string path, std::function<void(sqlite3*)> onOpen) {
+    path_ = std::move(path);
+    onOpen_ = std::move(onOpen);
+}
+
+ReadPool::operator sqlite3*() const {
+    const std::thread::id id = std::this_thread::get_id();
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = conns_.find(id);
+        if (it != conns_.end()) return it->second;
+    }
+    // Open (and seed) this thread's connection outside the lock so the one-time
+    // per-thread setup never blocks other threads' queries.
+    sqlite3* c = nullptr;
+    if (sqlite3_open_v2(path_.c_str(), &c, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        sqlite3_close(c);
+        return nullptr;
+    }
+    if (onOpen_) onOpen_(c);
+    std::lock_guard<std::mutex> lk(mu_);
+    conns_[id] = c;
+    return c;
+}
+
 MapDb::MapDb(const std::string& mapPath) : mapPath_(mapPath) {
-    if (sqlite3_open_v2(mapPath.c_str(), &db_, SQLITE_OPEN_READONLY, nullptr) !=
-        SQLITE_OK) {
-        const std::string msg = sqlite3_errmsg(db_);
-        sqlite3_close(db_);
-        db_ = nullptr;
+    // Validate on a throwaway connection (clear error message on failure), then set
+    // up the per-thread read pool. onConnOpen seeds each connection's profile table.
+    sqlite3* v = nullptr;
+    if (sqlite3_open_v2(mapPath.c_str(), &v, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        const std::string msg = sqlite3_errmsg(v);
+        sqlite3_close(v);
         fail("cannot open map file: " + msg);
     }
     for (const char* t : {"meta", "objects", "pages", "runs", "type_counts"}) {
-        if (!tableExists(db_, t)) {
-            sqlite3_close(db_);
-            db_ = nullptr;
+        if (!tableExists(v, t)) {
+            sqlite3_close(v);
             fail("not a sqlinsite map (missing table '" + std::string(t) + "')");
         }
     }
+    sqlite3_close(v);
+    db_.init(mapPath, [this](sqlite3* c) { onConnOpen(c); });
 }
 
-MapDb::~MapDb() { sqlite3_close(db_); }
+MapDb::~MapDb() = default;
 
 void MapDb::loadProfile(const std::string& csvPath) {
+    // Retain the aggregated rows and mark the profile present; each pool connection
+    // then builds its own private TEMP `profile` table on open (see onConnOpen).
+    // Always called before serving, so every connection is opened after this.
     const ProfileAggregate agg = aggregateProfileFile(csvPath);
     leaves_ = agg.leaves;
-    sqlite3_exec(db_,
+    profileRows_ = agg.leafPages;
+    hasProfile_ = true;
+}
+
+void MapDb::onConnOpen(sqlite3* c) const {
+    if (hasProfile_) populateProfile(c);
+}
+
+void MapDb::populateProfile(sqlite3* c) const {
+    // TEMP tables live in a per-connection temp DB, writable even though the main
+    // map is opened read-only.
+    sqlite3_exec(c,
                  "CREATE TEMP TABLE profile(leafId INTEGER, pageNumber INTEGER, "
                  "reads INTEGER, writes INTEGER)",
                  nullptr, nullptr, nullptr);
-    sqlite3_exec(db_, "BEGIN", nullptr, nullptr, nullptr);
+    sqlite3_exec(c, "BEGIN", nullptr, nullptr, nullptr);
     sqlite3_stmt* ins = nullptr;
-    sqlite3_prepare_v2(db_, "INSERT INTO profile VALUES (?,?,?,?)", -1, &ins,
-                       nullptr);
-    for (const LeafPageAccess& a : agg.leafPages) {
+    sqlite3_prepare_v2(c, "INSERT INTO profile VALUES (?,?,?,?)", -1, &ins, nullptr);
+    for (const LeafPageAccess& a : profileRows_) {
         sqlite3_bind_int(ins, 1, a.leafId);
         sqlite3_bind_int64(ins, 2, a.pageNumber);
         sqlite3_bind_int64(ins, 3, a.reads);
@@ -125,10 +169,8 @@ void MapDb::loadProfile(const std::string& csvPath) {
         sqlite3_reset(ins);
     }
     sqlite3_finalize(ins);
-    sqlite3_exec(db_, "COMMIT", nullptr, nullptr, nullptr);
-    sqlite3_exec(db_, "CREATE INDEX profile_page ON profile(pageNumber)", nullptr,
-                 nullptr, nullptr);
-    hasProfile_ = true;
+    sqlite3_exec(c, "COMMIT", nullptr, nullptr, nullptr);
+    sqlite3_exec(c, "CREATE INDEX profile_page ON profile(pageNumber)", nullptr, nullptr, nullptr);
 }
 
 std::string MapDb::metaJson() const {
@@ -280,6 +322,9 @@ std::string MapDb::runsJson(std::int64_t from, std::int64_t to, bool profiled,
 
 std::string MapDb::minimapJson(int buckets) const {
     if (buckets < 1) buckets = 1;
+    // Concurrent threads may race here now (per-thread connections); the cache is
+    // shared, so guard it. First caller computes; the rest wait then hit the cache.
+    std::lock_guard<std::mutex> lk(minimapMu_);
     if (minimapCacheBuckets_ == buckets && !minimapCache_.empty()) return minimapCache_;
 
     json m = queryRows(db_, "SELECT pageCount FROM meta LIMIT 1");
