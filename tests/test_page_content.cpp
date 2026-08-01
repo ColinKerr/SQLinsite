@@ -527,6 +527,44 @@ TEST_CASE("objectPageOrdinalJson gives a page's position within its object band"
     CHECK(json::parse(map.objectPageOrdinalJson(objId, 999999))["ordinal"].get<std::int64_t>() == -1);
 }
 
+TEST_CASE("objectRunsJson gives coalesced ordinal-runs covering the band") {
+    const Fixture fx = buildInteriorFixture();  // one multi-page table T
+    MapDb map(fx.mapPath);
+    MapQuery m(fx.mapPath);
+
+    const std::int64_t objId = m.scalar("SELECT id FROM objects WHERE name='T' AND type='table'");
+    REQUIRE(objId >= 0);
+    const std::int64_t pageCount = m.scalar("SELECT COUNT(*) FROM pages WHERE objectId=" + std::to_string(objId));
+    REQUIRE(pageCount > 2);
+
+    auto runs = json::parse(map.objectRunsJson(objId, 0, pageCount - 1))["runs"];
+    REQUIRE(runs.is_array());
+    REQUIRE_FALSE(runs.empty());
+
+    // Contiguous, sorted, non-overlapping ordinal spans covering [0, pageCount-1],
+    // with adjacent runs differing in pageType (fully coalesced).
+    CHECK(runs.front()["startOrdinal"].get<std::int64_t>() == 0);
+    CHECK(runs.back()["endOrdinal"].get<std::int64_t>() == pageCount - 1);
+    std::int64_t covered = 0;
+    for (std::size_t i = 0; i < runs.size(); ++i) {
+        const std::int64_t s = runs[i]["startOrdinal"].get<std::int64_t>();
+        const std::int64_t e = runs[i]["endOrdinal"].get<std::int64_t>();
+        CHECK(e >= s);
+        covered += e - s + 1;
+        if (i > 0) {
+            CHECK(s == runs[i - 1]["endOrdinal"].get<std::int64_t>() + 1);
+            CHECK(runs[i]["pageType"] != runs[i - 1]["pageType"]);
+        }
+    }
+    CHECK(covered == pageCount);
+
+    // A window returns only the runs overlapping it.
+    auto win = json::parse(map.objectRunsJson(objId, pageCount - 1, pageCount - 1))["runs"];
+    REQUIRE(win.size() == 1);
+    CHECK(win[0]["startOrdinal"].get<std::int64_t>() <= pageCount - 1);
+    CHECK(win[0]["endOrdinal"].get<std::int64_t>() >= pageCount - 1);
+}
+
 TEST_CASE("structural groups expose the Tables-view non-object page bands") {
     const Fixture fx = buildFreelistFixture();  // a large delete frees whole pages
     MapDb map(fx.mapPath);

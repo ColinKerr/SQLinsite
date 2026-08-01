@@ -68,6 +68,16 @@ export interface ObjectPageRow {
   pageNumber: number;
   pageType: string;
 }
+// A coalesced run within one object's Tables-view band, in packed ordinal
+// coordinates (see /api/object/runs) — the zoomed-out Tables LOD.
+export interface ObjectRun {
+  startOrdinal: number;
+  endOrdinal: number;
+  pageType: string;
+}
+export interface ObjectRunsResponse {
+  runs: ObjectRun[];
+}
 export interface ObjectPagesResponse {
   pages: ObjectPageRow[];
 }

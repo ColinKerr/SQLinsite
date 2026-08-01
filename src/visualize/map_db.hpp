@@ -39,6 +39,14 @@ private:
     mutable std::unordered_map<std::thread::id, sqlite3*> conns_;
 };
 
+// A run within one object's band, in the band's packed ordinal coordinate (a
+// contiguous span of same-pageType pages, with the object's physical gaps removed).
+struct OrdinalRun {
+    std::int64_t startOrdinal;
+    std::int64_t endOrdinal;
+    std::string pageType;
+};
+
 // Opens a `sqlinsite map` SQLite file read-only and answers the visualize
 // query API. Optionally holds an in-memory profile table for overlays.
 class MapDb {
@@ -91,6 +99,11 @@ public:
     // i.e. the block's position in the Tables-view band; -1 if the page isn't in the
     // object. JSON: {"ordinal":<n>}.
     std::string objectPageOrdinalJson(std::int64_t objectId, std::int64_t page) const;
+    // Coalesced runs of an object's band in ordinal coordinates, for the zoomed-out
+    // Tables LOD (mirrors runsJson for Pages). JSON: {"runs":[{startOrdinal,
+    // endOrdinal,pageType}...]} overlapping [from,to]. Built once per object from
+    // the runs table and cached (the map is static).
+    std::string objectRunsJson(std::int64_t objectId, std::int64_t from, std::int64_t to) const;
     // The Tables-view structural page groups that are present (pages not owned by a
     // schema object): Freelist, Lock-Byte, All other pages. Each carries its page
     // count. JSON: {"groups":[{"key","label","pageCount"}...]}.
@@ -169,6 +182,8 @@ private:
     // (each connection is independent, so overlays need their own copy).
     void onConnOpen(sqlite3* c) const;
     void populateProfile(sqlite3* c) const;
+    // Lazily builds + caches an object's ordinal-runs (see objectRunsJson).
+    const std::vector<OrdinalRun>& objectRuns(std::int64_t objectId) const;
 
     ReadPool db_;                      // per-thread read-only connections (see above)
     std::string mapPath_;              // for opening short-lived private connections
@@ -179,4 +194,6 @@ private:
     mutable std::mutex minimapMu_;     // guards the minimap cache across threads
     mutable std::string minimapCache_; // cached minimapJson (map is static)
     mutable int minimapCacheBuckets_ = -1;
+    mutable std::mutex objRunsMu_;      // guards the per-object ordinal-run cache
+    mutable std::unordered_map<std::int64_t, std::vector<OrdinalRun>> objRunsCache_;
 };

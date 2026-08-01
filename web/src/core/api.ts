@@ -1,8 +1,8 @@
 import { MINIMAP_BUCKETS } from "./constants.ts";
 import type {
-  Meta, MinimapResponse, ObjectPagesResponse, PageContent, PageDetail, PagesResponse,
-  ProfilePagesResponse, RunsResponse, StructuralGroupsResponse, TreeChild, TreeObjectResponse,
-  TreePagesResponse, TreePathResponse, TreeRoot, TreeSearchResponse,
+  Meta, MinimapResponse, ObjectPagesResponse, ObjectRunsResponse, PageContent, PageDetail,
+  PagesResponse, ProfilePagesResponse, RunsResponse, StructuralGroupsResponse, TreeChild,
+  TreeObjectResponse, TreePagesResponse, TreePathResponse, TreeRoot, TreeSearchResponse,
 } from "./types.ts";
 
 export async function getJson<T>(url: string): Promise<T | null> {
@@ -30,6 +30,8 @@ export const fetchMinimap = (buckets = MINIMAP_BUCKETS) =>
   getJson<MinimapResponse>(`/api/minimap?buckets=${buckets}`);
 export const fetchObjectPages = (objectId: number, from: number, to: number) =>
   getJson<ObjectPagesResponse>(`/api/object/pages?objectId=${objectId}&from=${from}&to=${to}`);
+export const fetchObjectRuns = (objectId: number, from: number, to: number) =>
+  getJson<ObjectRunsResponse>(`/api/object/runs?objectId=${objectId}&from=${from}&to=${to}`);
 export const fetchObjectPageOrdinal = (objectId: number, page: number) =>
   getJson<{ ordinal: number }>(`/api/object/page-ordinal?objectId=${objectId}&page=${page}`);
 export const fetchStructuralGroups = () =>

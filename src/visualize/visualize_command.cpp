@@ -125,6 +125,14 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
         }
         res.set_content(body, "application/json");
     });
+    // Coalesced ordinal-runs of one object's band (zoomed-out Tables LOD).
+    server.Get("/api/object/runs", [&db](const httplib::Request& req,
+                                         httplib::Response& res) {
+        const std::int64_t objectId = paramInt(req, "objectId", 0);
+        const std::int64_t from = paramInt(req, "from", 0);
+        const std::int64_t to = paramInt(req, "to", from);
+        res.set_content(db.objectRunsJson(objectId, from, to), "application/json");
+    });
 
     // A page's 0-based ordinal within its object's Tables-view band (for scrolling
     // to that page's block without leaving the Tables view).
