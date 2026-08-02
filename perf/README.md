@@ -34,10 +34,19 @@ npm run perf -- --map <map.sqlite> --db <file.db> --repeat 5
 # Raw db only (generates the map into the output dir first):
 npm run perf -- --db <file.db>
 
+# Map build only — time, peak RSS, and generated map file size; skips serve+browser
+# (fast iteration when profiling `sqlinsite map` itself):
+npm run perf -- --db <file.db> --map-only
+
 npm run perf -- --baseline     # save this run as the regression baseline
 npm run perf -- --no-browser   # backend only
 npm run perf -- --help         # all options
 ```
+
+`--map-only` records **map build wall time**, **peak RSS**, and the **generated
+map file size** (absolute + as a % of the source db). These are also captured on
+any run that generates a map, and tracked against the baseline (`map build ms`,
+`map peak RSS MB`, `map size MB`).
 
 Later runs auto-compare against `results/baseline.json` and flag metrics that
 regress > 20%.

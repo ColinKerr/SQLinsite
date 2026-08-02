@@ -20,11 +20,12 @@ interface Args {
   headed: boolean;
   zoomOut: boolean;
   baseline: boolean;
+  mapOnly: boolean;
   help: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
-  const a: Args = { db: null, map: null, out: null, url: "?view=pages", query: null, repeat: 1, port: 0, seconds: 2, build: false, browser: true, headed: false, zoomOut: false, baseline: false, help: false };
+  const a: Args = { db: null, map: null, out: null, url: "?view=pages", query: null, repeat: 1, port: 0, seconds: 2, build: false, browser: true, headed: false, zoomOut: false, baseline: false, mapOnly: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const [flag, inlineVal] = argv[i].split(/=(.*)/s);
     const val = () => inlineVal ?? argv[++i];
@@ -42,6 +43,7 @@ function parseArgs(argv: string[]): Args {
       case "--headed": a.headed = true; break;
       case "--zoom-out": a.zoomOut = true; break;
       case "--baseline": a.baseline = true; break;
+      case "--map-only": a.mapOnly = true; break;
       case "-h": case "--help": a.help = true; break;
       default: throw new Error(`unknown argument: ${flag}`);
     }
@@ -72,6 +74,7 @@ Options:
   --zoom-out         Zoom fully out before scrolling (pages/tables) — stresses the
                      per-viewport LOD data fetches.
   --baseline         Save this run's metrics as the regression baseline.
+  --map-only         Only build + measure the map step (time, RSS, file size); skip serve/browser.
   --port <n>         Server port (default 0 = pick a free port).
   --seconds <n>      Extra idle-sample seconds after the load (default 2).
   --out <dir>        Output dir (default perf/results/<timestamp>).
@@ -125,13 +128,32 @@ async function main() {
   }
   if (!fs.existsSync(BINARY)) throw new Error(`binary not found: ${BINARY} (run with --build)`);
 
+  if (args.db && fs.existsSync(args.db)) summary.dbBytes = fs.statSync(args.db).size;
+
   // 2. Map step (only when no prebuilt map was given).
   if (!args.map) {
     if (!args.db) throw new Error("--db is required to generate a map");
     console.log(`▶ mapping ${args.db} → ${summary.map}…`);
     summary.mapStep = await runTimed(BINARY, ["map", "--test-file", args.db, "--out-file", summary.map]);
     if (summary.mapStep.exitCode !== 0) throw new Error("map failed");
-    console.log(`  map: ${fmtMs(summary.mapStep.wallMs)} · peak RSS ${summary.mapStep.peakRssKB != null ? fmtMB(summary.mapStep.peakRssKB) : "?"}`);
+    if (fs.existsSync(summary.map)) summary.mapBytes = fs.statSync(summary.map).size;
+    const ratio = summary.mapBytes && summary.dbBytes ? ` · ${(100 * summary.mapBytes / summary.dbBytes).toFixed(1)}% of db` : "";
+    console.log(`  map: ${fmtMs(summary.mapStep.wallMs)} · peak RSS ${summary.mapStep.peakRssKB != null ? fmtMB(summary.mapStep.peakRssKB) : "?"} · size ${summary.mapBytes != null ? fmtMB(summary.mapBytes / 1024) : "?"}${ratio}`);
+  }
+
+  // --map-only: write the map metrics and stop (fast iteration on build perf).
+  if (args.mapOnly) {
+    fs.writeFileSync(path.join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
+    fs.writeFileSync(path.join(outDir, "report.md"), reportMarkdown(summary));
+    report(summary, outDir);
+    const baselinePath = path.join(RESULTS_DIR, "baseline.json");
+    if (args.baseline) {
+      fs.writeFileSync(baselinePath, JSON.stringify(summary, null, 2));
+      console.log(`\n✓ saved baseline → ${path.relative(REPO_ROOT, baselinePath)}`);
+    } else if (fs.existsSync(baselinePath)) {
+      compareToBaseline(summary, JSON.parse(fs.readFileSync(baselinePath, "utf8")) as RunSummary);
+    }
+    return;
   }
 
   // 3. Start serve, wait until ready, sampling RSS/CPU throughout.
@@ -210,13 +232,18 @@ async function main() {
 // Key comparable metrics for regression tracking.
 function keyMetrics(s: RunSummary): Record<string, number> {
   const sg = s.serve.endpoints.find((e) => e.url.includes("structural-groups"));
-  return {
-    "load→ready ms": s.frontend?.navToReadyMs ?? 0,
-    "structural-groups ms": sg?.ms ?? 0,
-    "serve peak RSS MB": Math.round(s.serve.stats.peakRssKB / 1024),
-    "JS heap MB": s.frontend?.jsHeapUsedMB ?? 0,
-    "long-task ms": s.frontend?.longTasks.totalMs ?? 0,
-  };
+  const m: Record<string, number> = {};
+  if (s.mapStep) {
+    m["map build ms"] = Math.round(s.mapStep.wallMs);
+    m["map peak RSS MB"] = s.mapStep.peakRssKB != null ? Math.round(s.mapStep.peakRssKB / 1024) : 0;
+    m["map size MB"] = s.mapBytes != null ? Math.round(s.mapBytes / (1024 * 1024)) : 0;
+  }
+  m["load→ready ms"] = s.frontend?.navToReadyMs ?? 0;
+  m["structural-groups ms"] = sg?.ms ?? 0;
+  m["serve peak RSS MB"] = Math.round(s.serve.stats.peakRssKB / 1024);
+  m["JS heap MB"] = s.frontend?.jsHeapUsedMB ?? 0;
+  m["long-task ms"] = s.frontend?.longTasks.totalMs ?? 0;
+  return m;
 }
 
 // Print deltas vs. the saved baseline; flag metrics that regress > 20%.
@@ -237,7 +264,8 @@ function reportMarkdown(s: RunSummary): string {
   M.push(`- **db:** \`${s.db ?? "(none)"}\``);
   M.push(`- **map:** \`${s.map}\``);
   M.push(`- **pages:** ${s.pageCount != null ? s.pageCount.toLocaleString() : "?"}`);
-  if (s.mapStep) M.push(`- **map build:** ${fmtMs(s.mapStep.wallMs)} · peak RSS ${s.mapStep.peakRssKB != null ? fmtMB(s.mapStep.peakRssKB) : "?"}`);
+  if (s.dbBytes != null) M.push(`- **db size:** ${fmtMB(s.dbBytes / 1024)}`);
+  if (s.mapStep) M.push(`- **map build:** ${fmtMs(s.mapStep.wallMs)} · peak RSS ${s.mapStep.peakRssKB != null ? fmtMB(s.mapStep.peakRssKB) : "?"} · size ${s.mapBytes != null ? fmtMB(s.mapBytes / 1024) : "?"}${s.mapBytes && s.dbBytes ? ` (${(100 * s.mapBytes / s.dbBytes).toFixed(1)}% of db)` : ""}`);
   M.push(`- **serve startup:** ${fmtMs(s.serve.startupMs)} · peak RSS ${fmtMB(s.serve.stats.peakRssKB)}`, "");
   M.push("## Endpoint latency (isolated)", "", "| status | time | size | endpoint |", "|---|---|---|---|");
   for (const e of s.serve.endpoints) M.push(`| ${e.status} | ${fmtMs(e.ms)} | ${fmtMB(e.bytes / 1024)} | \`${e.url}\` |`);
@@ -263,7 +291,8 @@ function report(s: RunSummary, outDir: string): void {
   L.push(`map         ${s.map}`);
   L.push(`pages       ${s.pageCount != null ? s.pageCount.toLocaleString() : "?"}`);
   if (s.build) L.push(`build       ${fmtMs(s.build.wallMs)}`);
-  if (s.mapStep) L.push(`map build   ${fmtMs(s.mapStep.wallMs)} · peak RSS ${s.mapStep.peakRssKB != null ? fmtMB(s.mapStep.peakRssKB) : "?"}`);
+  if (s.dbBytes != null) L.push(`db size     ${fmtMB(s.dbBytes / 1024)}`);
+  if (s.mapStep) L.push(`map build   ${fmtMs(s.mapStep.wallMs)} · peak RSS ${s.mapStep.peakRssKB != null ? fmtMB(s.mapStep.peakRssKB) : "?"} · size ${s.mapBytes != null ? fmtMB(s.mapBytes / 1024) : "?"}${s.mapBytes && s.dbBytes ? ` (${(100 * s.mapBytes / s.dbBytes).toFixed(1)}% of db)` : ""}`);
   L.push(`serve start ${fmtMs(s.serve.startupMs)}`);
   L.push(`serve RSS   peak ${fmtMB(s.serve.stats.peakRssKB)} · avg CPU ${s.serve.stats.avgCpu}% · max ${s.serve.stats.maxCpu}% · ${s.serve.stats.samples} samples`);
   L.push("endpoints:");

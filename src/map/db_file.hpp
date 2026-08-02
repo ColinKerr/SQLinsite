@@ -52,9 +52,12 @@ public:
     }
     std::int64_t pageCount() const { return pageCount_; }
 
-    // 1-based page access (a fresh copy of the page's bytes); throws for invalid
-    // numbers or a read error.
-    std::vector<sqlfmt::Byte> page(std::int64_t pageNumber) const;
+    // 1-based page access; throws for invalid numbers or a read error. The
+    // returned reference points at an internal buffer that is overwritten by the
+    // next page() call — callers must consume it before requesting another page
+    // (the map builder parses one page at a time, so this holds). Reusing the
+    // buffer avoids a heap allocation per page.
+    const std::vector<sqlfmt::Byte>& page(std::int64_t pageNumber) const;
 
     bool autoVacuum() const { return header_.largestRootBtreePage != 0; }
     bool incrementalVacuum() const {
@@ -68,4 +71,5 @@ private:
     std::int64_t pageCount_ = 0;
     ::sqlite3* db_ = nullptr;
     ::sqlite3_stmt* pageStmt_ = nullptr;  // "SELECT data FROM sqlite_dbpage WHERE pgno=?"
+    mutable std::vector<sqlfmt::Byte> pageBuf_;  // reused by page(); see its comment
 };

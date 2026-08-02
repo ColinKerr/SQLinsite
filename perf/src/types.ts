@@ -91,6 +91,8 @@ export interface RunSummary {
   pageCount: number | null;
   build?: TimedRun; // present only if we (re)built the binary
   mapStep?: TimedRun; // present only if we generated the map
+  mapBytes?: number; // size of the generated map file (bytes); present when mapStep is
+  dbBytes?: number; // size of the source db file (bytes); present when --db given
   serve: {
     url: string;
     startupMs: number; // spawn → first /api/meta 200
