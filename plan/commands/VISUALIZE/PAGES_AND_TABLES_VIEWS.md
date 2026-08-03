@@ -130,7 +130,10 @@ Query-view run):
 
 ### View scroll bar
 
-Each view should have a scroll bar that is a scaled image of the entire view.  Clicking on a location in that scaled image of the view will scroll the view to that location.
+Each view should have a scroll bar minimap that is a scaled image of the entire view.  Clicking on a location in that scaled image of the view will scroll the view to that location.
+
+- **Pages** minimap: the downsampled, object-colored whole-file overview (`/api/minimap` buckets), positioned by page number.
+- **Tables** minimap: one colored segment per band excluding headers so it is fixed regardless of zoom level.  Because headers are ignored height is not a 1:1 map to the viewport.  So the scroll bar highlighting the viewport varies in height.
 
 ### Page Top Bar
 

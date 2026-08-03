@@ -2,9 +2,11 @@ import {
   fetchObjectPageOrdinal, fetchObjectPages, fetchObjectRuns, fetchPage, fetchPages, fetchRuns,
   fetchStructuralPageOrdinal, fetchStructuralPages,
 } from "../core/api.ts";
-import { BG, GAP, HEADER_H, LOD_THRESHOLD, RANGE_CAP, SCROLL_SETTLE_MS } from "../core/constants.ts";
-import { bestFitBlockPx, cell, colsFor, pagesContentHeight, scrollForPageAtY, topLeftPage, visiblePageRange }
-  from "../core/layout.ts";
+import { BG, GAP, HEADER_H, LOD_THRESHOLD, MIN_BLOCK_PX, RANGE_CAP, SCROLL_SETTLE_MS } from "../core/constants.ts";
+import {
+  bestFitBlockPx, cell, colsFor, mapBandY, pagesContentHeight, scrollForPageAtY, tablesBandBoxes,
+  topLeftPage, visiblePageRange, type BandBox,
+} from "../core/layout.ts";
 import { colorForObject, colorForPage, GLYPH, STRUCTURAL } from "../core/palette.ts";
 import { overlayFill } from "../core/overlay.ts";
 import { formatCount } from "../core/format.ts";
@@ -194,18 +196,21 @@ export class CanvasController {
     return pagesContentHeight(this.s.pageCount, this.cssW, this.blockPx());
   }
 
-  // Total height of the Tables layout at a hypothetical zoom (mirrors
-  // rebuildBands), so `fit()` can evaluate candidate zoom levels without mutating
-  // state.
+  // Total height of the Tables layout at a hypothetical zoom, so `fit()` can
+  // evaluate candidate zoom levels without mutating state.
   private tablesHeightAt(bp: number): number {
-    const cols = colsFor(this.cssW, bp);
-    const c = cell(bp);
-    let y = 0;
-    for (const grp of this.tableGroups()) {
-      const rows = Math.max(1, Math.ceil(grp.pageCount / cols));
-      y += HEADER_H + rows * c + 10;
-    }
-    return y;
+    return tablesBandBoxes(this.tableGroups().map((g) => g.pageCount),
+                           colsFor(this.cssW, bp), cell(bp)).height;
+  }
+
+  // The tables bands laid out at a FIXED, zoom-independent reference zoom
+  // (fully-zoomed-out), so the minimap always renders the same shape. Returned as
+  // plain boxes plus the groups (for colors), parallel by index.
+  private tablesReferenceLayout(): { groups: TableGroup[]; boxes: BandBox[]; height: number } {
+    const groups = this.tableGroups();
+    const { boxes, height } = tablesBandBoxes(
+      groups.map((g) => g.pageCount), colsFor(this.cssW, MIN_BLOCK_PX), cell(MIN_BLOCK_PX), true);
+    return { groups, boxes, height };
   }
 
   // ---- pages-view data (no-flash: keep old until new arrives) -------------
@@ -374,14 +379,10 @@ export class CanvasController {
   }
 
   private rebuildBands() {
-    const cols = this.cols();
-    this.bands = []; let y = 0;
-    for (const grp of this.tableGroups()) {
-      const rows = Math.max(1, Math.ceil(grp.pageCount / cols));
-      const h = HEADER_H + rows * this.cell();
-      this.bands.push({ grp, y, h }); y += h + 10;
-    }
-    this.tablesHeight = y;
+    const groups = this.tableGroups();
+    const { boxes, height } = tablesBandBoxes(groups.map((g) => g.pageCount), this.cols(), this.cell());
+    this.bands = groups.map((grp, i) => ({ grp, y: boxes[i].y, h: boxes[i].h }));
+    this.tablesHeight = height;
   }
 
   private ensureTablesData() {
@@ -479,8 +480,16 @@ export class CanvasController {
     const scrollTo = (clientY: number) => {
       const rect = this.minimap.getBoundingClientRect();
       const frac = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
-      const contentH = this.s.view === "pages" ? this.pagesContentHeight() : this.tablesHeight;
-      this.scroll[this.s.view] = Math.max(0, frac * contentH - this.cssH / 2);
+      if (this.s.view === "tables") {
+        // The minimap is drawn in the fixed reference layout; map the clicked
+        // fraction back through it to a current-layout scroll offset.
+        const ref = this.tablesReferenceLayout();
+        const cur: BandBox[] = this.bands.map((b) => ({ y: b.y, h: b.h }));
+        const curY = mapBandY(frac * ref.height, ref.boxes, cur);
+        this.scroll.tables = Math.max(0, curY - this.cssH / 2);
+      } else {
+        this.scroll[this.s.view] = Math.max(0, frac * this.pagesContentHeight() - this.cssH / 2);
+      }
       this.markScrolling();
     };
     this.addListener(this.minimap, "mousedown", ((e: MouseEvent) => {
@@ -494,10 +503,10 @@ export class CanvasController {
     const w = this.miniW, h = this.miniH;
     if (w === 0 || h === 0) return;
     this.mctx.clearRect(0, 0, w, h);
-    const contentH = this.s.view === "pages" ? this.pagesContentHeight() : this.tablesHeight;
-    if (contentH <= 0) return;
-    const scale = h / contentH;
     if (this.s.view === "pages") {
+      const contentH = this.pagesContentHeight();
+      if (contentH <= 0) return;
+      const scale = h / contentH;
       const cols = this.cols();
       // Colored by owning table/index (structural/unowned → neutral). The buckets
       // are a downsampled whole-file overview (see /api/minimap), not the run map.
@@ -507,13 +516,27 @@ export class CanvasController {
         this.mctx.fillStyle = bkt.objectId != null ? colorForObject(bkt.objectId) : STRUCTURAL["unallocated"];
         this.mctx.fillRect(0, rowS * this.cell() * scale, w, Math.max(0.5, (rowE - rowS + 1) * this.cell() * scale));
       }
-    } else {
-      for (const band of this.bands) {
-        this.mctx.fillStyle = this.bandColor(band.grp);
-        this.mctx.fillRect(0, band.y * scale, w, Math.max(0.5, band.h * scale));
-      }
+      this.drawMinimapViewport(this.scroll.pages * scale, Math.max(2, this.cssH * scale));
+      return;
     }
-    const vy = this.scroll[this.s.view] * scale, vh = Math.max(2, this.cssH * scale);
+    // Tables: draw from the FIXED reference layout so the minimap doesn't reflow as
+    // the user zooms; map the (zoom-dependent) current viewport into that layout so
+    // the highlight still lines up with the bands.
+    const ref = this.tablesReferenceLayout();
+    if (ref.height <= 0) return;
+    const scale = h / ref.height;
+    for (let i = 0; i < ref.groups.length; i++) {
+      this.mctx.fillStyle = this.bandColor(ref.groups[i]);
+      this.mctx.fillRect(0, ref.boxes[i].y * scale, w, Math.max(0.5, ref.boxes[i].h * scale));
+    }
+    const cur: BandBox[] = this.bands.map((b) => ({ y: b.y, h: b.h }));
+    const top = mapBandY(this.scroll.tables, cur, ref.boxes);
+    const bot = mapBandY(this.scroll.tables + this.cssH, cur, ref.boxes);
+    this.drawMinimapViewport(top * scale, Math.max(2, (bot - top) * scale));
+  }
+
+  private drawMinimapViewport(vy: number, vh: number) {
+    const w = this.miniW;
     this.mctx.fillStyle = "rgba(110,168,254,.22)"; this.mctx.fillRect(0, vy, w, vh);
     this.mctx.strokeStyle = "rgba(255,255,255,.8)"; this.mctx.lineWidth = 1;
     this.mctx.strokeRect(0.5, vy + 0.5, w - 1, vh - 1);
