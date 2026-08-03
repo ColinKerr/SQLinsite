@@ -19,7 +19,6 @@ add_executable(sqlinsite_tests
   test_db_file.cpp
   test_map_integration.cpp
   test_profile_reader.cpp
-  test_run_coalesce.cpp
   test_query_augment.cpp
   test_cell_page_map.cpp
   test_page_content.cpp

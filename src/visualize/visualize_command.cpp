@@ -101,9 +101,7 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
                                   httplib::Response& res) {
         const std::int64_t from = paramInt(req, "from", 1);
         const std::int64_t to = paramInt(req, "to", from);
-        const bool profiled = req.has_param("profiled");
-        res.set_content(db.runsJson(from, to, profiled, paramLeaves(req)),
-                        "application/json");
+        res.set_content(db.runsJson(from, to), "application/json");
     });
     server.Get("/api/minimap", [&db](const httplib::Request& req,
                                      httplib::Response& res) {

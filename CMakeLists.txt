@@ -95,7 +95,6 @@ add_library(sqlinsite_core STATIC
   src/map/map_writer.cpp
   src/map/map_command.cpp
   src/visualize/profile_reader.cpp
-  src/visualize/run_coalesce.cpp
   src/visualize/map_db.cpp
   src/visualize/query_augment.cpp
   src/visualize/cell_page_map.cpp

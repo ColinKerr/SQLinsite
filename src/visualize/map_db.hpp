@@ -86,10 +86,9 @@ public:
     std::string metaJson() const;
     // Sets tooLarge when (to-from+1) exceeds kPageRangeCap (response is empty).
     std::string pagesJson(std::int64_t from, std::int64_t to, bool& tooLarge) const;
-    // Structural runs from the map; when profiled is set and a profile is loaded,
-    // runs are recomputed to the contiguous spans accessed by the selected leaves.
-    std::string runsJson(std::int64_t from, std::int64_t to, bool profiled,
-                         const LeafFilter& sel) const;
+    // Structural runs from the map (the pre-coalesced `runs` table) overlapping
+    // [from, to]. The profile overlay is applied client-side.
+    std::string runsJson(std::int64_t from, std::int64_t to) const;
     // A downsampled, object-colored overview of the whole file for the minimap:
     // the page space split into at most `buckets` contiguous spans, each labelled
     // with the object owning the most pages in it (objectId null = unowned). Derived

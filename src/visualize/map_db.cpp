@@ -13,7 +13,6 @@
 
 #include "map/map_writer.hpp"
 #include "visualize/profile_reader.hpp"
-#include "visualize/run_coalesce.hpp"
 
 using nlohmann::json;
 
@@ -275,49 +274,12 @@ std::string MapDb::pagesJson(std::int64_t from, std::int64_t to,
     return j.dump();
 }
 
-std::string MapDb::runsJson(std::int64_t from, std::int64_t to, bool profiled,
-                            const LeafFilter& sel) const {
-    if (!profiled || !hasProfile_) {
-        json j = {{"runs", queryRows(db_,
-                                     "SELECT startPage,endPage,pageType,objectId FROM runs "
-                                     "WHERE startPage <= ? AND endPage >= ? ORDER BY startPage",
-                                     {to, from})}};
-        return j.dump();
-    }
-
-    // Profile-filtered: a run is a contiguous span of same (pageType, objectId)
-    // pages that the selected leaves accessed at least once. Accessed pages are
-    // bounded by the profile, so we coalesce them in C++ then keep the runs that
-    // overlap [from, to].
-    const std::string sql =
-        "SELECT p.pageNumber, p.pageType, p.objectId FROM pages p "
-        "WHERE p.pageNumber IN (SELECT DISTINCT pageNumber FROM profile WHERE 1=1" +
-        leafInClause(sel) + ") ORDER BY p.pageNumber";
-    sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
-        fail(std::string("runs query failed: ") + sqlite3_errmsg(db_));
-    }
-    std::vector<PageMeta> pages;
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
-        PageMeta m;
-        m.pageNumber = sqlite3_column_int64(stmt, 0);
-        m.pageType = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        if (sqlite3_column_type(stmt, 2) != SQLITE_NULL) {
-            m.objectId = sqlite3_column_int64(stmt, 2);
-        }
-        pages.push_back(std::move(m));
-    }
-    sqlite3_finalize(stmt);
-
-    json runs = json::array();
-    for (const CoalescedRun& r : coalesceRuns(pages)) {
-        if (r.startPage > to || r.endPage < from) continue;
-        runs.push_back({{"startPage", r.startPage},
-                        {"endPage", r.endPage},
-                        {"pageType", r.pageType},
-                        {"objectId", r.objectId ? json(*r.objectId) : json(nullptr)}});
-    }
-    return json({{"runs", std::move(runs)}}).dump();
+std::string MapDb::runsJson(std::int64_t from, std::int64_t to) const {
+    json j = {{"runs", queryRows(db_,
+                                 "SELECT startPage,endPage,pageType,objectId FROM runs "
+                                 "WHERE startPage <= ? AND endPage >= ? ORDER BY startPage",
+                                 {to, from})}};
+    return j.dump();
 }
 
 std::string MapDb::minimapJson(int buckets) const {

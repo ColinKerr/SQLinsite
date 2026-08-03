@@ -201,7 +201,7 @@ ParsedCli parseVisualize(const std::vector<std::string>& args,
 }  // namespace
 
 std::string usageText() {
-    return "Usage: sqlinsite profile  --test-file <db> --statements <db> "
+    return "Usage: sqlinsite profile  --test-file <db> --statements <json> "
            "--out-file <csv>\n"
            "                          [--timing raw|relative] [--quiet]\n"
            "       sqlinsite map      --test-file <db> --out-file <db>\n"

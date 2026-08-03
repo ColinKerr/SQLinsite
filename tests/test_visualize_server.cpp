@@ -399,19 +399,6 @@ TEST_CASE("profile overlay endpoints reflect a loaded profile") {
         CHECK(other["profile"]["reads"] == 0);
     }
 
-    SUBCASE("profiled runs are recomputed to accessed spans") {
-        auto all = nlohmann::json::parse(cli.Get("/api/runs?from=1&to=10&profiled=1")->body);
-        REQUIRE(all["runs"].size() >= 1);
-        for (const auto& run : all["runs"]) {
-            CHECK(run["endPage"].get<int>() <= 2);  // only pages 1,2 accessed
-        }
-        // Restricting to leaf 0 leaves only page 1.
-        auto one = nlohmann::json::parse(cli.Get("/api/runs?from=1&to=10&profiled=1&sel=0")->body);
-        REQUIRE(one["runs"].size() == 1);
-        CHECK(one["runs"][0]["startPage"] == 1);
-        CHECK(one["runs"][0]["endPage"] == 1);
-    }
-
     server.stop();
     th.join();
 }
