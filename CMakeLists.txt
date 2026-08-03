@@ -86,7 +86,7 @@ add_library(sqlinsite_core STATIC
   src/common/cli.cpp
   src/profile/vfs_shim.cpp
   src/profile/statements_file.cpp
-  src/profile/csv_writer.cpp
+  src/profile/sqlite_writer.cpp
   src/profile/profile_command.cpp
   src/map/sqlite_format.cpp
   src/map/db_file.cpp
@@ -94,7 +94,7 @@ add_library(sqlinsite_core STATIC
   src/map/map_builder.cpp
   src/map/map_writer.cpp
   src/map/map_command.cpp
-  src/visualize/profile_reader.cpp
+  src/visualize/profile_db.cpp
   src/visualize/map_db.cpp
   src/visualize/query_augment.cpp
   src/visualize/cell_page_map.cpp

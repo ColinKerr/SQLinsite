@@ -110,17 +110,23 @@ page's block inside its object band, not to the Pages grid).
 
 ### Profile overlay
 
-When a profile is loaded:
+When any profile source is present (a loaded `--profile-file` and/or an interactive
+Query-view run):
 
-- **Per-block:** `/api/profile/pages` for the visible range; touched blocks get a
-  read/write tint/badge, untouched blocks are drawn lightened.
+- **Per-block:** `/api/profile/pages` (filtered by the selected sources via `&sel=`)
+  for the visible range; touched blocks get a read/write tint/badge, untouched blocks
+  are drawn lightened.
 - **Zoomed out:** each run is shaded like the blocks in the per-block view (by its
   brightest accessed page on the same scale); unaccessed runs are darkened, never
   omitted (so there are no bare-background stripes).
+- The overlay is the **union of the selected profile sources**, so loaded profiles
+  and interactive query runs shade the same views (see [VISUALIZE.md](./VISUALIZE.md)).
 - Control for profile visualization is in the Page Top Bar `profile controls` section
   - The control should be a custom drop down with two sections
     - The first has two checkboxes one for reads and one for writes.
-    - The second has checkboxes for each session in the profile and child checkboxes for each query in the session.
+    - The second lists the profile **sources** (from `/api/profile/sources`): the
+      loaded-profile sessions (with their statements) and a **Queries** group of
+      interactive runs, each a checkbox that toggles that source in the overlay.
 
 ### View scroll bar
 

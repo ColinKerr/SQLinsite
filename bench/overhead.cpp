@@ -13,7 +13,7 @@
 
 #include <sqlite3.h>
 
-#include "profile/csv_writer.hpp"
+#include "profile/aggregating_sink.hpp"
 #include "profile/profiling_context.hpp"
 #include "profile/vfs_shim.hpp"
 
@@ -81,7 +81,6 @@ int main(int argc, char** argv) {
     const int iters = argc > 2 ? std::atoi(argv[2]) : 50;
 
     const std::string dbPath = "/tmp/sqlinsite_bench.db";
-    const std::string csvPath = "/tmp/sqlinsite_bench.csv";
     buildDb(dbPath, rows);
 
     if (registerSQLINSITEVfs() != SQLITE_OK) die("vfs register failed");
@@ -91,17 +90,16 @@ int main(int argc, char** argv) {
 
     const std::int64_t base = runWorkload(dbPath, nullptr, iters);
 
-    CsvWriter writer(csvPath);
-    writer.writeHeader();
+    AggregatingSink sink;
     ProfilingContext& ctx = profilingContext();
     ctx.sessionName = "bench";
     ctx.statementIndex = 0;
     ctx.pageSize = 4096;
-    ctx.out = &writer;
+    ctx.out = &sink;
     const std::int64_t shim = runWorkload(dbPath, kSQLINSITEVfsName, iters);
     ctx.out = nullptr;
 
-    const std::int64_t pages = writer.rowCount();
+    const std::int64_t pages = sink.accesses();
     const double perPageNs =
         pages > 0 ? static_cast<double>(shim - base) / static_cast<double>(pages)
                   : 0.0;

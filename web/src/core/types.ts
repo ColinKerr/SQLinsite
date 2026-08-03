@@ -14,13 +14,16 @@ export interface ObjectInfo {
   startLeafPage: number;
 }
 
-export interface Leaf {
-  leafId: number;
-  statementIndex: number;
+// One selectable profile source in the unified store: a loaded-profile statement
+// ('input') or an interactive Query-view run ('query'). See /api/profile/sources.
+export interface ProfileSource {
+  sourceId: number;                 // the sel/filter key
+  kind: "input" | "query";
+  sessionName: string;              // input: session name; query: the SQL text
+  sessionId: number;                // input: statementIndex; query: queryId
 }
-export interface SessionInfo {
-  session: string;
-  leaves: Leaf[];
+export interface ProfileSourcesResponse {
+  sources: ProfileSource[];
 }
 
 export interface Meta {
@@ -30,7 +33,6 @@ export interface Meta {
   typeCounts: { pageType: string; count: number }[];
   hasProfile: boolean;
   hasDb?: boolean;
-  sessions: SessionInfo[];
 }
 
 export interface PageRow {

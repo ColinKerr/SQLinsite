@@ -6,9 +6,10 @@
 enum class AccessType { Read, Write };
 
 // Receives one page access per read/write while profiling is active. Implemented
-// by CsvWriter (streams CSV rows for `sqlinsite profile`) and by AggregatingSink
-// (in-memory per-page totals for the visualize live-query view). The VFS holds an
-// AccessSink* in the profiling context and calls record() from its IO methods.
+// by SqliteWriter (streams rows into the `sqlinsite profile` output db) and by
+// AggregatingSink (in-memory per-page totals for the visualize live-query view).
+// The VFS holds an AccessSink* in the profiling context and calls record() from
+// its IO methods.
 class AccessSink {
 public:
     virtual ~AccessSink() = default;

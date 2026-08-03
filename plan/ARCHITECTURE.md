@@ -13,7 +13,7 @@
 
 The binary exposes several subcommands, each its own module set:
 
-- **`profile`** — runs statements through the wrapping VFS, emitting a per-page-access CSV. Detailed below; see [commands/PROFILE.md](./commands/PROFILE.md).
+- **`profile`** — runs statements through the wrapping VFS, emitting a **SQLite database** with a raw per-page-access log + run metadata. Detailed below; see [commands/PROFILE.md](./commands/PROFILE.md).
 - **`map`** — parses the SQLite file format into an **indexed SQLite file** describing every page. Uses the `sqlite_dbpage` vtab for raw page bytes; does not use the VFS shim. See [commands/MAP.md](./commands/MAP.md).
 - **`visualize serve`** — local web server that queries the map SQLite file by page-number range and renders it on a canvas with zoom and level-of-detail (+ optional profile overlay). With `--db-file` it also serves a live **Query** view that runs SQL against the mapped database (through the profiling VFS, fresh cold connection per run) and shows the pages each query touches. See [commands/VISUALIZE.md](./commands/VISUALIZE.md) and [commands/VISUALIZE_LIVE_QUERY_VIEW.md](./commands/VISUALIZE_LIVE_QUERY_VIEW.md).
 
@@ -24,7 +24,8 @@ The binary exposes several subcommands, each its own module set:
 SQLinsite registers a custom SQLite VFS that wraps an existing VFS (the
 platform default) and records every page-level read and write. The CLI opens
 the test database through this wrapping VFS, runs the configured statements,
-and streams one CSV row per page access to the output file.
+and streams one row per page access into the output SQLite database's `accesses`
+table (see [commands/PROFILE.md](./commands/PROFILE.md)).
 
 ```
 statements.json ──► profile command ──► open DB via "sqlinsite" VFS
@@ -37,7 +38,7 @@ statements.json ──► profile command ──► open DB via "sqlinsite" VFS
                                        real (default) VFS
                                               │
                                               ▼
-                                   CSV rows ──► --out-file
+                                 accesses rows ──► --out-file (SQLite)
 ```
 
 ## The wrapping VFS
@@ -55,8 +56,8 @@ VFS, with read/write paths instrumented.
   `SQLITE_OPEN_MAIN_DB` are flagged for logging; journal, WAL, and temp files
   delegate transparently and are **not** logged (see File scope).
 - **xRead / xWrite:** for a logged file, capture the start time, call the
-  underlying method, capture the end time, derive the page number, and emit a
-  CSV row. All other VFS methods (xClose, xSync, xFileSize, locking, etc.)
+  underlying method, capture the end time, derive the page number, and record the
+  access. All other VFS methods (xClose, xSync, xFileSize, locking, etc.)
   delegate straight through.
 
 ## Profiling context
@@ -76,9 +77,9 @@ struct ProfilingContext {
 The profile loop updates `sessionName` and `statementIndex` before executing
 each statement, and the VFS IO methods read the context when emitting rows.
 `out` is an `AccessSink` — an interface with a single `record(...)` method —
-so the same instrumented VFS can stream to a CSV (`CsvWriter`, the `profile`
-command) or aggregate per-page totals in memory (`AggregatingSink`, the live
-Query view) without the VFS knowing the difference.
+so the same instrumented VFS can stream rows into the profile db (`SqliteWriter`,
+the `profile` command) or aggregate per-page totals in memory (`AggregatingSink`,
+the live Query view) without the VFS knowing the difference.
 
 ## Page number derivation
 
@@ -178,7 +179,7 @@ src/                      include root; internal includes are written relative t
     vfs_shim.*            wrapping VFS and instrumented IO methods
     profiling_context.hpp process-global context bridging the profile loop ↔ VFS
     statements_file.*     statements JSON parsing/validation
-    csv_writer.*          buffered CSV output (an AccessSink)
+    sqlite_writer.*       writes the profile output SQLite db (an AccessSink)
     access_sink.hpp       AccessSink interface + AccessType (VFS → sink boundary)
     aggregating_sink.hpp  in-memory per-page totals sink (live Query view)
     page_index.hpp        offset → 1-based page number (pure, tested)
@@ -191,11 +192,10 @@ src/                      include root; internal includes are written relative t
     map_writer.*          create + populate the map SQLite database
     map_command.*         map CLI entry
   visualize/
-    map_db.*              read-only map queries (the visualize API) + profile table
-    profile_reader.*      aggregate a profile CSV per page number (pure, tested)
+    map_db.*              read-only map queries (the visualize API); owns the ProfileDb
+    profile_db.*          shared temp SQLite store of all profile sources (input + query)
     query_engine.*        live Query view: profiled runs, history, schema, row→page
     query_augment.*       prepend "table".rowid columns for row→page (pure, tested)
-    run_coalesce.*        coalesce accessed pages into runs (pure, tested)
     visualize_command.*   cpp-httplib server: static assets + map/query/schema API
     embedded_assets.hpp   accessor for the CMake-embedded front-end assets
 tests/                    doctest suite wired into ctest
@@ -204,16 +204,15 @@ tests/                    doctest suite wired into ctest
 Each command lives in its own `src/` subdirectory; shared code is in
 `src/common/`. The commands are independent: `map` and `visualize` do not use the
 VFS shim, and `profile` does not use the file-format parser. They meet only at the
-1-based page number, which `visualize` uses to join a map to a profile CSV. A
+1-based page number, which `visualize` uses to join a map to a profile database. A
 command's directory exposes its surface through its `*_command.hpp` (options +
 `run*` entry point); `common/cli` and `main` depend on those headers to dispatch.
 
 ## Overhead
 
 The instrumentation adds, per logged page access: two `steady_clock` reads, a
-context lookup, the page-index division, and a CSV row write into a 1 MiB
-buffer. The hot path performs no heap allocation — the session name is streamed
-directly and only quoted/escaped when it contains special characters.
+context lookup, the page-index division, and a bound `INSERT` into the profile db's
+`accesses` table (one transaction for the whole run, `synchronous=OFF`).
 
 `bench/overhead.cpp` (built as the `sqlinsite_bench` target) quantifies this by
 running an identical cold-cache, full-scan read workload through the default VFS

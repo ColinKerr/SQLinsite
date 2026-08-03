@@ -91,7 +91,7 @@ json readColumns(sqlite3_stmt* s) {
 
 }  // namespace
 
-QueryEngine::QueryEngine(std::string dbPath, int pageSize, const MapDb& map)
+QueryEngine::QueryEngine(std::string dbPath, int pageSize, MapDb& map)
     : dbPath_(std::move(dbPath)), pageSize_(pageSize), map_(&map) {}
 
 // Reads a table's column-name → storage index (cid) map via PRAGMA table_info.
@@ -414,6 +414,12 @@ std::string QueryEngine::runJson(const std::string& sql) {
     entry.pageCount = sink.distinctPages();
     entry.accesses = sink.accesses();
     entry.profilePages = profilePagesJson(sink);
+    // Record this run's per-page profile as a 'query' source in the shared profile
+    // db, so it can be overlaid in any view (not just the Query canvas).
+    std::vector<ProfileDb::PageCount> pageCounts;
+    pageCounts.reserve(sink.pages().size());
+    for (const auto& p : sink.pages()) pageCounts.push_back({p.pageNumber, p.reads, p.writes});
+    map_->addQuerySource(entry.sql, entry.id, pageCounts);
     // The per-page profile can be huge (a wide analytical query touches hundreds of
     // thousands of pages). It's only needed by the map overlay (a secondary tab), so
     // keep the run response small: inline it only when small, otherwise defer it to

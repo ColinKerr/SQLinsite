@@ -28,9 +28,10 @@ public:
     // /api/query/:id/profile fetch so the initial response stays small.
     static constexpr std::int64_t kInlineProfileCap = 20000;
 
-    // `map` supplies rowid→page lookups for row→page mapping; it must outlive
-    // this engine (owned alongside it by the server).
-    QueryEngine(std::string dbPath, int pageSize, const MapDb& map);
+    // `map` supplies rowid→page lookups for row→page mapping and receives each
+    // run's per-page profile as a 'query' source (see addQuerySource); it must
+    // outlive this engine (owned alongside it by the server).
+    QueryEngine(std::string dbPath, int pageSize, MapDb& map);
 
     // Runs `sql`, profiling execution. Returns /api/query/run JSON:
     // {queryId, columns, rowCount, truncated, pageCount, accesses, profile:{pages}}
@@ -83,7 +84,7 @@ private:
 
     std::string dbPath_;
     int pageSize_;
-    const MapDb* map_;
+    MapDb* map_;
     mutable std::mutex mu_;
     // The connection of the in-flight runJson, so cancel() can sqlite3_interrupt it
     // from another (request) thread. Guarded by activeMu_ — a SEPARATE lock, because

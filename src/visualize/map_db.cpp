@@ -12,7 +12,6 @@
 #include <sqlite3.h>
 
 #include "map/map_writer.hpp"
-#include "visualize/profile_reader.hpp"
 
 using nlohmann::json;
 
@@ -61,9 +60,9 @@ json queryRows(sqlite3* db, const std::string& sql,
 // Builds an " AND leafId IN (...)" fragment for the selected leaves, or empty
 // when nothing is selected (meaning "all leaves"). The ids are integers parsed
 // server-side, so inlining them is injection-safe.
-std::string leafInClause(const std::vector<int>& sel) {
+std::string sourceInClause(const std::vector<int>& sel) {
     if (sel.empty()) return {};
-    std::string s = " AND leafId IN (";
+    std::string s = " AND sourceId IN (";
     for (std::size_t i = 0; i < sel.size(); ++i) {
         if (i) s += ',';
         s += std::to_string(sel[i]);
@@ -135,41 +134,28 @@ MapDb::MapDb(const std::string& mapPath) : mapPath_(mapPath) {
 
 MapDb::~MapDb() = default;
 
-void MapDb::loadProfile(const std::string& csvPath) {
-    // Retain the aggregated rows and mark the profile present; each pool connection
-    // then builds its own private TEMP `profile` table on open (see onConnOpen).
-    // Always called before serving, so every connection is opened after this.
-    const ProfileAggregate agg = aggregateProfileFile(csvPath);
-    leaves_ = agg.leaves;
-    profileRows_ = agg.leafPages;
+void MapDb::loadProfile(const std::string& profileDbPath) {
+    // Import the input profile as 'input' sources into the shared profile db; each
+    // pool connection ATTACHes it on open (see onConnOpen). Always called before
+    // serving, so every connection is opened after this.
+    profile_.importInputProfile(profileDbPath);
     hasProfile_ = true;
 }
 
-void MapDb::onConnOpen(sqlite3* c) const {
-    if (hasProfile_) populateProfile(c);
+std::int64_t MapDb::addQuerySource(const std::string& sql, int queryId,
+                                   const std::vector<ProfileDb::PageCount>& pages) {
+    const std::int64_t sourceId = profile_.addQuerySource(sql, queryId, pages);
+    hasProfile_ = true;  // an overlay is now available even without --profile-file
+    return sourceId;
 }
 
-void MapDb::populateProfile(sqlite3* c) const {
-    // TEMP tables live in a per-connection temp DB, writable even though the main
-    // map is opened read-only.
-    sqlite3_exec(c,
-                 "CREATE TEMP TABLE profile(leafId INTEGER, pageNumber INTEGER, "
-                 "reads INTEGER, writes INTEGER)",
-                 nullptr, nullptr, nullptr);
-    sqlite3_exec(c, "BEGIN", nullptr, nullptr, nullptr);
-    sqlite3_stmt* ins = nullptr;
-    sqlite3_prepare_v2(c, "INSERT INTO profile VALUES (?,?,?,?)", -1, &ins, nullptr);
-    for (const LeafPageAccess& a : profileRows_) {
-        sqlite3_bind_int(ins, 1, a.leafId);
-        sqlite3_bind_int64(ins, 2, a.pageNumber);
-        sqlite3_bind_int64(ins, 3, a.reads);
-        sqlite3_bind_int64(ins, 4, a.writes);
-        sqlite3_step(ins);
-        sqlite3_reset(ins);
-    }
-    sqlite3_finalize(ins);
-    sqlite3_exec(c, "COMMIT", nullptr, nullptr, nullptr);
-    sqlite3_exec(c, "CREATE INDEX profile_page ON profile(pageNumber)", nullptr, nullptr, nullptr);
+void MapDb::onConnOpen(sqlite3* c) const {
+    // ATTACH the shared profile db so overlay queries can read `prof.page_access`
+    // and `prof.sources`. Always attached (even with no --profile-file) so
+    // interactive Query-view runs can be overlaid too.
+    char* sql = sqlite3_mprintf("ATTACH DATABASE %Q AS prof", profile_.path().c_str());
+    sqlite3_exec(c, sql, nullptr, nullptr, nullptr);
+    sqlite3_free(sql);
 }
 
 std::string MapDb::metaJson() const {
@@ -177,21 +163,9 @@ std::string MapDb::metaJson() const {
     json rows = queryRows(db_, "SELECT * FROM meta LIMIT 1");
     if (!rows.empty()) meta = rows[0];
 
-    // Sessions tree for the profile checkbox control: each session lists its
-    // statement leaves (leafId + 0-based statement index), preserving CSV order.
-    json sessions = json::array();
-    json* current = nullptr;
-    std::string currentName;
-    for (const ProfileLeaf& leaf : leaves_) {
-        if (current == nullptr || leaf.sessionName != currentName) {
-            sessions.push_back({{"session", leaf.sessionName}, {"leaves", json::array()}});
-            current = &sessions.back();
-            currentName = leaf.sessionName;
-        }
-        (*current)["leaves"].push_back(
-            {{"leafId", leaf.leafId}, {"statementIndex", leaf.statementIndex}});
-    }
-
+    // The profile selection tree (loaded 'input' + interactive 'query' sources) is
+    // served separately by /api/profile/sources, which the client refetches after
+    // each run to pick up new sources.
     json j = {
         {"meta", meta},
         // The format version this build understands; the front-end compares it to
@@ -211,7 +185,6 @@ std::string MapDb::metaJson() const {
          queryRows(db_, "SELECT pageType,count FROM type_counts ORDER BY pageType")},
         {"hasProfile", hasProfile_},
         {"hasDb", hasDb_},
-        {"sessions", sessions},
     };
     return j.dump();
 }
@@ -528,7 +501,7 @@ std::string MapDb::pageJson(std::int64_t pageNumber, const LeafFilter& sel) cons
         json p = queryRows(
             db_,
             "SELECT COALESCE(SUM(reads),0) AS reads, COALESCE(SUM(writes),0) AS writes "
-            "FROM profile WHERE pageNumber=?" + leafInClause(sel),
+            "FROM prof.page_access WHERE pageNumber=?" + sourceInClause(sel),
             {pageNumber});
         j["profile"] = p.empty() ? json({{"reads", 0}, {"writes", 0}}) : p[0];
     }
@@ -541,11 +514,19 @@ std::string MapDb::profilePagesJson(std::int64_t from, std::int64_t to,
     json j = {{"pages", queryRows(
                             db_,
                             "SELECT pageNumber, SUM(reads) AS reads, SUM(writes) AS writes "
-                            "FROM profile WHERE pageNumber BETWEEN ? AND ?" +
-                                leafInClause(sel) +
+                            "FROM prof.page_access WHERE pageNumber BETWEEN ? AND ?" +
+                                sourceInClause(sel) +
                                 " GROUP BY pageNumber ORDER BY pageNumber",
                             {from, to})}};
     return j.dump();
+}
+
+std::string MapDb::profileSourcesJson() const {
+    return json({{"sources",
+                  queryRows(db_,
+                            "SELECT sourceId, kind, sessionName, sessionId "
+                            "FROM prof.sources ORDER BY sourceId")}})
+        .dump();
 }
 
 namespace {

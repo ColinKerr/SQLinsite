@@ -200,6 +200,10 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
         res.set_content(db.profilePagesJson(from, to, paramLeaves(req)),
                         "application/json");
     });
+    // The profile selection tree's sources (loaded 'input' + interactive 'query').
+    server.Get("/api/profile/sources", [&db](const httplib::Request&, httplib::Response& res) {
+        res.set_content(db.profileSourcesJson(), "application/json");
+    });
 
     // Page Tree view (b-tree structure from the map; lazy/windowed).
     server.Get("/api/tree/roots", [&db](const httplib::Request&, httplib::Response& res) {

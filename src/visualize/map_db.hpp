@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "visualize/profile_reader.hpp"
+#include "visualize/profile_db.hpp"
 
 struct sqlite3;
 
@@ -62,8 +62,16 @@ public:
     MapDb(const MapDb&) = delete;
     MapDb& operator=(const MapDb&) = delete;
 
-    // Aggregates a profile CSV into a temp table for overlay queries.
-    void loadProfile(const std::string& csvPath);
+    // Imports a `sqlinsite profile` output db (--profile-file) into the shared
+    // profile db as 'input' sources, for overlay queries.
+    void loadProfile(const std::string& profileDbPath);
+
+    // Records an interactive Query-view run's per-page profile as a 'query' source
+    // (sessionName = the SQL, sessionId = queryId) in the shared profile db, so
+    // every view can overlay it. Returns the new sourceId. Serialized by the caller
+    // (the QueryEngine runs one query at a time).
+    std::int64_t addQuerySource(const std::string& sql, int queryId,
+                                const std::vector<ProfileDb::PageCount>& pages);
 
     // Reported in /api/meta so the front-end can enable the live Query view.
     void setHasDb(bool v) { hasDb_ = v; }
@@ -124,6 +132,10 @@ public:
     std::string pageJson(std::int64_t pageNumber, const LeafFilter& sel) const;
     std::string profilePagesJson(std::int64_t from, std::int64_t to,
                                  const LeafFilter& sel) const;
+    // Every profile source (loaded 'input' + interactive 'query'), for the profile
+    // selection tree. Refetched by the client after a run to pick up new sources.
+    // JSON: {"sources":[{sourceId,kind,sessionName,sessionId}...]} ordered by id.
+    std::string profileSourcesJson() const;
 
     // The map's page-type string for a page, or "" if the page is unknown.
     std::string pageType(std::int64_t page) const;
@@ -182,19 +194,19 @@ public:
     std::string treeSearchJson(const std::string& query, int limit) const;
 
 private:
-    // Builds the private TEMP `profile` table on a freshly opened pool connection
-    // (each connection is independent, so overlays need their own copy).
+    // ATTACHes the shared profile db (`prof`) on a freshly opened pool connection
+    // so its overlay queries can read every profile source (see ProfileDb).
     void onConnOpen(sqlite3* c) const;
-    void populateProfile(sqlite3* c) const;
     // Lazily builds + caches an object's ordinal-runs (see objectRunsJson).
     const std::vector<OrdinalRun>& objectRuns(std::int64_t objectId) const;
 
+    // Declared before db_ so the read-pool connections (which ATTACH profile_) are
+    // torn down before profile_ deletes its temp file.
+    ProfileDb profile_;                // unified store: loaded + interactive sources
     ReadPool db_;                      // per-thread read-only connections (see above)
     std::string mapPath_;              // for opening short-lived private connections
     bool hasProfile_ = false;
     bool hasDb_ = false;
-    std::vector<ProfileLeaf> leaves_;  // profile session/statement manifest
-    std::vector<LeafPageAccess> profileRows_; // retained to seed each connection's profile table
     mutable std::mutex minimapMu_;     // guards the minimap cache across threads
     mutable std::string minimapCache_; // cached minimapJson (map is static)
     mutable int minimapCacheBuckets_ = -1;

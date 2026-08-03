@@ -288,8 +288,11 @@ TEST_CASE("server answers the map query API") {
         CHECK(j["objects"][0].contains("tableName"));
         CHECK(j["objects"][0].contains("startPage"));
         CHECK(j["objects"][0].contains("startLeafPage"));
-        CHECK(j["sessions"].is_array());
-        CHECK(j["sessions"].empty());  // no profile loaded
+        CHECK(j["hasProfile"] == false);  // no profile loaded
+        // The profile source manifest is served separately and starts empty.
+        auto srcs = nlohmann::json::parse(cli.Get("/api/profile/sources")->body);
+        CHECK(srcs["sources"].is_array());
+        CHECK(srcs["sources"].empty());
     }
     SUBCASE("pages range returns rows") {
         auto r = cli.Get("/api/pages?from=1&to=2");
@@ -340,16 +343,29 @@ TEST_CASE("server answers the map query API") {
     th.join();
 }
 
+// Writes a `sqlinsite profile` output db (raw `accesses` table) at `path`.
+static void writeProfileDb(const std::string& path, const char* accessRows) {
+    std::remove(path.c_str());
+    sqlite3* db = nullptr;
+    REQUIRE(sqlite3_open(path.c_str(), &db) == SQLITE_OK);
+    const std::string sql =
+        "CREATE TABLE accesses(sessionName TEXT, statementIndex INTEGER, "
+        "timeStart INTEGER, timeEnd INTEGER, pageNumber INTEGER, access TEXT);" +
+        std::string(accessRows);
+    REQUIRE(sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_close(db);
+}
+
 TEST_CASE("profile overlay endpoints reflect a loaded profile") {
     MapDb db(buildMapFixture());
-    const std::string csv = tmpPath("viz.csv");
+    const std::string profileDb = tmpPath("viz.profile.sqlite");
     // Two leaves: (S,0) reads page 1 twice; (S,1) writes page 2 once.
-    writeTextFile(csv,
-                  "Session Name,Statement Index,Time Start,Time End,Page Number,Read or Write\n"
-                  "S,0,1,2,1,Read\n"
-                  "S,0,3,4,1,Read\n"
-                  "S,1,5,6,2,Write\n");
-    db.loadProfile(csv);
+    writeProfileDb(profileDb,
+                   "INSERT INTO accesses VALUES"
+                   " ('S',0,1,2,1,'Read'),"
+                   " ('S',0,3,4,1,'Read'),"
+                   " ('S',1,5,6,2,'Write');");
+    db.loadProfile(profileDb);
 
     httplib::Server server;
     configureVisualizeRoutes(server, db);
@@ -363,15 +379,21 @@ TEST_CASE("profile overlay endpoints reflect a loaded profile") {
 
     httplib::Client cli("127.0.0.1", port);
 
-    SUBCASE("meta exposes the session/statement manifest") {
+    SUBCASE("meta reports a profile is present") {
         auto r = cli.Get("/api/meta");
         REQUIRE(r);
+        CHECK(nlohmann::json::parse(r->body)["hasProfile"] == true);
+    }
+
+    SUBCASE("profile/sources lists the loaded input sources") {
+        auto r = cli.Get("/api/profile/sources");
+        REQUIRE(r);
         auto j = nlohmann::json::parse(r->body);
-        CHECK(j["hasProfile"] == true);
-        REQUIRE(j["sessions"].size() == 1);
-        CHECK(j["sessions"][0]["session"] == "S");
-        CHECK(j["sessions"][0]["leaves"].size() == 2);
-        CHECK(j["sessions"][0]["leaves"][0]["statementIndex"] == 0);
+        REQUIRE(j["sources"].size() == 2);  // (S,0) and (S,1)
+        CHECK(j["sources"][0]["kind"] == "input");
+        CHECK(j["sources"][0]["sessionName"] == "S");
+        CHECK(j["sources"][0]["sessionId"] == 0);
+        CHECK(j["sources"][1]["sessionId"] == 1);
     }
 
     SUBCASE("profile pages aggregate across all leaves") {
@@ -383,8 +405,9 @@ TEST_CASE("profile overlay endpoints reflect a loaded profile") {
         CHECK(pj["pages"][0]["reads"] == 2);
     }
 
-    SUBCASE("sel filters profile pages to selected leaves") {
-        auto pages = cli.Get("/api/profile/pages?from=1&to=10&sel=0");
+    SUBCASE("sel filters profile pages to selected sources") {
+        // sourceId 1 = leaf (S,0), which reads page 1 twice.
+        auto pages = cli.Get("/api/profile/pages?from=1&to=10&sel=1");
         REQUIRE(pages);
         auto pj = nlohmann::json::parse(pages->body);
         REQUIRE(pj["pages"].size() == 1);
@@ -395,7 +418,8 @@ TEST_CASE("profile overlay endpoints reflect a loaded profile") {
     SUBCASE("page detail respects the sel filter") {
         auto all = nlohmann::json::parse(cli.Get("/api/page/1")->body);
         CHECK(all["profile"]["reads"] == 2);
-        auto other = nlohmann::json::parse(cli.Get("/api/page/1?sel=1")->body);
+        // sourceId 2 = leaf (S,1), which touches page 2, not page 1.
+        auto other = nlohmann::json::parse(cli.Get("/api/page/1?sel=2")->body);
         CHECK(other["profile"]["reads"] == 0);
     }
 

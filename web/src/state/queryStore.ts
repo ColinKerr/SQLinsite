@@ -3,6 +3,7 @@ import {
   cancelQuery, explainQuery, fetchHistory, fetchHistoryEntry, fetchPageRowidRuns, fetchRows, runQuery,
 } from "../core/queryApi.ts";
 import { pageRowsSql, qi } from "../core/pageQuery.ts";
+import { useViz } from "./store.ts";
 import type {
   ExplainResult, HistoryItem, ProfilePage, QueryColumn, RowsResponse, RunSummary,
 } from "../core/types.ts";
@@ -116,6 +117,8 @@ export const useQuery = create<QueryState>((set, get) => ({
       const rows = await fetchRows(summary.queryId, 0, ROW_WINDOW);
       set({ running: false, run: summary, rows, resultsTab: "table" });
       void get().refreshHistory();
+      // Surface this run as the active overlay source across every view.
+      void useViz.getState().onQueryRun(summary.queryId);
     } catch (e) {
       if (isAbort(e)) { set({ running: false }); return; }  // cancel aborted the fetch
       set({ running: false, error: e instanceof Error ? e.message : "query failed" });
@@ -172,6 +175,7 @@ export const useQuery = create<QueryState>((set, get) => ({
         },
       });
       void get().refreshHistory();
+      void useViz.getState().onQueryRun(summary.queryId);
     } catch (e) {
       if (isAbort(e)) { set({ running: false }); return; }
       set({ running: false, error: e instanceof Error ? e.message : "query failed" });
@@ -201,6 +205,7 @@ export const useQuery = create<QueryState>((set, get) => ({
         profile: entry.profile, profileDeferred: entry.profileDeferred,
       },
     });
+    void useViz.getState().onQueryRun(entry.id);
   },
 
   // Fetches the next window of rows and appends them (incremental virtualization).

@@ -262,6 +262,22 @@ TEST_CASE("live-query routes are served when a db is attached") {
         CHECK(r->status == 400);
         CHECK(json::parse(r->body).contains("error"));
     }
+    SUBCASE("a query run becomes an overlayable profile source") {
+        // No --profile-file, so no overlay exists yet.
+        CHECK(json::parse(cli.Get("/api/meta")->body)["hasProfile"] == false);
+        // Running a query records its per-page profile as a 'query' source
+        // (the first source → sourceId 1).
+        auto run = json::parse(
+            cli.Post("/api/query/run", "SELECT id FROM T ORDER BY id", "text/plain")->body);
+        REQUIRE(run["queryId"].is_number());
+        const int pageCount = run["pageCount"].get<int>();
+        REQUIRE(pageCount >= 1);
+        // An overlay now exists and, filtered to that source, matches the run's pages.
+        CHECK(json::parse(cli.Get("/api/meta")->body)["hasProfile"] == true);
+        auto pages = json::parse(
+            cli.Get("/api/profile/pages?from=1&to=1000000&sel=1")->body);
+        CHECK(static_cast<int>(pages["pages"].size()) == pageCount);
+    }
     server.stop();
     th.join();
 }

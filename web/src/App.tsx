@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchMeta, fetchMinimap, fetchProfilePages } from "./core/api.ts";
+import { fetchMeta, fetchMinimap } from "./core/api.ts";
 import { formatVersionError } from "./core/version.ts";
 import { perfMark, perfReady } from "./core/perf.ts";
 import { Profile } from "./core/profile.ts";
@@ -27,18 +27,15 @@ export default function App() {
       // Refuse a map whose format version this build can't read (older or newer).
       const verr = formatVersionError(meta.meta.formatVersion, meta.expectedFormatVersion);
       if (verr) { setError(verr); return; }
-      const pageCount = meta.meta.pageCount;
-      // Fetch the independent boot data in parallel: the downsampled object-colored
-      // minimap (a few KB, not the whole-file run map) and, if present, the profile
-      // overlay. The Tables view's structural-page bands are loaded lazily on first
+      // Fetch the downsampled object-colored minimap (a few KB, not the whole-file
+      // run map). The Tables view's structural-page bands are loaded lazily on first
       // entry (see store), so that heavy query no longer blocks initial load.
-      const [minimap, profileData] = await Promise.all([
-        fetchMinimap(),
-        meta.hasProfile ? fetchProfilePages(1, pageCount, "") : Promise.resolve(null),
-      ]);
+      const minimap = await fetchMinimap();
       perfMark("minimap-loaded");
-      const profile = meta.hasProfile ? new Profile(profileData ?? { pages: [] }) : Profile.empty();
-      initFromMeta(meta, minimap?.buckets ?? [], profile);
+      initFromMeta(meta, minimap?.buckets ?? [], Profile.empty());
+      // Load the unified profile sources (loaded + any interactive runs) and build
+      // the overlay from them; this is what every view shades against.
+      await useViz.getState().loadSources();
       // History navigation: subscribe to nav changes, seed the stack from
       // localStorage, then restore the position from the URL (or the last one).
       initHistory();

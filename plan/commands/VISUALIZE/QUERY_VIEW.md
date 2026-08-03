@@ -33,6 +33,16 @@ The tree does not show any per-node profile results (e.g. accessed page counts)
 for now; nodes show only their static page count and size, the same as in every
 other view.
 
+### Unified profile overlay
+
+The Pages/Tables tabs shade against the **same unified profile overlay** as the main
+Pages/Tables views, not a private per-run overlay. Each run is recorded server-side
+as a `kind='query'` profile *source* (see [VISUALIZE.md](./VISUALIZE.md) and the
+`ProfileDb`); running a query auto-selects its source, so the run lights up here
+**and** in the main Pages/Tables views. The Overlay control (Page Top Bar) lists all
+sources — loaded-profile sessions and past query runs — so any profile can be shown
+in any view. A history entry re-selects its run's source when loaded.
+
 ## Results View
 
 ### Query Editor

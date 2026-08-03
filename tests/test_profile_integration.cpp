@@ -2,10 +2,12 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <sqlite3.h>
 
 #include "profile/profile_command.hpp"
+#include "profile/sqlite_writer.hpp"
 #include "test_util.hpp"
 
 namespace {
@@ -35,10 +37,6 @@ void buildFixtureDbWithPageSize(const std::string& path, int pageSize) {
     sqlite3_close(db);
 }
 
-bool contains(const std::string& haystack, const std::string& needle) {
-    return haystack.find(needle) != std::string::npos;
-}
-
 int actualPageSize(const std::string& path) {
     sqlite3* db = nullptr;
     REQUIRE(sqlite3_open(path.c_str(), &db) == SQLITE_OK);
@@ -52,12 +50,42 @@ int actualPageSize(const std::string& path) {
     return pageSize;
 }
 
+// Opens the profile db and runs a scalar-int query (first column of first row).
+std::int64_t profileScalar(const std::string& path, const std::string& sql) {
+    sqlite3* db = nullptr;
+    REQUIRE(sqlite3_open_v2(path.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) ==
+            SQLITE_OK);
+    sqlite3_stmt* stmt = nullptr;
+    REQUIRE(sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK);
+    std::int64_t v = -1;
+    if (sqlite3_step(stmt) == SQLITE_ROW) v = sqlite3_column_int64(stmt, 0);
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return v;
+}
+
+std::string profileText(const std::string& path, const std::string& sql) {
+    sqlite3* db = nullptr;
+    REQUIRE(sqlite3_open_v2(path.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) ==
+            SQLITE_OK);
+    sqlite3_stmt* stmt = nullptr;
+    REQUIRE(sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK);
+    std::string v;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const auto* t = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        if (t) v = t;
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return v;
+}
+
 }  // namespace
 
 TEST_CASE("profile produces read and write rows for the main db") {
     const std::string dbPath = tmpPath("fixture.db");
     const std::string statementsPath = tmpPath("integration_statements.json");
-    const std::string outPath = tmpPath("integration_out.csv");
+    const std::string outPath = tmpPath("integration_out.sqlite");
     buildFixtureDb(dbPath);
 
     writeTextFile(statementsPath, R"json({
@@ -79,29 +107,28 @@ TEST_CASE("profile produces read and write rows for the main db") {
     ProfileOptions options{dbPath, statementsPath, outPath, false, true};
     CHECK(runProfile(options) == 0);
 
-    const std::string csv = readTextFile(outPath);
-    CHECK(contains(csv, "Session Name,Statement Index"));
-    CHECK(contains(csv, "ReadSession,0,"));
-    CHECK(contains(csv, ",Read\n"));
-    CHECK(contains(csv, "WriteSession,0,"));
-    CHECK(contains(csv, ",Write\n"));
+    // The output is a SQLite db with a raw `accesses` table and a `meta` row.
+    CHECK(profileScalar(outPath,
+                        "SELECT COUNT(*) FROM accesses WHERE sessionName='ReadSession' "
+                        "AND statementIndex=0 AND access='Read'") > 0);
+    CHECK(profileScalar(outPath,
+                        "SELECT COUNT(*) FROM accesses WHERE sessionName='WriteSession' "
+                        "AND access='Write'") > 0);
+    // Meta carries the run's provenance/compat fields.
+    CHECK(profileScalar(outPath, "SELECT formatVersion FROM meta") ==
+          SqliteWriter::kFormatVersion);
+    CHECK(profileText(outPath, "SELECT name FROM meta") == "Integration");
+    CHECK(profileText(outPath, "SELECT timing FROM meta") == "raw");
+    CHECK(profileScalar(outPath, "SELECT pageSize FROM meta") == actualPageSize(dbPath));
 
     // The in-place INSERT must be visible afterward.
-    sqlite3* db = nullptr;
-    REQUIRE(sqlite3_open(dbPath.c_str(), &db) == SQLITE_OK);
-    sqlite3_stmt* stmt = nullptr;
-    REQUIRE(sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM Fruit", -1, &stmt,
-                               nullptr) == SQLITE_OK);
-    REQUIRE(sqlite3_step(stmt) == SQLITE_ROW);
-    CHECK(sqlite3_column_int(stmt, 0) == 4);
-    sqlite3_finalize(stmt);
-    sqlite3_close(db);
+    CHECK(profileScalar(dbPath, "SELECT COUNT(*) FROM Fruit") == 4);
 }
 
 TEST_CASE("page indices are correct with a 65536-byte page size") {
     const std::string dbPath = tmpPath("fixture_64k.db");
     const std::string statementsPath = tmpPath("statements_64k.json");
-    const std::string outPath = tmpPath("out_64k.csv");
+    const std::string outPath = tmpPath("out_64k.sqlite");
     buildFixtureDbWithPageSize(dbPath, 65536);
     REQUIRE(actualPageSize(dbPath) == 65536);
 
@@ -117,17 +144,16 @@ TEST_CASE("page indices are correct with a 65536-byte page size") {
     ProfileOptions options{dbPath, statementsPath, outPath, false, true};
     CHECK(runProfile(options) == 0);
 
-    const std::string csv = readTextFile(outPath);
-    // A small DB at 64k page size keeps everything in page 0; no negative or
-    // bogus indices should appear.
-    CHECK(contains(csv, "S,0,"));
-    CHECK(!contains(csv, ",-1,"));
+    CHECK(profileScalar(outPath, "SELECT COUNT(*) FROM accesses WHERE sessionName='S'") > 0);
+    // No negative/bogus page indices.
+    CHECK(profileScalar(outPath, "SELECT COUNT(*) FROM accesses WHERE pageNumber<0") == 0);
+    CHECK(profileScalar(outPath, "SELECT pageSize FROM meta") == 65536);
 }
 
 TEST_CASE("a failing statement does not stop later statements but fails the run") {
     const std::string dbPath = tmpPath("fixture_err.db");
     const std::string statementsPath = tmpPath("statements_err.json");
-    const std::string outPath = tmpPath("out_err.csv");
+    const std::string outPath = tmpPath("out_err.sqlite");
     buildFixtureDb(dbPath);
 
     writeTextFile(statementsPath, R"json({
@@ -148,13 +174,15 @@ TEST_CASE("a failing statement does not stop later statements but fails the run"
     ProfileOptions options{dbPath, statementsPath, outPath, false, true};
     CHECK(runProfile(options) != 0);  // overall failure...
 
-    const std::string csv = readTextFile(outPath);
-    CHECK(contains(csv, "S,1,"));  // ...but statement 1 still ran and logged
+    // ...but statement 1 still ran and logged.
+    CHECK(profileScalar(outPath,
+                        "SELECT COUNT(*) FROM accesses WHERE sessionName='S' "
+                        "AND statementIndex=1") > 0);
 }
 
 TEST_CASE("a missing test file is rejected") {
     const std::string statementsPath = tmpPath("statements_missing.json");
-    const std::string outPath = tmpPath("out_missing.csv");
+    const std::string outPath = tmpPath("out_missing.sqlite");
     writeTextFile(statementsPath, R"json({
         "TestRun": {
             "Name": "Missing",
@@ -172,7 +200,7 @@ TEST_CASE("a missing test file is rejected") {
 TEST_CASE("relative timing rebases timestamps near zero") {
     const std::string dbPath = tmpPath("fixture_rel.db");
     const std::string statementsPath = tmpPath("statements_rel.json");
-    const std::string outPath = tmpPath("out_rel.csv");
+    const std::string outPath = tmpPath("out_rel.sqlite");
     buildFixtureDb(dbPath);
     writeTextFile(statementsPath, R"json({
         "TestRun": {
@@ -187,18 +215,9 @@ TEST_CASE("relative timing rebases timestamps near zero") {
                            /*relativeTiming=*/true, /*quiet=*/true};
     CHECK(runProfile(options) == 0);
 
-    // Parse the first data row's Time Start: with rebasing it must be small
-    // (well under one second of nanoseconds), unlike raw steady_clock ticks.
-    const std::string csv = readTextFile(outPath);
-    const std::size_t nl = csv.find('\n');
-    REQUIRE(nl != std::string::npos);
-    const std::string firstRow = csv.substr(nl + 1, csv.find('\n', nl + 1) - nl - 1);
-    // Columns: name,index,start,end,page,rw  -> take field 2 (start).
-    const std::size_t c1 = firstRow.find(',');
-    const std::size_t c2 = firstRow.find(',', c1 + 1);
-    const std::size_t c3 = firstRow.find(',', c2 + 1);
-    const std::int64_t start =
-        std::stoll(firstRow.substr(c2 + 1, c3 - c2 - 1));
-    CHECK(start >= 0);
-    CHECK(start < 1'000'000'000);  // < 1s of ns since the run baseline
+    // With rebasing the earliest timeStart must be small (well under 1s of ns),
+    // unlike raw steady_clock ticks; and meta records the timing mode.
+    CHECK(profileScalar(outPath, "SELECT MIN(timeStart) FROM accesses") >= 0);
+    CHECK(profileScalar(outPath, "SELECT MIN(timeStart) FROM accesses") < 1'000'000'000);
+    CHECK(profileText(outPath, "SELECT timing FROM meta") == "relative");
 }

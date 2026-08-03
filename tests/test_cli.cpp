@@ -8,19 +8,19 @@ ParsedCli parse(std::vector<std::string> args) { return parseCli(args); }
 
 TEST_CASE("parses a full profile invocation") {
     ParsedCli p = parse({"profile", "--test-file", "a.db", "--statements",
-                         "s.json", "--out-file", "o.csv"});
+                         "s.json", "--out-file", "o.sqlite"});
     REQUIRE(p.kind == ParsedCli::Kind::Profile);
     CHECK(p.profile.testFile == "a.db");
     CHECK(p.profile.statementsFile == "s.json");
-    CHECK(p.profile.outFile == "o.csv");
+    CHECK(p.profile.outFile == "o.sqlite");
 }
 
 TEST_CASE("supports --flag=value form") {
     ParsedCli p = parse({"profile", "--test-file=a.db", "--statements=s.json",
-                         "--out-file=o.csv"});
+                         "--out-file=o.sqlite"});
     REQUIRE(p.kind == ParsedCli::Kind::Profile);
     CHECK(p.profile.testFile == "a.db");
-    CHECK(p.profile.outFile == "o.csv");
+    CHECK(p.profile.outFile == "o.sqlite");
 }
 
 TEST_CASE("help is requested in several forms") {
@@ -120,7 +120,7 @@ TEST_CASE("missing value is an error") {
 
 TEST_CASE("timing and quiet options parse") {
     ParsedCli p = parse({"profile", "--test-file", "a.db", "--statements",
-                         "s.json", "--out-file", "o.csv", "--timing", "relative",
+                         "s.json", "--out-file", "o.sqlite", "--timing", "relative",
                          "--quiet"});
     REQUIRE(p.kind == ParsedCli::Kind::Profile);
     CHECK(p.profile.relativeTiming == true);
@@ -129,21 +129,21 @@ TEST_CASE("timing and quiet options parse") {
 
 TEST_CASE("timing defaults to raw") {
     ParsedCli p = parse({"profile", "--test-file", "a.db", "--statements",
-                         "s.json", "--out-file", "o.csv"});
+                         "s.json", "--out-file", "o.sqlite"});
     REQUIRE(p.kind == ParsedCli::Kind::Profile);
     CHECK(p.profile.relativeTiming == false);
 }
 
 TEST_CASE("invalid timing value is an error") {
     ParsedCli p = parse({"profile", "--test-file", "a.db", "--statements",
-                         "s.json", "--out-file", "o.csv", "--timing", "bogus"});
+                         "s.json", "--out-file", "o.sqlite", "--timing", "bogus"});
     CHECK(p.kind == ParsedCli::Kind::Error);
     CHECK(p.message.find("--timing") != std::string::npos);
 }
 
 TEST_CASE("--quiet rejects an inline value") {
     ParsedCli p = parse({"profile", "--test-file", "a.db", "--statements",
-                         "s.json", "--out-file", "o.csv", "--quiet=1"});
+                         "s.json", "--out-file", "o.sqlite", "--quiet=1"});
     CHECK(p.kind == ParsedCli::Kind::Error);
 }
 
