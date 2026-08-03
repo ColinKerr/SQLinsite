@@ -8,7 +8,7 @@ import { bestFitBlockPx, cell, colsFor, pagesContentHeight, scrollForPageAtY, to
 import { colorForObject, colorForPage, GLYPH, STRUCTURAL } from "../core/palette.ts";
 import { overlayFill } from "../core/overlay.ts";
 import { formatCount } from "../core/format.ts";
-import type { ObjectPagesResponse, ObjectRunsResponse, PagesResponse, Run, RunsResponse, View }
+import type { ObjectPagesResponse, ObjectRun, ObjectRunsResponse, PagesResponse, Run, RunsResponse, View }
   from "../core/types.ts";
 
 // One band's cached window: individual pages (zoomed in) or coalesced ordinal-runs
@@ -357,11 +357,11 @@ export class CanvasController {
   }
 
   // A band's LOD, mirroring the Pages view: coalesced runs when zoomed out, else
-  // per-page. Runs only for object bands (structural bands are small) and not when a
-  // profile overlay is active (runs carry no page numbers to shade per page).
+  // per-page. Runs only for object bands (structural bands are small). Object runs
+  // carry page numbers (same shape as Pages-view runs), so the profile overlay
+  // applies to them too — no need to fall back to per-page when a profile is loaded.
   private tablesLod(grp: TableGroup): "pages" | "runs" {
-    return grp.objectId != null && this.blockPx() < LOD_THRESHOLD && !this.overlayActive()
-      ? "runs" : "pages";
+    return grp.objectId != null && this.blockPx() < LOD_THRESHOLD ? "runs" : "pages";
   }
 
   // A representative band color for the minimap: the object palette color, or a
@@ -447,9 +447,15 @@ export class CanvasController {
       for (const [key, data] of this.objPages) {
         if (!data || data.lod !== lod || !key.startsWith(band.grp.key + ":")) continue;
         if (data.lod === "runs") {
+          const { profile, metric } = this.s;
           for (const r of data.runs.runs) {
+            // Shade the run exactly like the Pages view (drawRun): the run carries
+            // its page range, so the overlay uses the brightest accessed page in it.
+            const overlay = this.overlayActive()
+              ? overlayFill(profile.rangeMax(r.startPage, r.endPage, metric), profile.globalMax(metric))
+              : null;
             this.drawRunCells(r.startOrdinal, r.endOrdinal, cols, originY,
-                              colorForPage(band.grp.objectId, r.pageType), null);
+                              colorForPage(band.grp.objectId, r.pageType), overlay);
           }
           continue;
         }
@@ -531,11 +537,16 @@ export class CanvasController {
       const ordinal = Math.floor(innerY / this.cell()) * cols + col;
       if (col < 0 || col >= cols || ordinal >= band.grp.pageCount) return null;
       for (const [key, data] of this.objPages) {
-        // Only per-page (pages LOD) data resolves a click to a pageNumber; runs
-        // carry no page numbers (and cells are sub-pixel at that zoom anyway).
-        if (!data || data.lod !== "pages" || !key.startsWith(band.grp.key + ":")) continue;
-        const hit = data.pages.pages.find((p) => p.ordinal === ordinal);
-        if (hit) return { pageNumber: hit.pageNumber };
+        if (!data || !key.startsWith(band.grp.key + ":")) continue;
+        if (data.lod === "pages") {
+          const hit = data.pages.pages.find((p) => p.ordinal === ordinal);
+          if (hit) return { pageNumber: hit.pageNumber };
+        } else {
+          // Runs carry both ordinal and page ranges, so an ordinal within a run maps
+          // straight back to its page number (the run's pages are contiguous).
+          const r = data.runs.runs.find((r) => ordinal >= r.startOrdinal && ordinal <= r.endOrdinal);
+          if (r) return { pageNumber: r.startPage + (ordinal - r.startOrdinal) };
+        }
       }
       return null;
     }
@@ -676,6 +687,38 @@ export class CanvasController {
   }
   zoomBy(delta: number) { this.setZoom(this.blockPx() + delta); }
 
+  // Tables-view zoom anchoring: zoom to `px` and scroll so `ordinal` of `objectId`'s
+  // band lands at viewport y `anchorY`. The Tables analog of setZoom's page anchor —
+  // bands are laid out by ordinal (packed) coordinates, so a page number alone can't
+  // anchor here. rebuildBands() re-lays the bands at the new cell size before we
+  // measure; clampScroll() (on render) keeps the result in range.
+  private setZoomTables(px: number, objectId: number, ordinal: number, anchorY = 0) {
+    this.scrolling = false;
+    if (this.settleTimer) { clearTimeout(this.settleTimer); this.settleTimer = null; }
+    this.store.getState().setBlockPx(px); // clamps to [MIN,MAX]
+    this.rebuildBands();
+    const band = this.bands.find((b) => b.grp.objectId === objectId);
+    if (band) {
+      const row = Math.floor(ordinal / this.cols());
+      this.scroll.tables = Math.max(0, band.y + HEADER_H + row * this.cell() - anchorY);
+    }
+    this.scheduleRender();
+  }
+
+  // The object band + object-run covering `pageNumber` at the current (zoomed-out)
+  // Tables LOD, from the band caches — used to anchor a click-to-zoom on the run.
+  private tablesRunAt(pageNumber: number): { grp: TableGroup; run: ObjectRun } | null {
+    for (const band of this.bands) {
+      if (band.grp.objectId == null) continue;
+      for (const [key, data] of this.objPages) {
+        if (!data || data.lod !== "runs" || !key.startsWith(band.grp.key + ":")) continue;
+        const run = data.runs.runs.find((r) => pageNumber >= r.startPage && pageNumber <= r.endPage);
+        if (run) return { grp: band.grp, run };
+      }
+    }
+    return null;
+  }
+
   // Best-fit: pick the largest zoom at which the whole view fits vertically — the
   // full file (Pages) or all object bands (Tables) — zooming in or out as needed,
   // or the maximum zoom-out when it cannot fit. If everything fits, scroll to the
@@ -722,8 +765,27 @@ export class CanvasController {
     if (e.ctrlKey || e.metaKey) {
       const rect = this.canvas.getBoundingClientRect();
       const my = e.clientY - rect.top;
-      const anchor = Math.floor((my + this.scroll.pages) / this.cell()) * this.cols() + 1;
-      this.setZoom(this.blockPx() + (e.deltaY < 0 ? 2 : -2), anchor, my);
+      const px = this.blockPx() + (e.deltaY < 0 ? 2 : -2);
+      if (this.s.view === "pages") {
+        const anchor = Math.floor((my + this.scroll.pages) / this.cell()) * this.cols() + 1;
+        this.setZoom(px, anchor, my);
+      } else {
+        // Tables: keep the block-row under the cursor fixed on screen. Anchor a
+        // stable ordinal (the row's first block pre-zoom) — the row reflows as the
+        // column count changes with the cell size, so a screen row can't anchor.
+        const band = this.bands.find((b) => {
+          const top = b.y - this.scroll.tables;
+          return b.grp.objectId != null && my >= top + HEADER_H && my <= top + b.h;
+        });
+        if (band && band.grp.objectId != null) {
+          const rowPre = Math.max(0, Math.floor((my - (band.y - this.scroll.tables) - HEADER_H) / this.cell()));
+          const ordinal = rowPre * this.cols();
+          const anchorY = band.y + HEADER_H + rowPre * this.cell() - this.scroll.tables;
+          this.setZoomTables(px, band.grp.objectId, ordinal, anchorY);
+        } else {
+          this.setZoom(px); // over a header/structural band: just change zoom
+        }
+      }
     } else {
       this.scroll[this.s.view] += e.deltaY;
       this.markScrolling();
@@ -734,11 +796,20 @@ export class CanvasController {
     const rect = this.canvas.getBoundingClientRect();
     const hit = this.pageAt(e.clientX - rect.left, e.clientY - rect.top);
     if (!hit) return;
-    if (this.s.view === "pages" && this.blockPx() < LOD_THRESHOLD) {
-      const run = this.runAt(hit.pageNumber);
-      if (run) this.setZoom(12, run.startPage);
-    } else {
-      this.selected = hit.pageNumber; this.scheduleRender();
+    if (this.blockPx() < LOD_THRESHOLD) {
+      // Zoomed out: a click on a run zooms into it — anchored at the run's start
+      // (top-left in Pages, the band's ordinal in Tables).
+      if (this.s.view === "pages") {
+        const run = this.runAt(hit.pageNumber);
+        if (run) { this.setZoom(12, run.startPage); return; }
+      } else {
+        const hitRun = this.tablesRunAt(hit.pageNumber);
+        if (hitRun && hitRun.grp.objectId != null) {
+          this.setZoomTables(12, hitRun.grp.objectId, hitRun.run.startOrdinal);
+          return;
+        }
+      }
     }
+    this.selected = hit.pageNumber; this.scheduleRender();
   };
 }

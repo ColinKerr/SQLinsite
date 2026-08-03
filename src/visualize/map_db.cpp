@@ -430,27 +430,25 @@ const std::vector<OrdinalRun>& MapDb::objectRuns(std::int64_t objectId) const {
         auto it = objRunsCache_.find(objectId);
         if (it != objRunsCache_.end()) return it->second;
     }
-    // Build outside the lock: read the object's physical runs in pageNumber order,
-    // accumulate an ordinal offset (gaps between the object's scattered pages
-    // collapse in ordinal space), and coalesce consecutive same-pageType spans.
+    // Build outside the lock: read the object's physical runs in pageNumber order
+    // (identical to the Pages-view runs, filtered by objectId) and accumulate an
+    // ordinal offset — the object's page-number gaps collapse in ordinal space, but
+    // each run is kept whole so the runs match the Pages view exactly.
     std::vector<OrdinalRun> built;
     sqlite3* conn = db_;
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(conn,
-                           "SELECT endPage-startPage+1, pageType FROM runs "
+                           "SELECT startPage, endPage, pageType FROM runs "
                            "WHERE objectId=?1 ORDER BY startPage",
                            -1, &stmt, nullptr) == SQLITE_OK) {
         sqlite3_bind_int64(stmt, 1, objectId);
         std::int64_t ord = 0;
         while (sqlite3_step(stmt) == SQLITE_ROW) {
-            const std::int64_t len = sqlite3_column_int64(stmt, 0);
-            const char* t = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-            std::string type = t ? t : "";
-            if (!built.empty() && built.back().pageType == type) {
-                built.back().endOrdinal += len;
-            } else {
-                built.push_back({ord, ord + len - 1, std::move(type)});
-            }
+            const std::int64_t startPage = sqlite3_column_int64(stmt, 0);
+            const std::int64_t endPage = sqlite3_column_int64(stmt, 1);
+            const std::int64_t len = endPage - startPage + 1;
+            const char* t = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+            built.push_back({ord, ord + len - 1, startPage, endPage, t ? t : ""});
             ord += len;
         }
         sqlite3_finalize(stmt);
@@ -473,6 +471,8 @@ std::string MapDb::objectRunsJson(std::int64_t objectId, std::int64_t from, std:
     for (std::size_t i = lo; i < runs.size() && runs[i].startOrdinal <= to; ++i) {
         arr.push_back({{"startOrdinal", runs[i].startOrdinal},
                        {"endOrdinal", runs[i].endOrdinal},
+                       {"startPage", runs[i].startPage},
+                       {"endPage", runs[i].endPage},
                        {"pageType", runs[i].pageType}});
     }
     return json({{"runs", std::move(arr)}}).dump();

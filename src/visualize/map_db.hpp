@@ -39,11 +39,15 @@ private:
     mutable std::unordered_map<std::thread::id, sqlite3*> conns_;
 };
 
-// A run within one object's band, in the band's packed ordinal coordinate (a
-// contiguous span of same-pageType pages, with the object's physical gaps removed).
+// One of an object's physical runs (same as a Pages-view run filtered by objectId),
+// annotated with its position in the band's packed ordinal coordinate (the object's
+// physical page-number gaps collapse in ordinal space, but each run is kept whole —
+// no extra cross-gap coalescing, so runs match the Pages view exactly).
 struct OrdinalRun {
     std::int64_t startOrdinal;
     std::int64_t endOrdinal;
+    std::int64_t startPage;
+    std::int64_t endPage;
     std::string pageType;
 };
 
@@ -99,10 +103,11 @@ public:
     // i.e. the block's position in the Tables-view band; -1 if the page isn't in the
     // object. JSON: {"ordinal":<n>}.
     std::string objectPageOrdinalJson(std::int64_t objectId, std::int64_t page) const;
-    // Coalesced runs of an object's band in ordinal coordinates, for the zoomed-out
-    // Tables LOD (mirrors runsJson for Pages). JSON: {"runs":[{startOrdinal,
-    // endOrdinal,pageType}...]} overlapping [from,to]. Built once per object from
-    // the runs table and cached (the map is static).
+    // An object's runs for the zoomed-out Tables LOD: the same runs as /api/runs
+    // filtered by objectId, each carrying its page range plus its band ordinal range.
+    // JSON: {"runs":[{startOrdinal,endOrdinal,startPage,endPage,pageType}...]}
+    // overlapping the ordinal window [from,to]. Built once per object from the runs
+    // table and cached (the map is static).
     std::string objectRunsJson(std::int64_t objectId, std::int64_t from, std::int64_t to) const;
     // The Tables-view structural page groups that are present (pages not owned by a
     // schema object): Freelist, Lock-Byte, All other pages. Each carries its page

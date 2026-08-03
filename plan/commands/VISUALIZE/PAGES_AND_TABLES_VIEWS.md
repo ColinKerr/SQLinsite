@@ -47,6 +47,13 @@ from the Tables view. Structural-band blocks are colored per page type (gray ram
 object-band blocks by the object palette. Activating any page node (object or
 structural) in the tree scrolls to and selects that page's block in its band.
 
+**Runs are shared with the Pages view.** Zoomed out, an object band fetches
+`/api/object/runs` — the same runs as `/api/runs` filtered by that `objectId` (one
+per physical run, no extra coalescing), each carrying its page range plus its
+position in the band's packed ordinal space. Because the runs carry page numbers,
+the profile overlay and hit-testing apply to them exactly as in the Pages view, so a
+loaded profile no longer forces the Tables view back to per-page rendering.
+
 ### Navigation Panel
 
 Navigation is the shared **B-Tree Tree** panel on the **left** (see
@@ -77,7 +84,10 @@ page's block inside its object band, not to the Pages grid).
 ### Zoom & pan
 
 - ctrl + Mouse wheel zooms `blockPx` (clamped), anchored at the cursor so the page under
-  the pointer stays put.
+  the pointer stays put. In the Tables view the anchor is resolved in the band's packed
+  ordinal space (the row under the cursor is held fixed as the column count reflows).
+- Clicking a run while zoomed out zooms into it, anchored at the run's start (top-left in
+  the Pages view, the run's position in its band in the Tables view).
 - Vertical scroll / drag pans. The grid wraps to canvas width, so navigation is
   one-dimensional (page order).
 - Buttons/keys for zoom-to-fit and 1:1.

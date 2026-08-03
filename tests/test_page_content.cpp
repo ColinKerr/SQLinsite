@@ -527,7 +527,7 @@ TEST_CASE("objectPageOrdinalJson gives a page's position within its object band"
     CHECK(json::parse(map.objectPageOrdinalJson(objId, 999999))["ordinal"].get<std::int64_t>() == -1);
 }
 
-TEST_CASE("objectRunsJson gives coalesced ordinal-runs covering the band") {
+TEST_CASE("objectRunsJson returns the object's runs (same as Pages) in ordinal space") {
     const Fixture fx = buildInteriorFixture();  // one multi-page table T
     MapDb map(fx.mapPath);
     MapQuery m(fx.mapPath);
@@ -541,20 +541,31 @@ TEST_CASE("objectRunsJson gives coalesced ordinal-runs covering the band") {
     REQUIRE(runs.is_array());
     REQUIRE_FALSE(runs.empty());
 
-    // Contiguous, sorted, non-overlapping ordinal spans covering [0, pageCount-1],
-    // with adjacent runs differing in pageType (fully coalesced).
+    // One run per physical run of the object — identical boundaries to the Pages-view
+    // `runs` table filtered by objectId (no extra cross-gap coalescing).
+    const std::int64_t runCount =
+        m.scalar("SELECT COUNT(*) FROM runs WHERE objectId=" + std::to_string(objId));
+    CHECK(static_cast<std::int64_t>(runs.size()) == runCount);
+
+    // Ordinal spans are contiguous and cover [0, pageCount-1]; each run carries its
+    // page range, and its ordinal length matches its page length. Every run matches a
+    // row in the `runs` table (same startPage/endPage/pageType for this objectId).
     CHECK(runs.front()["startOrdinal"].get<std::int64_t>() == 0);
     CHECK(runs.back()["endOrdinal"].get<std::int64_t>() == pageCount - 1);
     std::int64_t covered = 0;
     for (std::size_t i = 0; i < runs.size(); ++i) {
-        const std::int64_t s = runs[i]["startOrdinal"].get<std::int64_t>();
-        const std::int64_t e = runs[i]["endOrdinal"].get<std::int64_t>();
-        CHECK(e >= s);
-        covered += e - s + 1;
-        if (i > 0) {
-            CHECK(s == runs[i - 1]["endOrdinal"].get<std::int64_t>() + 1);
-            CHECK(runs[i]["pageType"] != runs[i - 1]["pageType"]);
-        }
+        const std::int64_t so = runs[i]["startOrdinal"].get<std::int64_t>();
+        const std::int64_t eo = runs[i]["endOrdinal"].get<std::int64_t>();
+        const std::int64_t sp = runs[i]["startPage"].get<std::int64_t>();
+        const std::int64_t ep = runs[i]["endPage"].get<std::int64_t>();
+        const std::string pt = runs[i]["pageType"].get<std::string>();
+        CHECK(eo >= so);
+        CHECK(eo - so == ep - sp);  // ordinal length == page length
+        covered += eo - so + 1;
+        if (i > 0) CHECK(so == runs[i - 1]["endOrdinal"].get<std::int64_t>() + 1);
+        CHECK(m.scalar("SELECT COUNT(*) FROM runs WHERE objectId=" + std::to_string(objId) +
+                       " AND startPage=" + std::to_string(sp) + " AND endPage=" + std::to_string(ep) +
+                       " AND pageType='" + pt + "'") == 1);
     }
     CHECK(covered == pageCount);
 
