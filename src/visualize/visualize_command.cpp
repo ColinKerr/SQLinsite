@@ -14,6 +14,7 @@
 #include "visualize/embedded_assets.hpp"
 #include "visualize/map_db.hpp"
 #include "visualize/page_content.hpp"
+#include "visualize/analysis_db.hpp"
 #include "visualize/query_engine.hpp"
 
 namespace {
@@ -69,7 +70,7 @@ std::vector<int> paramLeaves(const httplib::Request& req) {
 }  // namespace
 
 void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* engine,
-                              PageContent* content) {
+                              PageContent* content, AnalysisDb* analysis) {
     server.Get("/", [](const httplib::Request&, httplib::Response& res) {
         serveAsset(res, "index.html");
     });
@@ -204,6 +205,26 @@ void configureVisualizeRoutes(httplib::Server& server, MapDb& db, QueryEngine* e
     server.Get("/api/profile/sources", [&db](const httplib::Request&, httplib::Response& res) {
         res.set_content(db.profileSourcesJson(), "application/json");
     });
+
+    // Block view (page → CBS block mapping; requires a matching --manifest-file).
+    server.Get("/api/blocks", [&db](const httplib::Request& req, httplib::Response& res) {
+        const std::int64_t from = paramInt(req, "from", 0);
+        const std::int64_t to = paramInt(req, "to", from);
+        res.set_content(db.blocksJson(from, to), "application/json");
+    });
+    server.Get(R"(/api/block/(\d+))", [&db](const httplib::Request& req, httplib::Response& res) {
+        res.set_content(db.blockJson(std::stoll(req.matches[1].str()), paramLeaves(req)),
+                        "application/json");
+    });
+
+    // Analysis view: arbitrary SQL over the unified read-only connection (primary +
+    // map/profile/manifest). Registered only when the connection exists.
+    if (analysis != nullptr) {
+        server.Post("/api/analysis/query",
+                    [analysis](const httplib::Request& req, httplib::Response& res) {
+            res.set_content(analysis->queryJson(req.body), "application/json");
+        });
+    }
 
     // Page Tree view (b-tree structure from the map; lazy/windowed).
     server.Get("/api/tree/roots", [&db](const httplib::Request&, httplib::Response& res) {
@@ -412,16 +433,23 @@ int runVisualizeServe(const VisualizeOptions& options) {
     std::optional<MapDb> db;
     std::optional<QueryEngine> engine;
     std::optional<PageContent> content;
+    std::optional<AnalysisDb> analysis;
     try {
         db.emplace(options.mapFile);
         if (!options.profileFile.empty()) {
             db->loadProfile(options.profileFile);
+        }
+        if (!options.manifestFile.empty()) {
+            db->loadManifest(options.manifestFile, options.manifestDbName);
         }
         if (!options.dbFile.empty()) {
             engine.emplace(options.dbFile, mapPageSize(*db), *db);
             content.emplace(PageContent::open(options.dbFile));
             db->setHasDb(true);
         }
+        // The Analysis view's unified read-only connection (primary + map/profile/manifest).
+        analysis.emplace(options.dbFile, options.mapFile, db->profileDbPath(),
+                         db->manifestDbPath());
     } catch (const std::exception& e) {
         std::cerr << e.what() << '\n';
         return 1;
@@ -429,7 +457,7 @@ int runVisualizeServe(const VisualizeOptions& options) {
 
     httplib::Server server;
     configureVisualizeRoutes(server, *db, engine ? &*engine : nullptr,
-                             content ? &*content : nullptr);
+                             content ? &*content : nullptr, analysis ? &*analysis : nullptr);
 
     const char* host = "127.0.0.1";
     int port = options.port;

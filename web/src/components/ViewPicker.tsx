@@ -4,6 +4,7 @@ export function ViewPicker() {
   const view = useViz((s) => s.view);
   const setView = useViz((s) => s.setView);
   const hasDb = useViz((s) => s.meta?.hasDb ?? false);
+  const hasBlocks = useViz((s) => s.hasManifest && s.manifestMatch);
   return (
     <nav className="bar-group" id="view-picker">
       <button className={"tab" + (view === "pages" ? " active" : "")} onClick={() => setView("pages")}>
@@ -22,6 +23,14 @@ export function ViewPicker() {
           Tree
         </button>
       )}
+      {hasBlocks && (
+        <button className={"tab" + (view === "blocks" ? " active" : "")} onClick={() => setView("blocks")}>
+          Blocks
+        </button>
+      )}
+      <button className={"tab" + (view === "analysis" ? " active" : "")} onClick={() => setView("analysis")}>
+        Analysis
+      </button>
     </nav>
   );
 }

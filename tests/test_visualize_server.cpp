@@ -11,11 +11,36 @@
 
 #include "map/map_command.hpp"
 #include "map/map_writer.hpp"
+#include "visualize/analysis_db.hpp"
 #include "visualize/map_db.hpp"
 #include "test_util.hpp"
 #include "visualize/visualize_command.hpp"
 
 namespace {
+
+static void putBE32(std::vector<std::uint8_t>& b, std::uint32_t v) {
+    b.push_back(v >> 24); b.push_back(v >> 16); b.push_back(v >> 8); b.push_back(v);
+}
+
+// A minimal v4 manifest with one parentless database `data.bim` of `nBlk` 16-byte
+// blocks (ids = sequential bytes) at block size `szBlk`.
+static std::string buildSimpleManifest(const std::string& path, std::uint32_t szBlk,
+                                       std::uint32_t nBlk) {
+    const std::uint32_t nName = 16;
+    std::vector<std::uint8_t> b;
+    putBE32(b, 4); putBE32(b, szBlk); putBE32(b, 1); putBE32(b, 0);
+    putBE32(b, nName); putBE32(b, 1);
+    putBE32(b, 1); putBE32(b, 0); putBE32(b, 1); putBE32(b, 24 + 152);
+    putBE32(b, nBlk); putBE32(b, 0);
+    std::vector<std::uint8_t> nm(128, 0);
+    const char* name = "data.bim";
+    for (std::size_t i = 0; name[i]; ++i) nm[i] = static_cast<std::uint8_t>(name[i]);
+    b.insert(b.end(), nm.begin(), nm.end());
+    for (std::uint32_t k = 0; k < nBlk; ++k)
+        b.insert(b.end(), 16, static_cast<std::uint8_t>(k + 1));
+    writeBinaryFile(path, b);
+    return path;
+}
 
 std::string buildMapFixture() {
     const std::string dbPath = tmpPath("viz_src.db");
@@ -354,6 +379,66 @@ static void writeProfileDb(const std::string& path, const char* accessRows) {
         std::string(accessRows);
     REQUIRE(sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK);
     sqlite3_close(db);
+}
+
+TEST_CASE("analysis connection queries map read-only over prefixes") {
+    const std::string mapPath = buildMapFixture();
+    AnalysisDb a(/*dbFile=*/"", mapPath, /*profile=*/"", /*manifest=*/"");
+
+    auto j = nlohmann::json::parse(a.queryJson("SELECT count(*) AS n FROM map.pages"));
+    CHECK(j["columns"][0]["name"] == "n");
+    CHECK(j["rows"][0][0].get<std::int64_t>() >= 1);
+    CHECK(j["truncated"] == false);
+
+    // Bad SQL surfaces an error, not a crash.
+    auto bad = nlohmann::json::parse(a.queryJson("SELECT * FROM nope"));
+    CHECK(bad.contains("error"));
+
+    // The connection is read-only (query_only), including attached dbs.
+    auto ro = nlohmann::json::parse(a.queryJson("CREATE TABLE map.hax(x)"));
+    CHECK(ro.contains("error"));
+}
+
+TEST_CASE("block endpoints map pages to manifest blocks") {
+    MapDb db(buildMapFixture());
+    auto meta = nlohmann::json::parse(db.metaJson());
+    const int pageSize = meta["meta"]["pageSize"].get<int>();
+    const std::int64_t pageCount = meta["meta"]["pageCount"].get<std::int64_t>();
+    // Small block so the tiny fixture spans >1 block: 2 pages/block.
+    const std::int64_t ppb = 2;
+    const std::int64_t nBlk = (pageCount + ppb - 1) / ppb;
+    const std::string man = buildSimpleManifest(tmpPath("viz.bcv"),
+                                                static_cast<std::uint32_t>(ppb * pageSize),
+                                                static_cast<std::uint32_t>(nBlk));
+    db.loadManifest(man, "");
+
+    // meta now advertises the matching manifest.
+    auto meta2 = nlohmann::json::parse(db.metaJson());
+    CHECK(meta2["hasManifest"] == true);
+    CHECK(meta2["manifestMatch"] == true);
+    CHECK(meta2["pagesPerBlock"] == ppb);
+    CHECK(meta2["blockCount"] == nBlk);
+
+    auto blocks = nlohmann::json::parse(db.blocksJson(0, nBlk - 1))["blocks"];
+    REQUIRE(static_cast<std::int64_t>(blocks.size()) == nBlk);
+    // Blocks tile the pages: contiguous, real pages sum to pageCount, last block ends
+    // at pageCount.
+    std::int64_t realSum = 0;
+    for (std::size_t i = 0; i < blocks.size(); ++i) {
+        CHECK(blocks[i]["startPage"].get<std::int64_t>() ==
+              static_cast<std::int64_t>(i) * ppb + 1);
+        realSum += blocks[i]["realPages"].get<std::int64_t>();
+    }
+    CHECK(realSum == pageCount);
+    CHECK(blocks.back()["endPage"].get<std::int64_t>() == pageCount);
+
+    // A page's detail names its block; block 0 holds pages 1..ppb.
+    auto page1 = nlohmann::json::parse(db.pageJson(1, {}));
+    CHECK(page1["block"]["blockIndex"] == 0);
+    CHECK(page1["block"]["inBlockOffset"] == 0);
+    auto blk0 = nlohmann::json::parse(db.blockJson(0, {}));
+    CHECK(blk0["realPages"].get<std::int64_t>() >= 1);
+    CHECK(blk0["objectName"].get<std::string>().rfind(".bcv") != std::string::npos);
 }
 
 TEST_CASE("profile overlay endpoints reflect a loaded profile") {

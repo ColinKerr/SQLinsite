@@ -152,6 +152,10 @@ ParsedCli parseVisualizeServe(const std::vector<std::string>& args,
             target = &options.profileFile;
         } else if (flag.name == "--db-file") {
             target = &options.dbFile;
+        } else if (flag.name == "--manifest-file") {
+            target = &options.manifestFile;
+        } else if (flag.name == "--manifest-db-name") {
+            target = &options.manifestDbName;
         } else if (flag.name == "--port") {
             target = &value;
         } else {
@@ -206,7 +210,9 @@ std::string usageText() {
            "                          [--timing raw|relative] [--quiet]\n"
            "       sqlinsite map      --test-file <db> --out-file <db>\n"
            "       sqlinsite visualize serve --map-file <db> "
-           "[--profile-file <csv>] [--db-file <db>] [--port <n>]\n"
+           "[--profile-file <db>] [--db-file <db>]\n"
+           "                                 [--manifest-file <manifest.bcv>] "
+           "[--manifest-db-name <name>] [--port <n>]\n"
            "       sqlinsite --help\n";
 }
 

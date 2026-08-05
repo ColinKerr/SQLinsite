@@ -12,6 +12,7 @@ import { PanelResizer } from "./components/PanelResizer.tsx";
 import { CanvasStage } from "./components/CanvasStage.tsx";
 import { QueryLayout } from "./components/QueryLayout.tsx";
 import { PageTreeView } from "./components/PageTreeView.tsx";
+import { AnalysisView } from "./components/AnalysisView.tsx";
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -64,6 +65,7 @@ export default function App() {
         <div className="view-main">
           {view === "query" ? <QueryLayout />
             : view === "tree" ? <PageTreeView />
+            : view === "analysis" ? <AnalysisView />
             : <CanvasStage />}
         </div>
       </main>

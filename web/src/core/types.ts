@@ -1,7 +1,16 @@
 // Shapes returned by the visualize server API (see plan/commands/VISUALIZE.md).
 
 export type Metric = "none" | "reads" | "writes" | "total";
-export type View = "pages" | "tables" | "query" | "tree";
+export type View = "pages" | "tables" | "query" | "tree" | "blocks" | "analysis";
+
+// Result of an Analysis Query-Metrics run (see /api/analysis/query).
+export interface AnalysisResult {
+  columns?: { name: string }[];
+  rows?: unknown[][];
+  rowCount?: number;
+  truncated?: boolean;
+  error?: string;
+}
 
 export interface ObjectInfo {
   id: number;
@@ -33,7 +42,46 @@ export interface Meta {
   typeCounts: { pageType: string; count: number }[];
   hasProfile: boolean;
   hasDb?: boolean;
+  // Present when a matching CBS manifest is loaded (enables the Block view).
+  hasManifest?: boolean;
+  manifestMatch?: boolean;
+  blockSize?: number;
+  pagesPerBlock?: number;
+  blockCount?: number;
+  manifestDbName?: string;
 }
+
+// One CBS block row for the Block view (see /api/blocks).
+export interface BlockRow {
+  blockIndex: number;
+  blockId: string;
+  startPage: number;
+  endPage: number;
+  realPages: number;
+  usedPages: number;
+  freePages: number;
+  dominantObjectId: number | null;
+  sharedWithParent: boolean;
+}
+export interface BlocksResponse { blocks: BlockRow[] }
+
+export interface BlockDetail {
+  blockIndex: number;
+  blockId: string;
+  objectName: string;
+  startPage: number;
+  endPage: number;
+  realPages: number;
+  usedPages: number;
+  freePages: number;
+  sharedWithParent: boolean;
+  objectMix: { objectId: number | null; name: string | null; pages: number }[];
+  profile?: { reads: number; writes: number };
+}
+
+// Block-view coloring: by owning object, free-fraction ramp, shared-vs-changed
+// (needs a child manifest db), or the profile overlay.
+export type BlockColorMode = "object" | "free" | "shared" | "profile";
 
 export interface PageRow {
   pageNumber: number;

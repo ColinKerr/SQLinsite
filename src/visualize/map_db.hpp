@@ -3,12 +3,14 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
 
+#include "visualize/manifest_db.hpp"
 #include "visualize/profile_db.hpp"
 
 struct sqlite3;
@@ -51,6 +53,19 @@ struct OrdinalRun {
     std::string pageType;
 };
 
+// One CBS block's static aggregation for the Block view: the map's pages that fall
+// in the block (page P → block (P-1)/pagesPerBlock), joined to manifest.blocks. Built
+// once per (map, selected manifest db) and cached.
+struct BlockAgg {
+    std::int64_t blockIndex = 0;
+    std::string blockId;               // hex; cloud object name = blockId + ".bcv"
+    int sharedWithParent = 0;
+    std::int64_t realPages = 0;        // real db pages (the final block is partial)
+    std::int64_t freePages = 0;        // freelist / unallocated pages
+    std::int64_t dominantObjectId = -1;  // object owning the most pages (-1 = none)
+    std::vector<std::pair<std::int64_t, std::int64_t>> objectMix;  // objectId → pages, desc
+};
+
 // Opens a `sqlinsite map` SQLite file read-only and answers the visualize
 // query API. Optionally holds an in-memory profile table for overlays.
 class MapDb {
@@ -72,6 +87,18 @@ public:
     // (the QueryEngine runs one query at a time).
     std::int64_t addQuerySource(const std::string& sql, int queryId,
                                 const std::vector<ProfileDb::PageCount>& pages);
+
+    // Parses a CBS manifest.bcv (--manifest-file) into the shared ManifestDb,
+    // resolving which named db matches this map. Enables the Block view + block
+    // metrics. `dbName` empty means auto-select (see ManifestDb). Call before serving.
+    void loadManifest(const std::string& manifestPath, const std::string& dbName);
+    bool hasManifest() const { return manifest_ != nullptr; }
+    const ManifestDb* manifest() const { return manifest_.get(); }
+
+    // Temp-db file paths for the Analysis view's unified connection to ATTACH
+    // (profile always present; manifest only with --manifest-file).
+    std::string profileDbPath() const;
+    std::string manifestDbPath() const;
 
     // Reported in /api/meta so the front-end can enable the live Query view.
     void setHasDb(bool v) { hasDb_ = v; }
@@ -116,6 +143,14 @@ public:
     // overlapping the ordinal window [from,to]. Built once per object from the runs
     // table and cached (the map is static).
     std::string objectRunsJson(std::int64_t objectId, std::int64_t from, std::int64_t to) const;
+    // Block view (requires a loaded, matching manifest). Rows for blocks in the
+    // block-index window [from,to]: {blockIndex, blockId, startPage, endPage,
+    // realPages, usedPages, freePages, dominantObjectId, sharedWithParent}. Built once
+    // (blocksAgg) and cached. Empty {"blocks":[]} when no matching manifest.
+    std::string blocksJson(std::int64_t from, std::int64_t to) const;
+    // Full detail for one block: page range, object mix (with names), used/free,
+    // blockId/object name, sharedWithParent, and profile read/write totals for `sel`.
+    std::string blockJson(std::int64_t blockIndex, const LeafFilter& sel) const;
     // The Tables-view structural page groups that are present (pages not owned by a
     // schema object): Freelist, Lock-Byte, All other pages. Each carries its page
     // count. JSON: {"groups":[{"key","label","pageCount"}...]}.
@@ -199,10 +234,13 @@ private:
     void onConnOpen(sqlite3* c) const;
     // Lazily builds + caches an object's ordinal-runs (see objectRunsJson).
     const std::vector<OrdinalRun>& objectRuns(std::int64_t objectId) const;
+    // Lazily builds + caches the per-block aggregation for the selected manifest db.
+    const std::vector<BlockAgg>& blocksAgg() const;
 
-    // Declared before db_ so the read-pool connections (which ATTACH profile_) are
-    // torn down before profile_ deletes its temp file.
+    // Declared before db_ so the read-pool connections (which ATTACH profile_ and
+    // manifest_) are torn down before those temp files are deleted.
     ProfileDb profile_;                // unified store: loaded + interactive sources
+    std::unique_ptr<ManifestDb> manifest_;  // present only with --manifest-file
     ReadPool db_;                      // per-thread read-only connections (see above)
     std::string mapPath_;              // for opening short-lived private connections
     bool hasProfile_ = false;
@@ -212,4 +250,7 @@ private:
     mutable int minimapCacheBuckets_ = -1;
     mutable std::mutex objRunsMu_;      // guards the per-object ordinal-run cache
     mutable std::unordered_map<std::int64_t, std::vector<OrdinalRun>> objRunsCache_;
+    mutable std::mutex blocksMu_;       // guards the per-block aggregation cache
+    mutable std::vector<BlockAgg> blocksCache_;
+    mutable bool blocksBuilt_ = false;
 };

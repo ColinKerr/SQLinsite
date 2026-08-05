@@ -121,7 +121,10 @@ Query-view run):
   omitted (so there are no bare-background stripes).
 - The overlay is the **union of the selected profile sources**, so loaded profiles
   and interactive query runs shade the same views (see [VISUALIZE.md](./VISUALIZE.md)).
-- Control for profile visualization is in the Page Top Bar `profile controls` section
+- The profile visualization control is the shared, global **Overlay control**,
+  promoted to a top-level bar so it is reachable from **every** view that shades by
+  profile (Pages, Tables, Query, Block, Analysis), not only the Page Top Bar. It holds
+  the app-wide metric + source selection used by all overlays.
   - The control should be a custom drop down with two sections
     - The first has two checkboxes one for reads and one for writes.
     - The second lists the profile **sources** (from `/api/profile/sources`): the

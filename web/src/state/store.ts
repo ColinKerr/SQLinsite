@@ -2,7 +2,7 @@ import { create, createStore, type StateCreator, type StoreApi } from "zustand";
 import { fetchProfilePages, fetchProfileSources, fetchStructuralGroups, selParam } from "../core/api.ts";
 import { MAX_BLOCK_PX, MIN_BLOCK_PX } from "../core/constants.ts";
 import { Profile } from "../core/profile.ts";
-import type { Meta, Metric, MinimapBucket, ObjectInfo, ProfileSource, StructuralGroup, View } from "../core/types.ts";
+import type { BlockColorMode, Meta, Metric, MinimapBucket, ObjectInfo, ProfileSource, StructuralGroup, View } from "../core/types.ts";
 
 // Shared UI state. Hot render-loop state (scroll, caches, selected, canvas size)
 // lives inside CanvasController, not here, so canvas panning never re-renders React.
@@ -19,6 +19,13 @@ export interface VizState {
   sources: ProfileSource[];
   minimap: MinimapBucket[]; // whole-file object-colored overview (Pages minimap)
 
+  // CBS manifest (Block view); present + matching enables the Block button.
+  hasManifest: boolean;
+  manifestMatch: boolean;
+  pagesPerBlock: number;
+  blockCount: number;
+  blockColorMode: BlockColorMode;
+
   view: View;
   blockPx: number;
   metric: Metric;
@@ -34,6 +41,7 @@ export interface VizState {
   setView(v: View): void;
   setBlockPx(px: number): void;
   setMetric(m: Metric): void;
+  setBlockColorMode(m: BlockColorMode): void;
   setSources(next: Set<number>): void;
   setLegendWidth(w: number): void;
   setSelectedObject(id: number | null): void;
@@ -57,6 +65,12 @@ const creator: StateCreator<VizState> = (set, get) => ({
   sources: [],
   minimap: [],
 
+  hasManifest: false,
+  manifestMatch: false,
+  pagesPerBlock: 0,
+  blockCount: 0,
+  blockColorMode: "object",
+
   view: "pages",
   blockPx: 12,
   metric: "none",
@@ -77,6 +91,10 @@ const creator: StateCreator<VizState> = (set, get) => ({
       pageCount: meta.meta.pageCount,
       hasProfile: !!meta.hasProfile,
       minimap,
+      hasManifest: !!meta.hasManifest,
+      manifestMatch: !!meta.manifestMatch,
+      pagesPerBlock: meta.pagesPerBlock ?? 0,
+      blockCount: meta.blockCount ?? 0,
       metric: meta.hasProfile ? "total" : "none",
       profile,
     });
@@ -96,6 +114,7 @@ const creator: StateCreator<VizState> = (set, get) => ({
   },
   setBlockPx: (px) => set({ blockPx: Math.max(MIN_BLOCK_PX, Math.min(MAX_BLOCK_PX, px)) }),
   setMetric: (m) => set({ metric: m }),
+  setBlockColorMode: (m) => set({ blockColorMode: m }),
   setSources: (next) => set({ selSources: new Set(next) }),
   setLegendWidth: (w) => set({ legendWidth: w }),
   setSelectedObject: (id) => set({ selectedObject: id }),

@@ -271,6 +271,47 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .results-msg { padding: 16px; }
 .results-msg.error { color: #e15759; font-family: ui-monospace, monospace; white-space: pre-wrap; }
 
+/* Analysis view */
+#analysis-view { display: flex; flex-direction: column; width: 100%; min-height: 0; }
+#analysis-query { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.aq-editor { flex: 0 0 auto; display: flex; flex-direction: column; border-bottom: 1px solid #000; }
+.aq-editor textarea {
+  width: 100%; height: 120px; resize: vertical; box-sizing: border-box;
+  background: #16181d; color: var(--ink); border: none; padding: 8px;
+  font-family: ui-monospace, monospace; font-size: 13px;
+}
+.aq-bar { padding: 4px 8px; background: #1f2229; }
+.aq-bar button { background: #30343d; color: var(--ink); border: 1px solid #000; border-radius: 5px; padding: 3px 12px; cursor: pointer; }
+.aq-results { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.analysis-results table { border-collapse: collapse; font-size: 12px; }
+.analysis-results th, .analysis-results td { border: 1px solid #2a2d35; padding: 2px 8px; text-align: left; white-space: nowrap; }
+.analysis-results th { background: #1f2229; position: sticky; top: 0; }
+.analysis-results .muted, #predefined-metrics .muted { padding: 8px; color: var(--muted); }
+#block-controls .ctl-label { color: var(--muted); margin-right: 4px; }
+
+/* Predefined metrics dashboard */
+#predefined-metrics { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 12px; }
+#predefined-metrics h3 { margin: 12px 0 6px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.pm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.pm-card { background: #1b1d23; border: 1px solid #2a2d35; border-radius: 6px; padding: 10px; }
+.pm-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.pm-title { font-weight: 600; font-size: 13px; }
+.pm-sql { background: #30343d; color: var(--muted); border: none; border-radius: 4px; padding: 1px 6px; font-size: 11px; cursor: pointer; }
+.pm-note { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.pm-gauge-bar { height: 10px; background: #12141a; border-radius: 5px; overflow: hidden; }
+.pm-gauge-fill { height: 100%; }
+.pm-gauge-label { font-size: 12px; margin-top: 4px; }
+.pm-bars { display: flex; flex-direction: column; gap: 3px; }
+.pm-bar-row { display: grid; grid-template-columns: 40% 1fr auto; gap: 6px; align-items: center; font-size: 12px; }
+.pm-bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-bar-track { background: #12141a; border-radius: 4px; height: 10px; }
+.pm-bar-fill { display: block; height: 100%; background: #3b7dd8; border-radius: 4px; }
+.pm-bar-val { color: var(--muted); }
+.pm-hist { display: flex; align-items: flex-end; gap: 3px; height: 90px; }
+.pm-hist-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; }
+.pm-hist-bar { width: 100%; background: #3b7dd8; border-radius: 2px 2px 0 0; min-height: 1px; }
+.pm-hist-x { font-size: 9px; color: var(--muted); margin-top: 2px; }
+
 /* Running indicator (spinner + Cancel) shown in the results area while a query runs. */
 .results-running {
   flex: 1 1 auto; display: flex; flex-direction: column; align-items: center;

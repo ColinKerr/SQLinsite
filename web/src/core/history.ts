@@ -22,6 +22,8 @@ const VIEW_LABEL: Record<View, string> = {
   tables: "Tables",
   query: "Query",
   tree: "Tree",
+  blocks: "Blocks",
+  analysis: "Analysis",
 };
 
 // Human label for the dropdowns, e.g. "Pages · T", "Tree · page 5", "Query".

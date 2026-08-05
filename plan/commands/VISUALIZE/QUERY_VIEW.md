@@ -6,14 +6,9 @@ For this mode the Navigation Panel is the shared **B-Tree Tree** on the left (se
 
 ## Navigation (B-Tree Tree)
 
-The Query view navigates with the shared B-Tree Tree (see B_TREE_TREE.md); it
-replaces the earlier bespoke schema panel.  Its nodes are the file's b-trees — the
-tables and their indexes, plus pages — so navigation is at object/page
-granularity rather than the schema's columns/triggers granularity.
+The Query view navigates with the shared B-Tree Tree (see B_TREE_TREE.md); it replaces the earlier bespoke schema panel.  Its nodes are the file's b-trees — the tables and their indexes, plus pages — so navigation is at object/page granularity rather than the schema's columns/triggers granularity.
 
-The Query view **registers** its node-activation handler with the shared tree. The
-handler runs the query for the activated node and fills the 'results view' with its
-data and profile, exactly as the query control bar's 'Run' does:
+The Query view **registers** its node-activation handler with the shared tree. The handler runs the query for the activated node and fills the 'results view' with its data and profile, exactly as the query control bar's 'Run' does:
 
 - Table Grouping node - Runs SQL that selects that objects data.
 - Table interior node - Runs SQL that selects the rows contained by that page and it's child pages.
@@ -25,23 +20,13 @@ Run the SQL by setting the query editor text box to the appropriate SQL then run
 
 Only run the query if the current contents of the query editor text box is different than the query for the selected node.
 
-Arbitrary SQL — including against views, which are not b-trees and so do not
-appear in the tree — is still run from the query editor.  The editor's
-autocomplete is removed so the schema API can also be removed (`/api/schema`)
+Arbitrary SQL — including against views, which are not b-trees and so do not appear in the tree — is still run from the query editor.  
 
-The tree does not show any per-node profile results (e.g. accessed page counts)
-for now; nodes show only their static page count and size, the same as in every
-other view.
+The tree does not show any per-node profile results (e.g. accessed page counts) for now; nodes show only their static page count and size, the same as in every other view.
 
 ### Unified profile overlay
 
-The Pages/Tables tabs shade against the **same unified profile overlay** as the main
-Pages/Tables views, not a private per-run overlay. Each run is recorded server-side
-as a `kind='query'` profile *source* (see [VISUALIZE.md](./VISUALIZE.md) and the
-`ProfileDb`); running a query auto-selects its source, so the run lights up here
-**and** in the main Pages/Tables views. The Overlay control (Page Top Bar) lists all
-sources — loaded-profile sessions and past query runs — so any profile can be shown
-in any view. A history entry re-selects its run's source when loaded.
+The Pages/Tables tabs shade against the **same unified profile overlay** as the main Pages/Tables views, not a private per-run overlay. Each run is recorded server-side as a `kind='query'` profile *source* (see [VISUALIZE.md](./VISUALIZE.md) and the `ProfileDb`); running a query auto-selects its source, so the run lights up here **and** in the main Pages/Tables views. Source selection is the **shared, global Overlay control** (promoted to a top-level bar so it is reachable from every view, not just Pages/Tables — see PAGES_AND_TABLES_VIEWS.md → Profile overlay); it lists all sources — loaded-profile sessions and past query runs — so any profile can be shown in any view. A history entry re-selects its run's source when loaded.
 
 ## Results View
 
@@ -54,9 +39,14 @@ The query editor has a 'query control bar' at the top with following controls: '
  - 'Run' Button - Runs the SQL query in the query editor using a fresh db connection on each run to ensure no prior pages are cached.  The query is run using the code behind the `sqlinsite profile` command.  The results returned by the query are loaded into the 'results view'.  The query and the profile results are stored in the history to be retrieved later.
    - While a query is running — from the moment Run is pressed (or a tree node is activated to run a query) until results are returned — the 'results view' shows a **spinner** and a **Cancel** button in place of the results, regardless of which tab is active and on every run (not just the first).
    - The **Cancel** button stops the in-flight query: it aborts the client request and interrupts the running query on the server (`POST /api/query/cancel` → `sqlite3_interrupt`), then returns the results view to its pre-run state (any previously shown results/error are left in place). Cancel is a no-op when no query is running.
+   - If the 'Load all results' checkbox is checked query name stored in history is prefixed with `(full)`, else no prefix.
  - 'History' button - shows a drop down with each previous query run and the number of pages loaded when running that query.  Selecting one of the previously run queries sets the query in the 'query editor', loads up the profile results and sets the 'results view' to show results as though they had just hit the Run button with the old query.
- - 'Format' button - Pretty formats the SQL query currently in the 'query editor'
+ - 'Format' button - Pretty formats the SQL query currently in the 'query editor' (client-side, via a SQL formatter library such as `sql-formatter`; no server round-trip).
  - 'Explain' button - Runs the SQL query currently in the 'query editor' twice, once prefixed with `EXPLAIN QUERY PLAN` and once prefixed with `EXPLAIN`.  The results are shown in 'explain results'.
+ - 'Load all results' checkbox - controls how far the query is stepped, which determines how **complete** the page profile is:
+   - **Unchecked (default):** the run steps only until the **first result window** (~1,000 rows) is filled, then stops. The captured profile is therefore **partial** — only the pages needed to produce those first rows. Fast "what does this query start to touch" probe. Scrolling the results table loads more rows by **continuing the same run** (stepping further); each additional window **extends the run's profile source** with the newly touched pages, so the overlay grows as you scroll.
+   - **Checked:** the run steps to **true completion** (every row), capturing the **complete** page set the query touches. Slower on large results. The history entry is prefixed `(full)`.
+   - Either way the profile reflects exactly the rows that were actually produced.
 
  ### Results Table
 

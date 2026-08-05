@@ -149,6 +149,21 @@ std::int64_t MapDb::addQuerySource(const std::string& sql, int queryId,
     return sourceId;
 }
 
+void MapDb::loadManifest(const std::string& manifestPath, const std::string& dbName) {
+    // The manifest's db selection + pages/block need the map's page count and size.
+    json m = queryRows(db_, "SELECT pageSize, pageCount FROM meta LIMIT 1");
+    const int pageSize = (!m.empty() && !m[0]["pageSize"].is_null())
+                             ? m[0]["pageSize"].get<int>() : 0;
+    const std::int64_t pageCount = (!m.empty() && !m[0]["pageCount"].is_null())
+                                       ? m[0]["pageCount"].get<std::int64_t>() : 0;
+    manifest_ = std::make_unique<ManifestDb>(manifestPath, dbName, pageCount, pageSize);
+}
+
+std::string MapDb::profileDbPath() const { return profile_.path(); }
+std::string MapDb::manifestDbPath() const {
+    return manifest_ ? manifest_->path() : std::string();
+}
+
 void MapDb::onConnOpen(sqlite3* c) const {
     // ATTACH the shared profile db so overlay queries can read `prof.page_access`
     // and `prof.sources`. Always attached (even with no --profile-file) so
@@ -156,6 +171,13 @@ void MapDb::onConnOpen(sqlite3* c) const {
     char* sql = sqlite3_mprintf("ATTACH DATABASE %Q AS prof", profile_.path().c_str());
     sqlite3_exec(c, sql, nullptr, nullptr, nullptr);
     sqlite3_free(sql);
+    // ATTACH the CBS manifest (blocks/databases/meta) when present, so block
+    // endpoints can join `manifest.blocks` against the map's pages.
+    if (manifest_) {
+        char* ms = sqlite3_mprintf("ATTACH DATABASE %Q AS manifest", manifest_->path().c_str());
+        sqlite3_exec(c, ms, nullptr, nullptr, nullptr);
+        sqlite3_free(ms);
+    }
 }
 
 std::string MapDb::metaJson() const {
@@ -185,7 +207,16 @@ std::string MapDb::metaJson() const {
          queryRows(db_, "SELECT pageType,count FROM type_counts ORDER BY pageType")},
         {"hasProfile", hasProfile_},
         {"hasDb", hasDb_},
+        {"hasManifest", manifest_ != nullptr},
     };
+    if (manifest_) {
+        j["blockSize"] = manifest_->blockSize();
+        j["pagesPerBlock"] = manifest_->pagesPerBlock();
+        j["blockCount"] = manifest_->blockCount();
+        j["manifestDbName"] = manifest_->selectedDbName();
+        j["manifestMatch"] = manifest_->match();
+        j["manifestMatchReason"] = manifest_->matchReason();
+    }
     return j.dump();
 }
 
@@ -414,6 +445,159 @@ std::string MapDb::objectRunsJson(std::int64_t objectId, std::int64_t from, std:
 }
 
 namespace {
+bool isFreePageType(const std::string& t) {
+    return t == "freelist-trunk" || t == "freelist-leaf" || t == "unallocated";
+}
+}  // namespace
+
+const std::vector<BlockAgg>& MapDb::blocksAgg() const {
+    std::lock_guard<std::mutex> lk(blocksMu_);
+    if (blocksBuilt_) return blocksCache_;
+    blocksBuilt_ = true;
+    if (!manifest_ || !manifest_->match()) return blocksCache_;  // stays empty
+
+    const std::int64_t ppb = manifest_->pagesPerBlock();
+    const std::int64_t nBlk = manifest_->blockCount();
+    const std::int64_t selId = manifest_->selectedDbId();
+    if (ppb <= 0 || nBlk <= 0) return blocksCache_;
+
+    blocksCache_.resize(static_cast<std::size_t>(nBlk));
+    for (std::int64_t i = 0; i < nBlk; ++i) blocksCache_[static_cast<std::size_t>(i)].blockIndex = i;
+
+    // Block ids + shared flag from the manifest.
+    {
+        sqlite3_stmt* s = nullptr;
+        if (sqlite3_prepare_v2(db_,
+                "SELECT blockIndex, blockId, sharedWithParent FROM manifest.blocks "
+                "WHERE dbId=?1", -1, &s, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int64(s, 1, selId);
+            while (sqlite3_step(s) == SQLITE_ROW) {
+                const std::int64_t bi = sqlite3_column_int64(s, 0);
+                if (bi < 0 || bi >= nBlk) continue;
+                BlockAgg& a = blocksCache_[static_cast<std::size_t>(bi)];
+                const auto* id = reinterpret_cast<const char*>(sqlite3_column_text(s, 1));
+                a.blockId = id ? id : "";
+                a.sharedWithParent = sqlite3_column_int(s, 2);
+            }
+            sqlite3_finalize(s);
+        }
+    }
+
+    // Distribute the map's pre-coalesced runs across the blocks they span (a run
+    // rarely spans more than one block), tallying real/free pages and per-object
+    // page counts for the dominant object + object mix.
+    std::vector<std::map<std::int64_t, std::int64_t>> objCounts(static_cast<std::size_t>(nBlk));
+    sqlite3_stmt* rs = nullptr;
+    if (sqlite3_prepare_v2(db_, "SELECT startPage,endPage,pageType,objectId FROM runs "
+                                "ORDER BY startPage", -1, &rs, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(rs) == SQLITE_ROW) {
+            const std::int64_t sp = sqlite3_column_int64(rs, 0);
+            const std::int64_t ep = sqlite3_column_int64(rs, 1);
+            const auto* t = reinterpret_cast<const char*>(sqlite3_column_text(rs, 2));
+            const bool freeType = isFreePageType(t ? t : "");
+            const std::int64_t objId =
+                sqlite3_column_type(rs, 3) == SQLITE_NULL ? -1 : sqlite3_column_int64(rs, 3);
+            const std::int64_t b0 = (sp - 1) / ppb, b1 = (ep - 1) / ppb;
+            for (std::int64_t bi = b0; bi <= b1 && bi < nBlk; ++bi) {
+                const std::int64_t lo = std::max(sp, bi * ppb + 1);
+                const std::int64_t hi = std::min(ep, (bi + 1) * ppb);
+                const std::int64_t cnt = hi - lo + 1;
+                if (cnt <= 0) continue;
+                BlockAgg& a = blocksCache_[static_cast<std::size_t>(bi)];
+                a.realPages += cnt;
+                if (freeType) a.freePages += cnt;
+                objCounts[static_cast<std::size_t>(bi)][objId] += cnt;
+            }
+        }
+        sqlite3_finalize(rs);
+    }
+
+    for (std::int64_t bi = 0; bi < nBlk; ++bi) {
+        BlockAgg& a = blocksCache_[static_cast<std::size_t>(bi)];
+        std::vector<std::pair<std::int64_t, std::int64_t>> mix(
+            objCounts[static_cast<std::size_t>(bi)].begin(),
+            objCounts[static_cast<std::size_t>(bi)].end());
+        std::sort(mix.begin(), mix.end(),
+                  [](const auto& x, const auto& y) { return x.second > y.second; });
+        a.objectMix = std::move(mix);
+        // Dominant = the owning object (objectId >= 0) with the most pages.
+        for (const auto& [oid, c] : a.objectMix) {
+            (void)c;
+            if (oid >= 0) { a.dominantObjectId = oid; break; }
+        }
+    }
+    return blocksCache_;
+}
+
+std::string MapDb::blocksJson(std::int64_t from, std::int64_t to) const {
+    const std::vector<BlockAgg>& all = blocksAgg();
+    if (all.empty()) return R"({"blocks":[]})";
+    const std::int64_t ppb = manifest_->pagesPerBlock();
+    json m = queryRows(db_, "SELECT pageCount FROM meta LIMIT 1");
+    const std::int64_t pageCount =
+        (!m.empty() && !m[0]["pageCount"].is_null()) ? m[0]["pageCount"].get<std::int64_t>() : 0;
+    from = std::max<std::int64_t>(0, from);
+    to = std::min<std::int64_t>(to, static_cast<std::int64_t>(all.size()) - 1);
+    json arr = json::array();
+    for (std::int64_t i = from; i <= to; ++i) {
+        const BlockAgg& a = all[static_cast<std::size_t>(i)];
+        arr.push_back({{"blockIndex", a.blockIndex},
+                       {"blockId", a.blockId},
+                       {"startPage", a.blockIndex * ppb + 1},
+                       {"endPage", std::min((a.blockIndex + 1) * ppb, pageCount)},
+                       {"realPages", a.realPages},
+                       {"usedPages", a.realPages - a.freePages},
+                       {"freePages", a.freePages},
+                       {"dominantObjectId",
+                        a.dominantObjectId >= 0 ? json(a.dominantObjectId) : json(nullptr)},
+                       {"sharedWithParent", a.sharedWithParent != 0}});
+    }
+    return json({{"blocks", std::move(arr)}}).dump();
+}
+
+std::string MapDb::blockJson(std::int64_t blockIndex, const LeafFilter& sel) const {
+    const std::vector<BlockAgg>& all = blocksAgg();
+    if (blockIndex < 0 || blockIndex >= static_cast<std::int64_t>(all.size())) {
+        return R"({"error":"no such block"})";
+    }
+    const BlockAgg& a = all[static_cast<std::size_t>(blockIndex)];
+    const std::int64_t ppb = manifest_->pagesPerBlock();
+    json m = queryRows(db_, "SELECT pageCount FROM meta LIMIT 1");
+    const std::int64_t pageCount =
+        (!m.empty() && !m[0]["pageCount"].is_null()) ? m[0]["pageCount"].get<std::int64_t>() : 0;
+    const std::int64_t startPage = a.blockIndex * ppb + 1;
+    const std::int64_t endPage = std::min((a.blockIndex + 1) * ppb, pageCount);
+
+    // Object mix with names.
+    json mix = json::array();
+    for (const auto& [oid, c] : a.objectMix) {
+        json name = nullptr;
+        if (oid >= 0) {
+            json r = queryRows(db_, "SELECT name FROM objects WHERE id=?1", {oid});
+            if (!r.empty()) name = r[0]["name"];
+        }
+        mix.push_back({{"objectId", oid >= 0 ? json(oid) : json(nullptr)},
+                       {"name", name}, {"pages", c}});
+    }
+    json j = {{"blockIndex", a.blockIndex},
+              {"blockId", a.blockId},
+              {"objectName", a.blockId + ".bcv"},
+              {"startPage", startPage}, {"endPage", endPage},
+              {"realPages", a.realPages}, {"usedPages", a.realPages - a.freePages},
+              {"freePages", a.freePages},
+              {"sharedWithParent", a.sharedWithParent != 0},
+              {"objectMix", std::move(mix)}};
+    if (hasProfile_) {
+        json p = queryRows(db_,
+            "SELECT COALESCE(SUM(reads),0) AS reads, COALESCE(SUM(writes),0) AS writes "
+            "FROM prof.page_access WHERE pageNumber BETWEEN ? AND ?" + sourceInClause(sel),
+            {startPage, endPage});
+        j["profile"] = p.empty() ? json({{"reads", 0}, {"writes", 0}}) : p[0];
+    }
+    return j.dump();
+}
+
+namespace {
 // The `pages` predicate for a Tables-view structural group, or "" for an unknown
 // key. Mirrors the b-tree tree's structural roots: Freelist, Lock-Byte, Pointer-map,
 // and the catch-all "All other pages" (unowned pages of no other structural group).
@@ -504,6 +688,18 @@ std::string MapDb::pageJson(std::int64_t pageNumber, const LeafFilter& sel) cons
             "FROM prof.page_access WHERE pageNumber=?" + sourceInClause(sel),
             {pageNumber});
         j["profile"] = p.empty() ? json({{"reads", 0}, {"writes", 0}}) : p[0];
+    }
+    // The CBS block that holds this page (when a matching manifest is loaded).
+    if (manifest_ && manifest_->match()) {
+        const std::int64_t ppb = manifest_->pagesPerBlock();
+        const std::int64_t bi = (pageNumber - 1) / ppb;
+        const std::vector<BlockAgg>& all = blocksAgg();
+        json bid = nullptr;
+        if (bi >= 0 && bi < static_cast<std::int64_t>(all.size()))
+            bid = all[static_cast<std::size_t>(bi)].blockId;
+        const std::int64_t pageSize = manifest_->blockSize() / ppb;
+        j["block"] = {{"blockIndex", bi}, {"blockId", bid},
+                      {"inBlockOffset", ((pageNumber - 1) % ppb) * pageSize}};
     }
     return j.dump();
 }

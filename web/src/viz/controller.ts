@@ -1,6 +1,6 @@
 import {
-  fetchObjectPageOrdinal, fetchObjectPages, fetchObjectRuns, fetchPage, fetchPages, fetchRuns,
-  fetchStructuralPageOrdinal, fetchStructuralPages,
+  fetchBlock, fetchBlocks, fetchObjectPageOrdinal, fetchObjectPages, fetchObjectRuns, fetchPage,
+  fetchPages, fetchRuns, fetchStructuralPageOrdinal, fetchStructuralPages, selParam,
 } from "../core/api.ts";
 import { BG, GAP, HEADER_H, LOD_THRESHOLD, MIN_BLOCK_PX, RANGE_CAP, SCROLL_SETTLE_MS } from "../core/constants.ts";
 import {
@@ -10,8 +10,9 @@ import {
 import { colorForObject, colorForPage, GLYPH, STRUCTURAL } from "../core/palette.ts";
 import { overlayFill } from "../core/overlay.ts";
 import { formatCount } from "../core/format.ts";
-import type { ObjectPagesResponse, ObjectRun, ObjectRunsResponse, PagesResponse, Run, RunsResponse, View }
-  from "../core/types.ts";
+import type {
+  BlockRow, ObjectPagesResponse, ObjectRun, ObjectRunsResponse, PagesResponse, Run, RunsResponse, View,
+} from "../core/types.ts";
 
 // One band's cached window: individual pages (zoomed in) or coalesced ordinal-runs
 // (zoomed out) — the Tables analog of pagesCache's pages/runs LOD.
@@ -58,7 +59,10 @@ export class CanvasController {
   private miniW = 0;
   private miniH = 0;
 
-  private scroll: Record<View, number> = { pages: 0, tables: 0, query: 0, tree: 0 };
+  private scroll: Record<View, number> = { pages: 0, tables: 0, query: 0, tree: 0, blocks: 0, analysis: 0 };
+  // Block view: all blocks fetched once (block count is small), plus a hover detail.
+  private blocksData: BlockRow[] = [];
+  private blocksFetched = false;
   private selected = 0;
   private lastSelectedObject: number | null = null;
 
@@ -182,14 +186,22 @@ export class CanvasController {
     this.clampScroll();
     // Only fetch detail when settled; during a scroll the coarse layer stands in.
     if (this.s.view === "pages") { if (!this.scrolling) this.ensurePagesData(); this.renderPages(); }
+    else if (this.s.view === "blocks") { this.ensureBlocks(); this.renderBlocks(); }
     else { this.rebuildBands(); if (!this.scrolling) this.ensureTablesData(); this.renderTables(); }
     this.renderMinimap();
   }
 
   private clampScroll() {
     const v = this.s.view;
-    const h = v === "pages" ? this.pagesContentHeight() : this.tablesHeight;
+    const h = v === "pages" ? this.pagesContentHeight()
+            : v === "blocks" ? this.blocksContentHeight()
+            : this.tablesHeight;
     this.scroll[v] = Math.max(0, Math.min(this.scroll[v], Math.max(0, h - this.cssH)));
+  }
+
+  // Blocks are a wrapped grid, one cell per block (like pages, unit = block).
+  private blocksContentHeight() {
+    return Math.ceil(this.s.blockCount / this.cols()) * this.cell();
   }
 
   private pagesContentHeight() {
@@ -474,6 +486,94 @@ export class CanvasController {
     }
   }
 
+  // ---- blocks view --------------------------------------------------------
+  // Block count is small (a few thousand for a multi-GB db), so all blocks are
+  // fetched once and rendered from the array — no windowing/LOD needed.
+  private ensureBlocks() {
+    if (this.blocksFetched || this.s.blockCount <= 0) return;
+    this.blocksFetched = true;
+    void fetchBlocks(0, this.s.blockCount - 1).then((r) => {
+      this.blocksData = r?.blocks ?? [];
+      this.scheduleRender();
+    });
+  }
+
+  // A block's fill color for the active color mode.
+  private blockColor(b: BlockRow): string {
+    switch (this.s.blockColorMode) {
+      case "free": {
+        // Green (fully used) → red (fully free).
+        const f = b.realPages > 0 ? b.freePages / b.realPages : 0;
+        const r = Math.round(80 + 150 * f), g = Math.round(200 - 150 * f);
+        return `rgb(${r},${g},90)`;
+      }
+      case "shared":
+        return b.sharedWithParent ? "#3b7dd8" : "#e0a030"; // shared vs new/changed
+      case "profile": {
+        if (!this.overlayActive()) return colorForPage(b.dominantObjectId, "");
+        const { profile, metric } = this.s;
+        return overlayFill(profile.rangeMax(b.startPage, b.endPage, metric),
+                           profile.globalMax(metric)) ?? "#2a2d35";
+      }
+      default:
+        return colorForPage(b.dominantObjectId, ""); // by object (structural → gray)
+    }
+  }
+
+  private renderBlocks() {
+    this.clear();
+    const cols = this.cols(), cell = this.cell(), bp = this.blockPx();
+    const scroll = this.scroll.blocks;
+    const firstRow = Math.max(0, Math.floor(scroll / cell));
+    const lastRow = Math.floor((scroll + this.cssH) / cell);
+    for (const b of this.blocksData) {
+      const row = Math.floor(b.blockIndex / cols);
+      if (row < firstRow || row > lastRow) continue;
+      const x = (b.blockIndex % cols) * cell;
+      const y = row * cell - scroll;
+      this.ctx.fillStyle = BG;
+      this.ctx.fillRect(x, y, cell, cell);
+      this.ctx.fillStyle = this.blockColor(b);
+      this.ctx.fillRect(x, y, bp, bp);
+      if (b.blockIndex === this.selected) {
+        this.ctx.strokeStyle = "#6ea8fe"; this.ctx.lineWidth = 2;
+        this.ctx.strokeRect(x + 1, y + 1, bp - 2, bp - 2);
+      }
+    }
+  }
+
+  private blockAt(mx: number, my: number): BlockRow | null {
+    const cols = this.cols(), cell = this.cell();
+    const col = Math.floor(mx / cell);
+    const idx = Math.floor((my + this.scroll.blocks) / cell) * cols + col;
+    if (col < 0 || col >= cols || idx < 0 || idx >= this.s.blockCount) return null;
+    return this.blocksData[idx] ?? null;
+  }
+
+  private onBlockHover(evt: MouseEvent, rect: DOMRect) {
+    const b = this.blockAt(evt.clientX - rect.left, evt.clientY - rect.top);
+    if (!b) { this.hidePopup(); return; }
+    this.clearPopupTimer();
+    this.popupTimer = window.setTimeout(async () => {
+      const sel = selParam(this.s.selSources, this.s.sourceCount, this.overlayActive());
+      const d = await fetchBlock(b.blockIndex, sel);
+      if (!d) return;
+      const obj = d.objectMix.find((o) => o.objectId != null);
+      const rows: Array<[string, string | number]> = [
+        ["object", d.objectName],
+        ["pages", `${d.startPage}–${d.endPage} (${d.realPages})`],
+        ["used / free", `${d.usedPages} / ${d.freePages}`],
+        ["main object", obj?.name ?? "—"],
+        ["shared w/ parent", d.sharedWithParent ? "yes" : "no"],
+      ];
+      if (d.profile) rows.push(["reads / writes", `${d.profile.reads} / ${d.profile.writes}`]);
+      let html = `<h4>Block ${d.blockIndex}</h4><table>`;
+      for (const [k, v] of rows) html += `<tr><td>${k}</td><td class="v">${v}</td></tr>`;
+      html += "</table>";
+      this.placePopup(evt, html);
+    }, 60);
+  }
+
   // ---- minimap ------------------------------------------------------------
   private initMinimap() {
     let dragging = false;
@@ -488,7 +588,9 @@ export class CanvasController {
         const curY = mapBandY(frac * ref.height, ref.boxes, cur);
         this.scroll.tables = Math.max(0, curY - this.cssH / 2);
       } else {
-        this.scroll[this.s.view] = Math.max(0, frac * this.pagesContentHeight() - this.cssH / 2);
+        const contentH = this.s.view === "blocks" ? this.blocksContentHeight()
+                                                   : this.pagesContentHeight();
+        this.scroll[this.s.view] = Math.max(0, frac * contentH - this.cssH / 2);
       }
       this.markScrolling();
     };
@@ -517,6 +619,18 @@ export class CanvasController {
         this.mctx.fillRect(0, rowS * this.cell() * scale, w, Math.max(0.5, (rowE - rowS + 1) * this.cell() * scale));
       }
       this.drawMinimapViewport(this.scroll.pages * scale, Math.max(2, this.cssH * scale));
+      return;
+    }
+    if (this.s.view === "blocks") {
+      const contentH = this.blocksContentHeight();
+      if (contentH <= 0) return;
+      const scale = h / contentH, cols = this.cols(), cell = this.cell();
+      for (const b of this.blocksData) {
+        const row = Math.floor(b.blockIndex / cols);
+        this.mctx.fillStyle = this.blockColor(b);
+        this.mctx.fillRect(0, row * cell * scale, w, Math.max(0.5, cell * scale));
+      }
+      this.drawMinimapViewport(this.scroll.blocks * scale, Math.max(2, this.cssH * scale));
       return;
     }
     // Tables: draw from the FIXED reference layout so the minimap doesn't reflow as
@@ -584,6 +698,7 @@ export class CanvasController {
 
   private onMouseMove = (evt: MouseEvent) => {
     const rect = this.canvas.getBoundingClientRect();
+    if (this.s.view === "blocks") { this.onBlockHover(evt, rect); return; }
     const hit = this.pageAt(evt.clientX - rect.left, evt.clientY - rect.top);
     if (!hit) { this.hidePopup(); return; }
 
@@ -664,6 +779,15 @@ export class CanvasController {
   // its page type).
   selectPageInView(n: number, objectId: number | null, pageType: string | null) {
     if (this.s.view === "tables") { void this.scrollToPageInBand(n, objectId, pageType); return; }
+    if (this.s.view === "blocks") {
+      // Scroll to and select the block that holds page n.
+      const bi = this.s.pagesPerBlock > 0 ? Math.floor((n - 1) / this.s.pagesPerBlock) : 0;
+      const row = Math.floor(bi / this.cols());
+      this.scroll.blocks = Math.max(0, row * this.cell() - this.cssH / 2);
+      this.selected = bi;
+      this.scheduleRender();
+      return;
+    }
     this.scroll.pages = Math.max(0, scrollForPageAtY(n, this.cssH / 2, this.cssW, this.blockPx()));
     this.selected = n;
     this.scheduleRender();
@@ -817,6 +941,11 @@ export class CanvasController {
 
   private onClick = (e: MouseEvent) => {
     const rect = this.canvas.getBoundingClientRect();
+    if (this.s.view === "blocks") {
+      const b = this.blockAt(e.clientX - rect.left, e.clientY - rect.top);
+      if (b) { this.selected = b.blockIndex; this.scheduleRender(); }
+      return;
+    }
     const hit = this.pageAt(e.clientX - rect.left, e.clientY - rect.top);
     if (!hit) return;
     if (this.blockPx() < LOD_THRESHOLD) {
