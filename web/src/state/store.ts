@@ -25,6 +25,7 @@ export interface VizState {
   pagesPerBlock: number;
   blockCount: number;
   blockColorMode: BlockColorMode;
+  selectedBlock: number | null; // Block view: the block whose detail panel is shown
 
   view: View;
   blockPx: number;
@@ -42,6 +43,7 @@ export interface VizState {
   setBlockPx(px: number): void;
   setMetric(m: Metric): void;
   setBlockColorMode(m: BlockColorMode): void;
+  setSelectedBlock(i: number | null): void;
   setSources(next: Set<number>): void;
   setLegendWidth(w: number): void;
   setSelectedObject(id: number | null): void;
@@ -70,6 +72,7 @@ const creator: StateCreator<VizState> = (set, get) => ({
   pagesPerBlock: 0,
   blockCount: 0,
   blockColorMode: "object",
+  selectedBlock: null,
 
   view: "pages",
   blockPx: 12,
@@ -115,6 +118,7 @@ const creator: StateCreator<VizState> = (set, get) => ({
   setBlockPx: (px) => set({ blockPx: Math.max(MIN_BLOCK_PX, Math.min(MAX_BLOCK_PX, px)) }),
   setMetric: (m) => set({ metric: m }),
   setBlockColorMode: (m) => set({ blockColorMode: m }),
+  setSelectedBlock: (i) => set({ selectedBlock: i }),
   setSources: (next) => set({ selSources: new Set(next) }),
   setLegendWidth: (w) => set({ legendWidth: w }),
   setSelectedObject: (id) => set({ selectedObject: id }),

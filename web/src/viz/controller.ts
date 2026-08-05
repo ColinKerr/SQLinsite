@@ -943,7 +943,11 @@ export class CanvasController {
     const rect = this.canvas.getBoundingClientRect();
     if (this.s.view === "blocks") {
       const b = this.blockAt(e.clientX - rect.left, e.clientY - rect.top);
-      if (b) { this.selected = b.blockIndex; this.scheduleRender(); }
+      if (b) {
+        this.selected = b.blockIndex;
+        this.store.getState().setSelectedBlock(b.blockIndex);  // drives the detail panel
+        this.scheduleRender();
+      }
       return;
     }
     const hit = this.pageAt(e.clientX - rect.left, e.clientY - rect.top);

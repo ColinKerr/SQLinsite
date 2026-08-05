@@ -75,6 +75,7 @@ export interface BlockDetail {
   usedPages: number;
   freePages: number;
   sharedWithParent: boolean;
+  parentName: string | null;
   objectMix: { objectId: number | null; name: string | null; pages: number }[];
   profile?: { reads: number; writes: number };
 }

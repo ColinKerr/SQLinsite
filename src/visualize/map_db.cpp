@@ -150,12 +150,20 @@ std::int64_t MapDb::addQuerySource(const std::string& sql, int queryId,
 }
 
 void MapDb::loadManifest(const std::string& manifestPath, const std::string& dbName) {
-    // The manifest's db selection + pages/block need the map's page count and size.
-    json m = queryRows(db_, "SELECT pageSize, pageCount FROM meta LIMIT 1");
-    const int pageSize = (!m.empty() && !m[0]["pageSize"].is_null())
-                             ? m[0]["pageSize"].get<int>() : 0;
-    const std::int64_t pageCount = (!m.empty() && !m[0]["pageCount"].is_null())
-                                       ? m[0]["pageCount"].get<std::int64_t>() : 0;
+    // Read the map's page size/count from a short-lived private connection so we do
+    // NOT open the pool connection before manifest_ is set — pool connections ATTACH
+    // `manifest` in onConnOpen only when it already exists.
+    int pageSize = 0;
+    std::int64_t pageCount = 0;
+    sqlite3* c = nullptr;
+    if (sqlite3_open_v2(mapPath_.c_str(), &c, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK) {
+        json m = queryRows(c, "SELECT pageSize, pageCount FROM meta LIMIT 1");
+        if (!m.empty()) {
+            if (!m[0]["pageSize"].is_null()) pageSize = m[0]["pageSize"].get<int>();
+            if (!m[0]["pageCount"].is_null()) pageCount = m[0]["pageCount"].get<std::int64_t>();
+        }
+    }
+    sqlite3_close(c);
     manifest_ = std::make_unique<ManifestDb>(manifestPath, dbName, pageCount, pageSize);
 }
 
@@ -587,6 +595,12 @@ std::string MapDb::blockJson(std::int64_t blockIndex, const LeafFilter& sel) con
               {"freePages", a.freePages},
               {"sharedWithParent", a.sharedWithParent != 0},
               {"objectMix", std::move(mix)}};
+    // The parent checkpoint's name (for shared-with-parent context).
+    json pn = queryRows(db_,
+        "SELECT name FROM manifest.databases WHERE id="
+        "(SELECT parent FROM manifest.databases WHERE id="
+        "(SELECT selectedDbId FROM manifest.meta))");
+    j["parentName"] = (!pn.empty() && !pn[0]["name"].is_null()) ? pn[0]["name"] : json(nullptr);
     if (hasProfile_) {
         json p = queryRows(db_,
             "SELECT COALESCE(SUM(reads),0) AS reads, COALESCE(SUM(writes),0) AS writes "

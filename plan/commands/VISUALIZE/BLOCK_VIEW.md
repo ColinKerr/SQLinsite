@@ -2,7 +2,15 @@
 
 The goal of this view is to visualize how the SQLite file's **pages** map onto the fixed-size **blocks** that Cloud Backed SQLite (CBS) stores in cloud object storage, so a user can see which cloud block holds any page (and which pages/objects share a block). It must scale to dbs with billions of pages — because a block holds ~1024–8192 pages, the block count stays modest (a few thousand for a multi-GB db).
 
-This view uses the CBS `manifest.bcv` format (see the research notes and `https://sqlite.org/cloudsqlite/doc/trunk/www/index.wiki`). The `.bim`/`.bcv` mapping is a pure, offline, contiguous, offset-based one — no cloud round-trip is needed.
+This view requires a CBS `manifest.bcv` for the opened db and mapping between the two is done at the page level. See `https://sqlite.org/cloudsqlite/doc/trunk/www/index.wiki` for details of the manifest format.
+
+The view is made up of three parts
+
+- Block Controls - This fixed top bar controls colorization, zoom and stats about the current db.
+- Block View - A canvas control showing each block represented as a square, colored based on the option selected in BlockControls
+- Block Detail View - Shows a color key for all colorizations besides 'Object' along the top row, the second row is statistics for the selected block and, under that, another canvas control with the block's page-level details.
+
+The Block Controls top bar is fixed at the top of the content area.  The Block View is below the top bar and above the Block Detail View, 2/3rds Block View, 1/3rd Block Detail View.  The split between the Block View and the Block Details View is adjustable.
 
 ## Availability & inputs
 
@@ -18,7 +26,7 @@ uncommitted/stale file), the Block view is **disabled** and `/api/meta` reports 
 
 `/api/meta` gains `hasManifest`, `blockSize`, `pagesPerBlock`, `blockCount`, the selected `manifestDbName`, and `manifestMatch` (bool + reason). The mapping is cheap arithmetic + one block-id array, so it is computed **serve-side from the manifest** (an optional side-input like the profile), not baked into the map.
 
-## Page → block mapping
+## Page -> block mapping
 
 For 1-based page `P` (`pageSize` from the map's `meta`, `szBlk` from the manifest):
 
@@ -49,21 +57,19 @@ The Block view **registers** its node-activation handler with the shared tree (c
 - **Table / index grouping node** — scroll to and highlight the block range the object spans; blocks are outlined to show how the object is distributed across blocks (a compact object -> one block; a scattered object -> many).
 - Activating a block (in the content area) that owns a single object selects that object in the tree (mirrors the Tables-view behavior).
 
-## Blocks visualization (content area)
+## Block View (canvas)
 
-The Block view is a **new canvas view type** (`view: "blocks"`) in the shared `CanvasController`, reusing its render loop, scroll/zoom, minimap, hover popups, and
-the Page Top Bar — the same machinery as Pages/Tables. It draws blocks in **block order** (a wrapped one-dimensional grid), and is a single **zoomable surface**:
+The Block View canvas is a **canvas view type** (`view: "blocks"`) in the shared `CanvasController`, reusing its render loop, scroll/zoom, and minimap. It draws blocks in **block order** (a wrapped one-dimensional grid) as a zoomable surface; it sits inside the three-part Block layout (below the Block Controls bar, above the Block Detail View), not in the Pages/Tables Page Top Bar.
 
-- **Zoomed out — one cell per block.** Each block is one filled cell (color per the active mode below). This is the natural overview: block counts are small (a few
-  thousand for a multi-GB db), so most files fit on screen.
-- **Zoomed in — page slots inside each block.** As `blockPx` grows past a threshold, each block cell subdivides into its `pagesPerBlock` page slots (a mini page grid), drawn with the page-level coloring (object/type) and a **block separator/gutter** between blocks, so a page node from the tree can be highlighted in its exact slot.
-- **LOD / scale.** Zoomed out uses per-block cells; a very large db (millions of blocks) coalesces contiguous same-color blocks into runs, exactly like the Pages view's runs LOD. Endpoints are windowed by block index (see `/api/blocks`).
-- The **final block** is drawn partially filled to reflect its real-page count vs padding (`realPages < pagesPerBlock`).
-- **Minimap** (the shared scroll-bar minimap) shows the whole block sequence colored by the active mode, fixed like the Tables minimap.
+- **One cell per block.** Each block is one filled square (color per the active mode below). Block counts are small (a few thousand for a multi-GB db), so most files fit on screen; zoom controls the square size.
+- **LOD / scale.** A very large db (millions of blocks) coalesces contiguous same-color blocks into runs, like the Pages view's runs LOD. Endpoints are windowed by block index (see `/api/blocks`).
+- The **final block** is partial (`realPages < pagesPerBlock`).
+- **Minimap** shows the whole block sequence colored by the active mode.
+- Page-level detail is **not** drawn on this canvas (it lives in the Block Detail View); clicking a block selects it and populates the detail view.
 
-### Color-mode control
+### Block Controls (color-mode + zoom + stats)
 
-The color mode (below) is chosen in a **Block-view control in the Page Top Bar** (shown only in this view), alongside the shared, global **Overlay/source selector** (see PAGES_AND_TABLES_VIEWS.md → Profile overlay) that the profile color mode reads from.
+The fixed top bar holds the **color-mode selector** (below), the **zoom controls**, and **db stats** (selected manifest db, block count, pages/block, block size). The profile color mode reads from the shared, global **Overlay/source selector** (see PAGES_AND_TABLES_VIEWS.md → Profile overlay).
 
 ### Color modes (selectable, like the Overlay control)
 
@@ -72,16 +78,28 @@ The color mode (below) is chosen in a **Block-view control in the Page Top Bar**
 - **Changed vs shared** (needs a child manifest db) — blocks shared unchanged with the parent checkpoint vs blocks new/changed in this version, so a user sees how much a changeset rewrote.
 - **Profile overlay** — when a profile source is selected, shade each block by whether (and how much of) it was accessed (see PAGES_AND_TABLES_VIEWS.md → Profile overlay); this is the block "working set" of the selection (ANALYSIS_VIEW.md).
 
-### Block detail (hover popup / selection)
+### Block Detail View
 
-Hovering or selecting a block shows:
+Selecting a block (clicking it in the Block View canvas, or activating a page node in
+the tree) populates the Block Detail View pane. It shows, top to bottom:
 
-- Block index and **object name** `hex(blockId).bcv`.
-- Page range `[startPage .. endPage]` and real pages vs padding (for the last block).
-- Objects present in the block and their page counts (the block's object mix).
-- Used vs free (freelist) page counts.
-- **Shared with parent** flag + parent checkpoint name (child manifest dbs).
-- When a profile is selected: pages of this block that were read/written, so the block is shown as fully / partially / not accessed.
+- A **color key row** (its own row, above the stats) for the active color mode
+  (omitted for the Object mode).
+- A **stats row** for the block: block index, **object name** `hex(blockId).bcv`, page
+  range `[startPage .. endPage]` + real pages, used vs free (freelist) page counts, the
+  block's main object, the **shared-with-parent** flag + parent checkpoint name (child
+  manifest dbs), and — when a profile is selected — its read/write totals.
+- A **page-level canvas**: the block's pages (`/api/pages` for the block's page range)
+  shown like the Pages view — a compact, self-contained mini-canvas (`BlockPageController`)
+  with its own **minimap**, **zoom** (−/+/Fit and ctrl-wheel), and **hover popup** (page
+  type, owning object, free bytes, cells, read/write totals). It is colored by the color
+  mode chosen in the Block Controls: **object** (owner/type, also the base under the
+  profile overlay), **used/free** (binary per-page tint), **shared/changed** (the block's
+  uniform status), or the **profile** access overlay. It reuses the Pages view's palette /
+  overlay / layout helpers rather than the shared `CanvasController`, so the detail pane
+  never disturbs the main block canvas.
+
+(Hovering a block also shows a quick summary popup; the pane is the persistent detail.)
 
 ## Endpoints
 
@@ -90,7 +108,7 @@ All page ranges are inclusive and 1-based.
 | Method/Path | Returns |
 |---|---|
 | `GET /api/blocks?from&to` | rows for blocks in the block-index window `[from, to]`: `{blockIndex, blockId, startPage, endPage, realPages, dominantObjectId, usedPages, freePages, sharedWithParent}`. Coalesced into runs of same-color adjacent blocks when zoomed out, mirroring `/api/runs`. |
-| `GET /api/block/:i` | full detail for block `i`: page range, object mix (`objectId → pageCount`), used/free, `blockId`/object name, shared-with-parent + parent name, and profile read/write totals for the selected sources |
+| `GET /api/block/:i` | full detail for block `i`: page range, object mix (`objectId → pageCount` with names), used/free, `blockId`/`objectName`, `sharedWithParent` + `parentName`, and profile read/write totals for the selected sources |
 | `GET /api/page/:n` | (existing) gains a `block` field: `{blockIndex, blockId, inBlockOffset}` so the Page Detail and every hover can name a page's cloud block |
 
 ## Backend / data source
@@ -98,8 +116,9 @@ All page ranges are inclusive and 1-based.
 **Manifest representation — a temp SQLite db (`ManifestDb`).** A small `manifest.bcv` reader (v4 header + per-db headers + full/delta block arrays, resolving the parent chain) parses the manifest **once at serve start** into a temp SQLite database (mirroring `ProfileDb`), attached to the read connections as `manifest`:
 
 ```sql
-CREATE TABLE meta(formatVersion, blockSize, blockIdSize, nDb, nDelete,
-                  maxDbId, selectedDbId);
+CREATE TABLE meta(formatVersion, blockSize, blockIdSize, nDb, nDelete, maxDbId,
+                  selectedDbId, pagesPerBlock, blockCount, manifestDbName,
+                  manifestMatch, matchReason);
 CREATE TABLE databases(id INTEGER PRIMARY KEY, parent, version, name,
                        blockCount, entryCount, deleted, isSelected);
 -- Fully-resolved ordered block arrays for every non-deleted db (small: a few

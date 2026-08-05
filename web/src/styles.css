@@ -43,11 +43,12 @@ nav .tab {
 }
 nav .tab.active { color: var(--ink); background: #30343d; }
 
-header button, .page-top-bar button {
+header button, .page-top-bar button, .block-controls button {
   background: #30343d; color: var(--ink); border: 1px solid #444;
   border-radius: 5px; padding: 3px 9px; cursor: pointer; min-width: 28px;
 }
-header button:hover, .page-top-bar button:hover { border-color: #5a6068; }
+header button:hover, .page-top-bar button:hover, .block-controls button:hover { border-color: #5a6068; }
+.block-controls .tab.active { background: #3b4250; border-color: #6ea8fe; }
 
 /* History navigator: right-aligned Back/Forward split buttons + dropdowns. */
 .hist-nav { margin-left: auto; }
@@ -170,7 +171,7 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 #sessions .stmts label { color: var(--muted); }
 #sessions input { accent-color: var(--accent); }
 
-#popup {
+#popup, .detail-popup {
   position: absolute;
   max-width: 340px;
   background: #0e0f14;
@@ -183,10 +184,10 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
   z-index: 20;
   pointer-events: auto;
 }
-#popup h4 { margin: 0 0 5px; font-size: 12px; }
-#popup table { border-collapse: collapse; }
-#popup td { padding: 1px 6px 1px 0; color: var(--muted); vertical-align: top; }
-#popup td.v { color: var(--ink); }
+#popup h4, .detail-popup h4 { margin: 0 0 5px; font-size: 12px; }
+#popup table, .detail-popup table { border-collapse: collapse; }
+#popup td, .detail-popup td { padding: 1px 6px 1px 0; color: var(--muted); vertical-align: top; }
+#popup td.v, .detail-popup td.v { color: var(--ink); }
 #popup .ptrs { margin-top: 6px; }
 #popup a { color: var(--accent); cursor: pointer; text-decoration: none; margin: 0 6px 2px 0; display: inline-block; }
 #popup a:hover { text-decoration: underline; }
@@ -311,6 +312,31 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .pm-hist-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; }
 .pm-hist-bar { width: 100%; background: #3b7dd8; border-radius: 2px 2px 0 0; min-height: 1px; }
 .pm-hist-x { font-size: 9px; color: var(--muted); margin-top: 2px; }
+
+/* Block view layout */
+#block-layout { display: flex; flex-direction: column; width: 100%; min-height: 0; }
+.block-controls { display: flex; align-items: center; gap: 10px; padding: 4px 8px; background: #1f2229; border-bottom: 1px solid #000; flex: 0 0 auto; }
+.block-controls .ctl-label { color: var(--muted); margin-right: 4px; }
+.block-stats { color: var(--muted); font-size: 12px; gap: 6px; }
+.block-split { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.block-split .view-body { position: relative; overflow: hidden; }
+.block-divider { height: 6px; cursor: row-resize; background: #000; flex: 0 0 auto; }
+.block-detail-pane { flex: 0 0 auto; min-height: 0; overflow: hidden; background: #16181d; border-top: 1px solid #2a2d35; }
+.block-detail { padding: 8px; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; gap: 6px; }
+/* Color key on its own row, above the stats row. */
+.block-key-row { flex: 0 0 auto; min-height: 16px; }
+.block-key { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.block-key .sw { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: middle; margin-right: 3px; }
+.block-key .ramp { display: inline-block; width: 120px; height: 10px; border-radius: 3px; }
+.block-stats b { color: var(--ink); }
+.block-detail .block-stats { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 10px; }
+/* Page-level canvas: a mini Pages view (stage + minimap) filling the rest of the pane. */
+.block-pagecanvas { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
+.block-pc-zoom { justify-content: flex-end; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.block-pc-body { flex: 1 1 auto; min-height: 0; display: flex; }
+.block-pc-stage { flex: 1 1 auto; position: relative; overflow: hidden; min-width: 0; }
+.block-pc-stage canvas { display: block; width: 100%; height: 100%; }
+.block-pc-minimap { flex: 0 0 16px; width: 16px; height: 100%; display: block; background: #0e0f14; border-left: 1px solid #000; cursor: pointer; }
 
 /* Running indicator (spinner + Cancel) shown in the results area while a query runs. */
 .results-running {

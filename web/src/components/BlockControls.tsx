@@ -1,4 +1,6 @@
 import { useViz } from "../state/store.ts";
+import { ZoomControls } from "./ZoomControls.tsx";
+import { formatCount } from "../core/format.ts";
 import type { BlockColorMode } from "../core/types.ts";
 
 const MODES: { id: BlockColorMode; label: string }[] = [
@@ -8,29 +10,38 @@ const MODES: { id: BlockColorMode; label: string }[] = [
   { id: "profile", label: "Profile" },
 ];
 
-// Block-view color-mode selector (shown only in the Block view). Sets how each
-// block cell is colored; see BLOCK_VIEW.md → Color modes.
+// The Block view's fixed top bar: color-mode selector, zoom controls, and db stats
+// (see BLOCK_VIEW.md). Shown only inside the Block view layout.
 export function BlockControls() {
-  const view = useViz((s) => s.view);
   const mode = useViz((s) => s.blockColorMode);
   const setMode = useViz((s) => s.setBlockColorMode);
   const hasProfile = useViz((s) => s.hasProfile);
-  if (view !== "blocks") return null;
+  const blockCount = useViz((s) => s.blockCount);
+  const ppb = useViz((s) => s.pagesPerBlock);
+  const dbName = useViz((s) => (s.meta?.manifestDbName as string) ?? "");
+  const blockSize = useViz((s) => (s.meta?.blockSize as number) ?? 0);
+
   return (
-    <div className="bar-group" id="block-controls">
-      <span className="ctl-label">Color</span>
-      {MODES.map((m) => {
-        if (m.id === "profile" && !hasProfile) return null;
-        return (
-          <button
-            key={m.id}
-            className={"tab" + (mode === m.id ? " active" : "")}
-            onClick={() => setMode(m.id)}
-          >
-            {m.label}
-          </button>
-        );
-      })}
+    <div className="block-controls">
+      <div className="bar-group" id="block-color">
+        <span className="ctl-label">Color</span>
+        {MODES.map((m) => {
+          if (m.id === "profile" && !hasProfile) return null;
+          return (
+            <button key={m.id} className={"tab" + (mode === m.id ? " active" : "")}
+                    onClick={() => setMode(m.id)}>
+              {m.label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="bar-spacer" />
+      <ZoomControls />
+      <div className="bar-group block-stats" title={dbName}>
+        <span>{formatCount(blockCount)} blocks</span>
+        <span>· {ppb} pages/block</span>
+        <span>· {(blockSize / (1024 * 1024)).toFixed(0)} MiB each</span>
+      </div>
     </div>
   );
 }

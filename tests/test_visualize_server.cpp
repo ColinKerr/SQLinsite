@@ -400,16 +400,29 @@ TEST_CASE("analysis connection queries map read-only over prefixes") {
 }
 
 TEST_CASE("block endpoints map pages to manifest blocks") {
-    MapDb db(buildMapFixture());
-    auto meta = nlohmann::json::parse(db.metaJson());
-    const int pageSize = meta["meta"]["pageSize"].get<int>();
-    const std::int64_t pageCount = meta["meta"]["pageCount"].get<std::int64_t>();
+    const std::string mapPath = buildMapFixture();
+    // Read pageSize/pageCount directly (sizing the synthetic manifest) before opening
+    // MapDb, so the manifest is loaded before the pool connection is first used.
+    int pageSize = 0;
+    std::int64_t pageCount = 0;
+    {
+        sqlite3* m = nullptr;
+        REQUIRE(sqlite3_open_v2(mapPath.c_str(), &m, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
+        sqlite3_stmt* s = nullptr;
+        REQUIRE(sqlite3_prepare_v2(m, "SELECT pageSize, pageCount FROM meta", -1, &s, nullptr) == SQLITE_OK);
+        REQUIRE(sqlite3_step(s) == SQLITE_ROW);
+        pageSize = sqlite3_column_int(s, 0);
+        pageCount = sqlite3_column_int64(s, 1);
+        sqlite3_finalize(s);
+        sqlite3_close(m);
+    }
     // Small block so the tiny fixture spans >1 block: 2 pages/block.
     const std::int64_t ppb = 2;
     const std::int64_t nBlk = (pageCount + ppb - 1) / ppb;
     const std::string man = buildSimpleManifest(tmpPath("viz.bcv"),
                                                 static_cast<std::uint32_t>(ppb * pageSize),
                                                 static_cast<std::uint32_t>(nBlk));
+    MapDb db(mapPath);
     db.loadManifest(man, "");
 
     // meta now advertises the matching manifest.

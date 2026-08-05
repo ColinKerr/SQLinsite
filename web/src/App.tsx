@@ -13,6 +13,7 @@ import { CanvasStage } from "./components/CanvasStage.tsx";
 import { QueryLayout } from "./components/QueryLayout.tsx";
 import { PageTreeView } from "./components/PageTreeView.tsx";
 import { AnalysisView } from "./components/AnalysisView.tsx";
+import { BlockView } from "./components/BlockView.tsx";
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -66,6 +67,7 @@ export default function App() {
           {view === "query" ? <QueryLayout />
             : view === "tree" ? <PageTreeView />
             : view === "analysis" ? <AnalysisView />
+            : view === "blocks" ? <BlockView />
             : <CanvasStage />}
         </div>
       </main>
