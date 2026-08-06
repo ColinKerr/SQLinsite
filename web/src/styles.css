@@ -274,20 +274,9 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 
 /* Analysis view */
 #analysis-view { display: flex; flex-direction: column; width: 100%; min-height: 0; }
-#analysis-query { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.aq-editor { flex: 0 0 auto; display: flex; flex-direction: column; border-bottom: 1px solid #000; }
-.aq-editor textarea {
-  width: 100%; height: 120px; resize: vertical; box-sizing: border-box;
-  background: #16181d; color: var(--ink); border: none; padding: 8px;
-  font-family: ui-monospace, monospace; font-size: 13px;
-}
-.aq-bar { padding: 4px 8px; background: #1f2229; }
-.aq-bar button { background: #30343d; color: var(--ink); border: 1px solid #000; border-radius: 5px; padding: 3px 12px; cursor: pointer; }
-.aq-results { flex: 1 1 auto; min-height: 0; overflow: auto; }
-.analysis-results table { border-collapse: collapse; font-size: 12px; }
-.analysis-results th, .analysis-results td { border: 1px solid #2a2d35; padding: 2px 8px; text-align: left; white-space: nowrap; }
-.analysis-results th { background: #1f2229; position: sticky; top: 0; }
-.analysis-results .muted, #predefined-metrics .muted { padding: 8px; color: var(--muted); }
+/* Query-Metrics results pane (mirrors the Query view's .results-body). */
+.aq-results { flex: 1 1 auto; min-height: 0; position: relative; display: flex; }
+#predefined-metrics .muted { padding: 8px; color: var(--muted); }
 #block-controls .ctl-label { color: var(--muted); margin-right: 4px; }
 
 /* Predefined metrics dashboard */

@@ -14,6 +14,7 @@ export function ResultsView() {
   const tab = useQuery((s) => s.resultsTab);
   const setTab = useQuery((s) => s.setResultsTab);
   const running = useQuery((s) => s.running);
+  const cancelRun = useQuery((s) => s.cancelRun);
   return (
     <div id="results-view">
       <div className="results-tabs">
@@ -29,7 +30,7 @@ export function ResultsView() {
       <div className="results-body">
         {/* While a query runs, the spinner + Cancel replaces the tab content (shown
             regardless of the active tab, and for every run — not just the first). */}
-        {running ? <RunningIndicator /> : (
+        {running ? <RunningIndicator onCancel={cancelRun} /> : (
           <>
             {tab === "table" && <ResultsTable />}
             {tab === "pages" && <QueryCanvas sub="pages" />}

@@ -91,12 +91,17 @@ Allows the user to query the primary database, the map database, the profile dat
 
 **Connection model.** A plain SQLite connection (no `sqlinsite` profiling VFS), all attachments read-only. Analysis queries are *meta* queries over the map/profile/manifest — they do **not** profile the primary db and do **not** create new profile sources (unlike the Query view). The connection is reused across runs (no cold-cache requirement). Because it is read-only it cannot modify the primary `.bim`.
 
-This view is setup like the Query view with a query editor on top and a results view on the bottom.  It differs in that the results view only shows the table of results with **no mapping back to the source pages** (no `rowid`→page columns) and there are **no sub tabs** for pages/tables views. Served by `POST /api/analysis/query` (mirrors `/api/query/run` but on the unified connection, no profiling, no history side effects).
+This view is set up like the Query view — a query editor on top and a results view on the bottom, split by a resizable horizontal divider — and shares the Query view's editor and results-table controls (see below). It differs in that the results view only shows the table of results with **no mapping back to the source pages** (no `rowid`→page columns) and there are **no pages/tables sub-tabs**. Served by `POST /api/analysis/query` (mirrors `/api/query/run` but on the unified connection: **no profiling**, and **no server-side query-history/profile-source writes**). Both **Explain** and the results themselves use this one endpoint; the editor's **History** is a client-side recent-query list (no server round-trip).
 
 ### Query Editor
 
-Reuses query editor control from Query View
+Reuses the Query view's editor control (the extracted `SqlEditor`): the embedded Monaco editor plus the shared control bar with **Run**, **Format**, **History**, and **Explain**.
+
+- **Run** (Ctrl+Enter) executes the current SQL on the unified analysis connection via `POST /api/analysis/query`.
+- **Format** pretty-prints the SQL in place (the same `formatSql` as the Query view).
+- **History** lists this view's recently run analysis queries. Because analysis runs have **no server-side side effects**, this is a **client-side recent-query list** (SQL + row count) kept in the analysis store — *not* the Query view's server-side store of profiled runs. Selecting an item loads its SQL into the editor and re-runs it (analysis results are not persisted server-side, so there is nothing to restore without re-executing).
+- **Explain** runs `EXPLAIN QUERY PLAN` and `EXPLAIN` for the current SQL over the **same** unified connection (through `/api/analysis/query` — no new endpoint) and shows them in the shared Explain view. Since analysis is a plain read-only connection, this is the plan SQLite would use for the meta query.
 
 ### Results Table
 
-Reuses results table from Query View
+Reuses the Query view's results table (the extracted `ResultsGrid`): the TanStack-virtualized grid (row + column virtualization, resizable / auto-fit columns) so it scales to the full analysis result (up to the server's row cap), replacing the current 1,000-row plain table. The Query-view-only features are **disabled** here: no per-cell page tinting / hover provenance, no cell→Cell-Details panel, and no pages/tables sub-tabs (analysis does no row→page mapping). The footer shows the row count only ("showing N of M rows"). **Explain** output renders in the shared Explain view in place of the grid (a hidden mode toggled by the Explain button), matching the Query view.

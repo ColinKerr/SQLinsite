@@ -1,37 +1,82 @@
+import { useRef, useState } from "react";
 import { useAnalysis, type AnalysisTab } from "../state/analysisStore.ts";
-import type { AnalysisResult } from "../core/types.ts";
 import { PredefinedMetrics } from "./PredefinedMetrics.tsx";
+import { SqlEditor } from "./SqlEditor.tsx";
+import { ResultsGrid } from "./ResultsGrid.tsx";
+import { ExplainView } from "./ExplainResults.tsx";
+import { RunningIndicator } from "./RunningIndicator.tsx";
 
 const TABS: { id: AnalysisTab; label: string }[] = [
   { id: "metrics", label: "Predefined Metrics" },
   { id: "query", label: "Query Metrics" },
 ];
 
-function fmt(v: unknown): string {
-  return v === null || v === undefined ? "NULL" : String(v);
+// The Query-Metrics results pane: the shared ResultsGrid (no row→page mapping,
+// no pages/tables sub-tabs), or the shared Explain view when Explain was pressed.
+function AnalysisResults() {
+  const running = useAnalysis((s) => s.running);
+  const mode = useAnalysis((s) => s.mode);
+  const result = useAnalysis((s) => s.result);
+  const explain = useAnalysis((s) => s.explain);
+
+  if (running) return <RunningIndicator />;
+  if (mode === "explain") return <ExplainView explain={explain} />;
+  return (
+    <ResultsGrid
+      columns={result?.columns ?? []}
+      rows={result?.error ? null : (result?.rows ?? null)}
+      rowCount={result?.rowCount ?? 0}
+      error={result?.error ?? null}
+      runKey={result ? result.rowCount ?? 0 : null}
+    />
+  );
 }
 
-// The Query-Metrics results table (plain — no row→page mapping, no sub-tabs; the
-// first 1,000 rows are shown).
-function AnalysisResults({ result }: { result: AnalysisResult | null }) {
-  if (!result) return <div className="results-msg muted">Run a query to see results.</div>;
-  if (result.error) return <div className="results-msg error">{result.error}</div>;
-  const cols = result.columns ?? [];
-  const rows = result.rows ?? [];
-  const shown = rows.slice(0, 1000);
+// The Query-Metrics sub-view: laid out like the Query view (shared editor on top,
+// results below, resizable divider) over the unified analysis connection.
+function QueryMetrics() {
+  const sql = useAnalysis((s) => s.sql);
+  const setSql = useAnalysis((s) => s.setSql);
+  const run = useAnalysis((s) => s.run);
+  const running = useAnalysis((s) => s.running);
+  const doExplain = useAnalysis((s) => s.doExplain);
+  const history = useAnalysis((s) => s.history);
+  const loadHistory = useAnalysis((s) => s.loadHistory);
+
+  const [editorPct, setEditorPct] = useState(33);
+  const viewerRef = useRef<HTMLDivElement>(null);
+  const startDrag = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const onMove = (ev: MouseEvent) => {
+      const rect = viewerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setEditorPct(Math.max(15, Math.min(80, ((ev.clientY - rect.top) / rect.height) * 100)));
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   return (
-    <div className="analysis-results">
-      <table>
-        <thead><tr>{cols.map((c, i) => <th key={i}>{c.name}</th>)}</tr></thead>
-        <tbody>
-          {shown.map((r, ri) => (
-            <tr key={ri}>{r.map((v, ci) => <td key={ci}>{fmt(v)}</td>)}</tr>
-          ))}
-        </tbody>
-      </table>
-      {rows.length > shown.length && (
-        <div className="muted">showing {shown.length} of {result.rowCount} rows</div>
-      )}
+    <div id="query-viewer" ref={viewerRef}>
+      <div className="qv-pane" style={{ height: `${editorPct}%` }}>
+        <SqlEditor
+          sql={sql}
+          onChange={setSql}
+          onRun={() => void run()}
+          running={running}
+          onExplain={() => void doExplain()}
+          history={history.map((h) => ({ id: h.id, sql: h.sql, meta: `${h.rowCount} rows` }))}
+          onSelectHistory={(id) => void loadHistory(id)}
+        />
+      </div>
+      <div id="qsplit" title="Drag to resize" onMouseDown={startDrag} />
+      <div className="qv-pane" style={{ height: `${100 - editorPct}%` }}>
+        <div className="aq-results"><AnalysisResults /></div>
+      </div>
     </div>
   );
 }
@@ -41,11 +86,6 @@ function AnalysisResults({ result }: { result: AnalysisResult | null }) {
 export function AnalysisView() {
   const tab = useAnalysis((s) => s.tab);
   const setTab = useAnalysis((s) => s.setTab);
-  const sql = useAnalysis((s) => s.sql);
-  const setSql = useAnalysis((s) => s.setSql);
-  const run = useAnalysis((s) => s.run);
-  const running = useAnalysis((s) => s.running);
-  const result = useAnalysis((s) => s.result);
 
   return (
     <div id="analysis-view">
@@ -57,23 +97,7 @@ export function AnalysisView() {
           </button>
         ))}
       </div>
-      {tab === "metrics" ? (
-        <PredefinedMetrics />
-      ) : (
-        <div id="analysis-query">
-          <div className="aq-editor">
-            <textarea value={sql} onChange={(e) => setSql(e.target.value)}
-                      spellCheck={false}
-                      placeholder="SQL over the primary db + map. / profile. / manifest." />
-            <div className="aq-bar">
-              <button onClick={() => void run()} disabled={running}>
-                {running ? "Running…" : "Run"}
-              </button>
-            </div>
-          </div>
-          <div className="aq-results"><AnalysisResults result={result} /></div>
-        </div>
-      )}
+      {tab === "metrics" ? <PredefinedMetrics /> : <QueryMetrics />}
     </div>
   );
 }
