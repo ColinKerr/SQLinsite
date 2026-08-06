@@ -283,21 +283,21 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 #predefined-metrics { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 12px; }
 #predefined-metrics h3 { margin: 12px 0 6px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .pm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(560px, 1fr)); gap: 10px; }
-.pm-card { background: #1b1d23; border: 1px solid #2a2d35; border-radius: 6px; padding: 10px; min-height: 180px; }
+.pm-card { background: #1b1d23; border: 1px solid #2a2d35; border-radius: 6px; padding: 10px; min-height: 180px; display: flex; flex-direction: column; }
 .pm-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.pm-title { font-weight: 600; font-size: 13px; }
+.pm-title { font-weight: 600; font-size: 17px; }
 .pm-sql { background: #30343d; color: var(--muted); border: none; border-radius: 4px; padding: 1px 6px; font-size: 11px; cursor: pointer; }
 .pm-note { color: var(--muted); font-size: 12px; margin-top: 6px; }
 .pm-gauge-bar { height: 10px; background: #12141a; border-radius: 5px; overflow: hidden; }
 .pm-gauge-fill { height: 100%; }
 .pm-gauge-label { font-size: 12px; margin-top: 4px; }
 .pm-bars { display: flex; flex-direction: column; gap: 3px; }
-.pm-bar-row { display: grid; grid-template-columns: 40% 1fr auto; gap: 6px; align-items: center; font-size: 12px; }
+.pm-bar-row { display: grid; grid-template-columns: 40% 1fr 68px; gap: 6px; align-items: center; font-size: 12px; }
 .pm-bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pm-bar-track { background: #12141a; border-radius: 4px; height: 10px; }
+.pm-bar-track { background: transparent; border-radius: 4px; height: 10px; }
 .pm-bar-fill { display: block; height: 100%; background: #3b7dd8; border-radius: 4px; }
-.pm-bar-val { color: var(--muted); }
-.pm-hist { display: flex; align-items: flex-end; gap: 3px; height: 90px; }
+.pm-bar-val { color: var(--muted); text-align: right; }
+.pm-hist { display: flex; align-items: flex-end; gap: 3px; flex: 1 1 auto; min-height: 120px; }
 .pm-hist-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; }
 .pm-hist-bar { width: 100%; background: #3b7dd8; border-radius: 2px 2px 0 0; min-height: 1px; }
 .pm-hist-x { font-size: 9px; color: var(--muted); margin-top: 2px; }

@@ -108,8 +108,8 @@ export function PredefinedMetrics() {
           render={(r) => {
             const free = n(r[0]?.[0]), total = n(r[0]?.[1]);
             return (<>
-              <Gauge frac={total ? free / total : 0} label={`${formatCount(free)} free of ${formatCount(total)} pages`} danger />
               {ppb > 0 && <div className="pm-note">≈ {formatCount(Math.floor(free / ppb))} reclaimable blocks</div>}
+              <Gauge frac={total ? free / total : 0} label={`${formatCount(free)} free of ${formatCount(total)} pages`} danger />
             </>);
           }} />
 
@@ -133,8 +133,8 @@ export function PredefinedMetrics() {
             render={(r) => {
               const shared = n(r[0]?.[0]), changed = n(r[0]?.[1]), tot = shared + changed;
               return (<>
-                <BarList items={[{ label: "changed / new", value: changed }, { label: "shared w/ parent", value: shared }]} unit=" blk" />
                 <div className="pm-note">{tot ? Math.round((100 * changed) / tot) : 0}% of blocks rewritten this checkpoint</div>
+                <BarList items={[{ label: "changed / new", value: changed }, { label: "shared w/ parent", value: shared }]} unit=" blk" />
               </>);
             }} />
 
@@ -160,8 +160,8 @@ export function PredefinedMetrics() {
               const blocks = n(r[0]?.[0]), pages = n(r[0]?.[1]);
               const bytes = blocks * blockSize, locality = blocks * ppb ? pages / (blocks * ppb) : 0;
               return (<>
-                <BarList items={[{ label: "distinct blocks pulled", value: blocks }, { label: "pages accessed", value: pages }]} />
                 <div className="pm-note">≈ {(bytes / (1024 * 1024)).toFixed(0)} MB downloaded · locality {(locality * 100).toFixed(1)}%</div>
+                <BarList items={[{ label: "distinct blocks pulled", value: blocks }, { label: "pages accessed", value: pages }]} />
               </>);
             }} />
         </div>
