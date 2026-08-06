@@ -134,7 +134,7 @@ async function main() {
   if (!args.map) {
     if (!args.db) throw new Error("--db is required to generate a map");
     console.log(`▶ mapping ${args.db} → ${summary.map}…`);
-    summary.mapStep = await runTimed(BINARY, ["map", "--test-file", args.db, "--out-file", summary.map]);
+    summary.mapStep = await runTimed(BINARY, ["map", "--db-file", args.db, "--out-file", summary.map]);
     if (summary.mapStep.exitCode !== 0) throw new Error("map failed");
     if (fs.existsSync(summary.map)) summary.mapBytes = fs.statSync(summary.map).size;
     const ratio = summary.mapBytes && summary.dbBytes ? ` · ${(100 * summary.mapBytes / summary.dbBytes).toFixed(1)}% of db` : "";

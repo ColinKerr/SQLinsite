@@ -7,7 +7,7 @@ ParsedCli parse(std::vector<std::string> args) { return parseCli(args); }
 }  // namespace
 
 TEST_CASE("parses a full profile invocation") {
-    ParsedCli p = parse({"profile", "--test-file", "a.db", "--statements",
+    ParsedCli p = parse({"profile", "--db-file", "a.db", "--statements",
                          "s.json", "--out-file", "o.sqlite"});
     REQUIRE(p.kind == ParsedCli::Kind::Profile);
     CHECK(p.profile.testFile == "a.db");
@@ -16,7 +16,7 @@ TEST_CASE("parses a full profile invocation") {
 }
 
 TEST_CASE("supports --flag=value form") {
-    ParsedCli p = parse({"profile", "--test-file=a.db", "--statements=s.json",
+    ParsedCli p = parse({"profile", "--db-file=a.db", "--statements=s.json",
                          "--out-file=o.sqlite"});
     REQUIRE(p.kind == ParsedCli::Kind::Profile);
     CHECK(p.profile.testFile == "a.db");
@@ -37,20 +37,20 @@ TEST_CASE("help within profile is honored") {
 }
 
 TEST_CASE("parses a map invocation") {
-    ParsedCli p = parse({"map", "--test-file", "a.db", "--out-file", "a.map.json"});
+    ParsedCli p = parse({"map", "--db-file", "a.db", "--out-file", "a.map.json"});
     REQUIRE(p.kind == ParsedCli::Kind::Map);
     CHECK(p.map.testFile == "a.db");
     CHECK(p.map.outFile == "a.map.json");
 }
 
 TEST_CASE("map requires both options") {
-    ParsedCli p = parse({"map", "--test-file", "a.db"});
+    ParsedCli p = parse({"map", "--db-file", "a.db"});
     REQUIRE(p.kind == ParsedCli::Kind::Error);
     CHECK(p.message.find("--out-file") != std::string::npos);
 }
 
 TEST_CASE("map rejects unknown options") {
-    ParsedCli p = parse({"map", "--test-file", "a.db", "--out-file", "o", "--wat"});
+    ParsedCli p = parse({"map", "--db-file", "a.db", "--out-file", "o", "--wat"});
     CHECK(p.kind == ParsedCli::Kind::Error);
     CHECK(p.message.find("unknown option") != std::string::npos);
 }
@@ -113,13 +113,13 @@ TEST_CASE("unknown option is an error") {
 }
 
 TEST_CASE("missing value is an error") {
-    ParsedCli p = parse({"profile", "--test-file"});
+    ParsedCli p = parse({"profile", "--db-file"});
     CHECK(p.kind == ParsedCli::Kind::Error);
     CHECK(p.message.find("missing value") != std::string::npos);
 }
 
 TEST_CASE("timing and quiet options parse") {
-    ParsedCli p = parse({"profile", "--test-file", "a.db", "--statements",
+    ParsedCli p = parse({"profile", "--db-file", "a.db", "--statements",
                          "s.json", "--out-file", "o.sqlite", "--timing", "relative",
                          "--quiet"});
     REQUIRE(p.kind == ParsedCli::Kind::Profile);
@@ -128,27 +128,27 @@ TEST_CASE("timing and quiet options parse") {
 }
 
 TEST_CASE("timing defaults to raw") {
-    ParsedCli p = parse({"profile", "--test-file", "a.db", "--statements",
+    ParsedCli p = parse({"profile", "--db-file", "a.db", "--statements",
                          "s.json", "--out-file", "o.sqlite"});
     REQUIRE(p.kind == ParsedCli::Kind::Profile);
     CHECK(p.profile.relativeTiming == false);
 }
 
 TEST_CASE("invalid timing value is an error") {
-    ParsedCli p = parse({"profile", "--test-file", "a.db", "--statements",
+    ParsedCli p = parse({"profile", "--db-file", "a.db", "--statements",
                          "s.json", "--out-file", "o.sqlite", "--timing", "bogus"});
     CHECK(p.kind == ParsedCli::Kind::Error);
     CHECK(p.message.find("--timing") != std::string::npos);
 }
 
 TEST_CASE("--quiet rejects an inline value") {
-    ParsedCli p = parse({"profile", "--test-file", "a.db", "--statements",
+    ParsedCli p = parse({"profile", "--db-file", "a.db", "--statements",
                          "s.json", "--out-file", "o.sqlite", "--quiet=1"});
     CHECK(p.kind == ParsedCli::Kind::Error);
 }
 
 TEST_CASE("missing required options are reported") {
-    ParsedCli p = parse({"profile", "--test-file", "a.db"});
+    ParsedCli p = parse({"profile", "--db-file", "a.db"});
     REQUIRE(p.kind == ParsedCli::Kind::Error);
     CHECK(p.message.find("--statements") != std::string::npos);
     CHECK(p.message.find("--out-file") != std::string::npos);

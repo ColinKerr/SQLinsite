@@ -117,7 +117,7 @@ pass through the shim untouched. This keeps `Page Number` well-defined.
   session grouping: statements sharing a session share a warm page cache. To
   profile a statement against a **cold** cache, put it in a session of its own,
   so the fresh connection forces every page to be read from the VFS.
-- Statements run **in place** against `--test-file`; write statements
+- Statements run **in place** against `--db-file`; write statements
   permanently modify the original database.
 - Each statement is prepared, stepped to completion (rows are consumed so all
   pages are touched), and finalized before the next statement runs.

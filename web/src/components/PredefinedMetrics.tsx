@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { runAnalysisQuery } from "../core/api.ts";
 import { useViz } from "../state/store.ts";
 import { useAnalysis } from "../state/analysisStore.ts";
-import { formatCount } from "../core/format.ts";
+import { formatBytes, formatCount } from "../core/format.ts";
 
 // ---- tiny hand-rolled (dependency-free) charts -----------------------------
 
@@ -91,7 +91,8 @@ function selClause(selSources: Set<number>, sourceCount: number): string {
 export function PredefinedMetrics() {
   const hasManifest = useViz((s) => s.hasManifest && s.manifestMatch);
   const hasProfile = useViz((s) => s.hasProfile);
-  const ppb = useViz((s) => s.pagesPerBlock);
+  const pageSize = useViz((s) => s.meta?.meta.pageSize ?? 0)
+  const pagesPerBlock = useViz((s) => s.pagesPerBlock);
   const blockSize = useViz((s) => (s.meta?.blockSize as number) ?? 0);
   const selSources = useViz((s) => s.selSources);
   const sourceCount = useViz((s) => s.sourceCount);
@@ -108,7 +109,7 @@ export function PredefinedMetrics() {
           render={(r) => {
             const free = n(r[0]?.[0]), total = n(r[0]?.[1]);
             return (<>
-              {ppb > 0 && <div className="pm-note">≈ {formatCount(Math.floor(free / ppb))} reclaimable blocks</div>}
+              {pagesPerBlock > 0 && <div className="pm-note">≈ {formatCount(Math.floor(free / pagesPerBlock))} reclaimable blocks</div>}
               <Gauge frac={total ? free / total : 0} label={`${formatCount(free)} free of ${formatCount(total)} pages`} danger />
             </>);
           }} />
@@ -153,15 +154,15 @@ export function PredefinedMetrics() {
       {hasProfile && hasManifest && (<>
         <h3>Session working set</h3>
         <div className="pm-grid">
-          <Metric title="Blocks a session loads" deps={[selKey]} sql={
+          <Metric title="Blocks loaded" deps={[selKey]} sql={
             `SELECT count(DISTINCT (pageNumber-1)/(SELECT pagesPerBlock FROM manifest.meta)) AS blocks,` +
             ` count(DISTINCT pageNumber) AS pages FROM profile.page_access${sel}`}
             render={(r) => {
               const blocks = n(r[0]?.[0]), pages = n(r[0]?.[1]);
-              const bytes = blocks * blockSize, locality = blocks * ppb ? pages / (blocks * ppb) : 0;
+              const bytes = blocks * blockSize, block_usage = blocks * pagesPerBlock ? pages / (blocks * pagesPerBlock) : 0;
               return (<>
-                <div className="pm-note">≈ {(bytes / (1024 * 1024)).toFixed(0)} MB downloaded · locality {(locality * 100).toFixed(1)}%</div>
-                <BarList items={[{ label: "distinct blocks pulled", value: blocks }, { label: "pages accessed", value: pages }]} />
+                <div className="pm-note">{formatBytes(bytes)} of blocks loaded, {formatBytes(pages * pageSize)} of pages used</div>
+                <Gauge frac={block_usage} label={`utilization (${formatCount(pages)} pages used of ${formatCount(blocks * pagesPerBlock)} pages in loaded blocks)`} />
               </>);
             }} />
         </div>

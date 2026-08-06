@@ -61,7 +61,7 @@ statement. Treat the statements JSON as the run's manifest.
 ### `meta` table (single row, run header)
 
 - `formatVersion` — Profile-db schema version, so `visualize` can refuse an incompatible file.
-- `testFile` — Path to the db that was profiled (`--test-file`); lets `visualize` catch a profile overlaid onto a different db.
+- `testFile` — Path to the db that was profiled (`--db-file`); lets `visualize` catch a profile overlaid onto a different db.
 - `pageSize` — Page size discovered from the test db header (confirms page-number alignment with the map).
 - `timing` — `raw` or `relative` (how to interpret `timeStart` / `timeEnd`).
 - `name` — `TestRun.Name` from the statements file.

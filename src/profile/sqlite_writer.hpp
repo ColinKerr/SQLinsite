@@ -10,7 +10,7 @@ struct sqlite3_stmt;
 
 // Run-level metadata for the profile db's single-row `meta` table.
 struct ProfileMeta {
-    std::string testFile;   // the db that was profiled (--test-file)
+    std::string testFile;   // the db that was profiled (--db-file)
     int pageSize = 0;       // page size discovered from its header
     std::string timing;     // "raw" | "relative"
     std::string name;       // TestRun name from the statements file

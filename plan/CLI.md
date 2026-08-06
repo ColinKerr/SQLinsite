@@ -5,13 +5,13 @@ The CLI tool is call `sqlinsite`.
 ## Commands
 
 - `sqlinsite profile` - Profiles a SQLite file using a set of queries specified in an input file.  See details in [PROFILE.md](./commands/PROFILE.md)
-  - `--test-file` - SQLite file to test.  Statements run **in place**; write statements permanently modify this file.
+  - `--db-file` - SQLite file to test.  Statements run **in place**; write statements permanently modify this file.
   - `--statements` - A file with one or more SQLite statements to use in the profiling test.  Uses [Statements File Format](./commands/PROFILE.md#statements-file-format).
   - `--out-file` - Path to save the output **SQLite database** (raw page-access log + run metadata).  Uses [Output File Format](./commands/PROFILE.md#output-file-format).
   - `--timing` - `raw` (default) emits raw monotonic-clock ticks; `relative` rebases `timeStart`/`timeEnd` to the start of the run so they begin near zero. `timeEnd - timeStart` is the per-access cost either way.
   - `--quiet` - Suppress the run summary printed to stderr.
 - `sqlinsite map` - Maps the schema tables, data tables, and indexes to  the pages storing them.  Output for each page includes header information, free bytes, rows/keys it holds, and pointers to other pages.  The result is written as an **indexed SQLite database** (not JSON) so `visualize` can query it by page-number range and scale to billions of pages.  See details in [MAP.md](./commands/MAP.md)
-  - `--test-file` - SQLite file to map.
+  - `--db-file` - SQLite file to map.
   - `--out-file` - Path to save the generated map (a SQLite database).
 - `sqlinsite visualize` - Command to visualize `sqlinsite profile` and `sqlinsite map` results.  See details in [VISUALIZE.md](./commands/VISUALIZE.md)
   - `sqlinsite visualize serve` - Start a local web server hosting an interactive canvas view (runs in the foreground; Ctrl-C to stop).

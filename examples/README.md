@@ -13,7 +13,7 @@ sqlite3 fruit.db "CREATE TABLE Fruit(id INTEGER PRIMARY KEY, name TEXT);
 
 ```sh
 sqlinsite profile \
-  --test-file fruit.db \
+  --db-file fruit.db \
   --statements examples/statements.json \
   --out-file fruit-trace.sqlite \
   --timing relative

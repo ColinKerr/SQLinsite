@@ -50,8 +50,28 @@ header button, .page-top-bar button, .block-controls button {
 header button:hover, .page-top-bar button:hover, .block-controls button:hover { border-color: #5a6068; }
 .block-controls .tab.active { background: #3b4250; border-color: #6ea8fe; }
 
-/* History navigator: right-aligned Back/Forward split buttons + dropdowns. */
-.hist-nav { margin-left: auto; }
+/* Profile Overlay Control: right-aligned. */
+#profile-controls { margin-left: auto; padding-right: 8px; }
+
+/* Custom dropdown (Profile controls) */
+.dropdown { position: relative; }
+.dropdown-btn[aria-expanded="true"] { border-color: var(--accent); }
+.dropdown-panel {
+  position: absolute; left: 0; top: calc(100% + 6px);
+  min-width: 220px; max-height: 70vh; overflow: auto;
+  background: var(--panel); border: 1px solid #3a3f4a; border-radius: 7px;
+  padding: 8px 10px; z-index: 30;
+  box-shadow: 0 6px 22px rgba(0,0,0,.5);
+}
+.dd-section + .dd-section { margin-top: 8px; border-top: 1px solid #3a3f4a; padding-top: 8px; }
+.dd-title { font-size: 11px; text-transform: uppercase; color: var(--muted); margin-bottom: 5px; }
+.dd-section > label {
+  display: flex; align-items: center; gap: 6px; margin: 3px 0; cursor: pointer;
+  white-space: nowrap;
+}
+.dd-section input { accent-color: var(--accent); }
+
+/* History navigator: Back/Forward split buttons + dropdowns. */
 .split-btn { position: relative; display: inline-flex; }
 .split-btn .split-main {
   border-top-right-radius: 0; border-bottom-right-radius: 0; font-size: 15px; line-height: 1;
@@ -80,23 +100,6 @@ header button.split-main:disabled, header button.split-caret:disabled {
 }
 #summary { color: var(--muted); }
 
-/* Custom dropdown (Profile controls) */
-.dropdown { position: relative; }
-.dropdown-btn[aria-expanded="true"] { border-color: var(--accent); }
-.dropdown-panel {
-  position: absolute; left: 0; top: calc(100% + 6px);
-  min-width: 220px; max-height: 70vh; overflow: auto;
-  background: var(--panel); border: 1px solid #3a3f4a; border-radius: 7px;
-  padding: 8px 10px; z-index: 30;
-  box-shadow: 0 6px 22px rgba(0,0,0,.5);
-}
-.dd-section + .dd-section { margin-top: 8px; border-top: 1px solid #3a3f4a; padding-top: 8px; }
-.dd-title { font-size: 11px; text-transform: uppercase; color: var(--muted); margin-bottom: 5px; }
-.dd-section > label {
-  display: flex; align-items: center; gap: 6px; margin: 3px 0; cursor: pointer;
-  white-space: nowrap;
-}
-.dd-section input { accent-color: var(--accent); }
 
 main { flex: 1 1 auto; display: flex; min-height: 0; }
 

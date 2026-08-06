@@ -1,7 +1,7 @@
 # Details for `sqlinsite map` command
 
 ```
-sqlinsite map --test-file <db> --out-file <map.sqlite>
+sqlinsite map --db-file <db> --out-file <map.sqlite>
 ```
 
 Reads a SQLite database file, parses its on-disk structure per the
