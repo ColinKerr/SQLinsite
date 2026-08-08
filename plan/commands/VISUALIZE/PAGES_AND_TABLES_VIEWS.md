@@ -47,6 +47,13 @@ from the Tables view. Structural-band blocks are colored per page type (gray ram
 object-band blocks by the object palette. Activating any page node (object or
 structural) in the tree scrolls to and selects that page's block in its band.
 
+**Runs are shared with the Pages view.** Zoomed out, an object band fetches
+`/api/object/runs` — the same runs as `/api/runs` filtered by that `objectId` (one
+per physical run, no extra coalescing), each carrying its page range plus its
+position in the band's packed ordinal space. Because the runs carry page numbers,
+the profile overlay and hit-testing apply to them exactly as in the Pages view, so a
+loaded profile no longer forces the Tables view back to per-page rendering.
+
 ### Navigation Panel
 
 Navigation is the shared **B-Tree Tree** panel on the **left** (see
@@ -77,7 +84,10 @@ page's block inside its object band, not to the Pages grid).
 ### Zoom & pan
 
 - ctrl + Mouse wheel zooms `blockPx` (clamped), anchored at the cursor so the page under
-  the pointer stays put.
+  the pointer stays put. In the Tables view the anchor is resolved in the band's packed
+  ordinal space (the row under the cursor is held fixed as the column count reflows).
+- Clicking a run while zoomed out zooms into it, anchored at the run's start (top-left in
+  the Pages view, the run's position in its band in the Tables view).
 - Vertical scroll / drag pans. The grid wraps to canvas width, so navigation is
   one-dimensional (page order).
 - Buttons/keys for zoom-to-fit and 1:1.
@@ -100,21 +110,33 @@ page's block inside its object band, not to the Pages grid).
 
 ### Profile overlay
 
-When a profile is loaded:
+When any profile source is present (a loaded `--profile-file` and/or an interactive
+Query-view run):
 
-- **Per-block:** `/api/profile/pages` for the visible range; touched blocks get a
-  read/write tint/badge, untouched blocks are drawn lightened.
+- **Per-block:** `/api/profile/pages` (filtered by the selected sources via `&sel=`)
+  for the visible range; touched blocks get a read/write tint/badge, untouched blocks
+  are drawn lightened.
 - **Zoomed out:** each run is shaded like the blocks in the per-block view (by its
   brightest accessed page on the same scale); unaccessed runs are darkened, never
   omitted (so there are no bare-background stripes).
-- Control for profile visualization is in the Page Top Bar `profile controls` section
+- The overlay is the **union of the selected profile sources**, so loaded profiles
+  and interactive query runs shade the same views (see [VISUALIZE.md](./VISUALIZE.md)).
+- The profile visualization control is the shared, global **Overlay control**,
+  promoted to a top-level bar so it is reachable from **every** view that shades by
+  profile (Pages, Tables, Query, Block, Analysis), not only the Page Top Bar. It holds
+  the app-wide metric + source selection used by all overlays.
   - The control should be a custom drop down with two sections
     - The first has two checkboxes one for reads and one for writes.
-    - The second has checkboxes for each session in the profile and child checkboxes for each query in the session.
+    - The second lists the profile **sources** (from `/api/profile/sources`): the
+      loaded-profile sessions (with their statements) and a **Queries** group of
+      interactive runs, each a checkbox that toggles that source in the overlay.
 
 ### View scroll bar
 
-Each view should have a scroll bar that is a scaled image of the entire view.  Clicking on a location in that scaled image of the view will scroll the view to that location.
+Each view should have a scroll bar minimap that is a scaled image of the entire view.  Clicking on a location in that scaled image of the view will scroll the view to that location.
+
+- **Pages** minimap: the downsampled, object-colored whole-file overview (`/api/minimap` buckets), positioned by page number.
+- **Tables** minimap: one colored segment per band excluding headers so it is fixed regardless of zoom level.  Because headers are ignored height is not a 1:1 map to the viewport.  So the scroll bar highlighting the viewport varies in height.
 
 ### Page Top Bar
 

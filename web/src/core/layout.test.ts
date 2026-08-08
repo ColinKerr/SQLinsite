@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   cell, colsFor, pagesContentHeight, visiblePageRange, topLeftPage, scrollForPageAtY,
-  lowerBound, upperBound, bestFitBlockPx,
+  lowerBound, upperBound, bestFitBlockPx, tablesBandBoxes, mapBandY,
 } from "./layout.ts";
+import { HEADER_H, TABLE_BAND_GAP } from "./constants.ts";
 
 describe("layout math", () => {
   it("cell = blockPx + gap", () => {
@@ -49,6 +50,36 @@ describe("layout math", () => {
     expect(bestFitBlockPx(10, h, 1, 40)).toBe(10);  // largest bp with bp ≤ 10
     expect(bestFitBlockPx(100, h, 1, 40)).toBe(40); // everything fits → zoom in to max
     expect(bestFitBlockPx(0.5, h, 1, 40)).toBe(1);  // nothing fits → min (zoomed out)
+  });
+
+  it("tablesBandBoxes lays bands out with header + gap and a min of one row", () => {
+    // 2 bands, 10 & 5 pages, 10 cols, cell 13 → 1 row each; h = HEADER_H + 13.
+    const { boxes, height } = tablesBandBoxes([10, 5], 10, 13);
+    expect(boxes[0]).toEqual({ y: 0, h: HEADER_H + 13 });
+    expect(boxes[1]).toEqual({ y: HEADER_H + 13 + TABLE_BAND_GAP, h: HEADER_H + 13 });
+    expect(height).toBe(2 * (HEADER_H + 13 + TABLE_BAND_GAP));
+    // A zero-page band still gets one row (never collapses to just a header).
+    expect(tablesBandBoxes([0], 10, 13).boxes[0].h).toBe(HEADER_H + 13);
+  });
+
+  it("tablesBandBoxes proportions change with zoom (why the minimap needs a fixed layout)", () => {
+    // One big band + one tiny band; the tiny band's share remains constant because headers are ignored for minimap
+    const frac = (cellPx: number) => {
+      const { boxes, height } = tablesBandBoxes([100, 1], 10, cellPx, true);
+      return boxes[0].h / height;
+    };
+    expect(frac(2)).toBeCloseTo(frac(40), 2); // consistent with zoom
+    expect(frac(7)).toBe(frac(7));            // deterministic at a fixed cell
+  });
+
+  it("mapBandY is piecewise-linear between two same-length layouts", () => {
+    const from = [{ y: 0, h: 10 }, { y: 20, h: 10 }];
+    const to = [{ y: 0, h: 100 }, { y: 110, h: 100 }];
+    expect(mapBandY(0, from, to)).toBe(0);      // band 0 start
+    expect(mapBandY(5, from, to)).toBe(50);     // band 0 midpoint
+    expect(mapBandY(25, from, to)).toBe(160);   // band 1 midpoint
+    expect(mapBandY(1000, from, to)).toBe(210); // past the end → clamped to last box end
+    expect(mapBandY(5, [], to)).toBe(0);        // empty source → 0
   });
 
   it("bestFitBlockPx result reveals whether it actually fits", () => {

@@ -85,7 +85,7 @@ without re-running) are unit-tested. Canvas rendering is verified by running
 ## Manual smoke test
 
 ```
-sqlinsite profile --test-file sample.db --statements sample.json --out-file out.csv
+sqlinsite profile --db-file sample.db --statements sample.json --out-file out.db
 ```
 
 Inspect `out.csv` for plausible page access patterns.

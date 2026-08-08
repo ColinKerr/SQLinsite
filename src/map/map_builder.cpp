@@ -1,7 +1,10 @@
 #include "map/map_builder.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <cstdio>
 #include <functional>
 #include <map>
 #include <stdexcept>
@@ -89,25 +92,14 @@ std::int64_t lockBytePage(const DbFile& db) {
 }
 
 // Per-page classification: type and owning object index (-1 == none).
+// `btree[i]` marks a b-tree object page whose exact leaf/interior/table/index
+// subtype is left for the main parse pass to fill in (see classify) — this
+// avoids a second per-page dbpage read here just to sniff the header byte.
 struct Classification {
     std::vector<PageType> type;
     std::vector<std::int64_t> objectId;
+    std::vector<char> btree;
 };
-
-// A b-tree page's type from its 1-byte header flag (the physical, authoritative
-// type — correct even for WITHOUT ROWID tables, whose data lives in index b-trees).
-PageType btreeTypeFromByte(const DbFile& db, std::int64_t page) {
-    const std::vector<sqlfmt::Byte>& bytes = db.page(page);
-    const std::size_t off = (page == 1) ? 100 : 0;
-    if (off >= bytes.size()) return PageType::Unallocated;
-    switch (bytes[off]) {
-        case 13: return PageType::TableLeaf;
-        case 5:  return PageType::TableInterior;
-        case 10: return PageType::IndexLeaf;
-        case 2:  return PageType::IndexInterior;
-        default: return PageType::Unallocated;
-    }
-}
 
 Classification classify(const DbFile& db,
                         const std::vector<SchemaObject>& objects,
@@ -116,6 +108,7 @@ Classification classify(const DbFile& db,
     Classification cls;
     cls.type.assign(static_cast<std::size_t>(n), PageType::Unallocated);
     cls.objectId.assign(static_cast<std::size_t>(n), -1);
+    cls.btree.assign(static_cast<std::size_t>(n), 0);
     std::vector<bool> assigned(static_cast<std::size_t>(n), false);
 
     auto set = [&](std::int64_t page, PageType t, std::int64_t obj) {
@@ -153,7 +146,15 @@ Classification classify(const DbFile& db,
                 auto it = nameToOi.find(nm ? nm : "");
                 if (it == nameToOi.end()) continue;
                 const bool overflow = pt && std::string(pt) == "overflow";
-                set(pg, overflow ? PageType::Overflow : btreeTypeFromByte(db, pg), it->second);
+                if (overflow) {
+                    set(pg, PageType::Overflow, it->second);
+                } else {
+                    // A b-tree object page: record its object now, but defer the
+                    // exact leaf/interior/table/index subtype to the parse pass,
+                    // which reads the page's header byte anyway (no extra read).
+                    set(pg, PageType::Unallocated, it->second);
+                    cls.btree[static_cast<std::size_t>(pg - 1)] = 1;
+                }
             }
         }
         sqlite3_finalize(st);
@@ -216,13 +217,31 @@ PageInfo parseByType(const DbFile& db, std::int64_t page, PageType type) {
     }
 }
 
+// Env-gated phase timing (SQLINSITE_MAP_TIMING=1) — prints wall time per phase to
+// stderr. Zero cost when disabled.
+struct PhaseTimer {
+    bool on = std::getenv("SQLINSITE_MAP_TIMING") != nullptr;
+    std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
+    void mark(const char* label) {
+        if (!on) return;
+        auto now = std::chrono::steady_clock::now();
+        double ms = std::chrono::duration<double, std::milli>(now - last).count();
+        std::fprintf(stderr, "[map-timing] %-22s %8.1f ms\n", label, ms);
+        last = now;
+    }
+};
+
 }  // namespace
 
 void writeMap(const std::string& sourcePath, const std::string& outPath) {
+    PhaseTimer timer;
     DbFile db = DbFile::open(sourcePath);
     const std::int64_t n = db.pageCount();
+    timer.mark("open");
     const std::vector<SchemaObject> objects = readSchema(sourcePath);
-    const Classification cls = classify(db, objects, sourcePath);
+    timer.mark("readSchema");
+    Classification cls = classify(db, objects, sourcePath);
+    timer.mark("classify");
 
     MapWriter writer(outPath);
 
@@ -251,11 +270,21 @@ void writeMap(const std::string& sourcePath, const std::string& outPath) {
 
     for (std::int64_t page = 1; page <= n; ++page) {
         const std::size_t idx = static_cast<std::size_t>(page - 1);
-        const PageType type = cls.type[idx];
         const std::int64_t obj = cls.objectId[idx];
 
-        PageInfo pi = parseByType(db, page, type);
-        pi.type = type;  // authoritative classification
+        PageType type;
+        PageInfo pi;
+        if (cls.btree[idx]) {
+            // Deferred b-tree page: parseBtree reads the header byte and sets the
+            // exact subtype (authoritative even for WITHOUT ROWID tables).
+            pi = page_parser::parseBtree(db, page);
+            type = pi.type;
+            cls.type[idx] = type;  // fill in for the row-run/subtree passes below
+        } else {
+            type = cls.type[idx];
+            pi = parseByType(db, page, type);
+            pi.type = type;  // authoritative classification
+        }
         writer.writePage(pi, obj);
 
         for (const Pointer& ptr : pi.pointers)
@@ -292,6 +321,7 @@ void writeMap(const std::string& sourcePath, const std::string& outPath) {
         }
     }
     flushRun();
+    timer.mark("parse+write loop");
 
     // Roll leaf runs up to every table-interior page: an interior page's subtree
     // runs are the merged runs of all its descendant leaves. Computed bottom-up and
@@ -322,6 +352,7 @@ void writeMap(const std::string& sourcePath, const std::string& outPath) {
         const bool isLeaf = cls.type[idx] == PageType::TableLeaf;
         for (const RowRun& r : runs) writer.writeRowRun(pg, r.first, r.second, obj, isLeaf);
     }
+    timer.mark("rowruns rollup+write");
 
     for (std::size_t oi = 0; oi < objects.size(); ++oi) {
         const SchemaObject& o = objects[oi];
@@ -333,6 +364,7 @@ void writeMap(const std::string& sourcePath, const std::string& outPath) {
         writer.writeTypeCount(type, count);
     }
     writer.writeMeta(db.header(), sourcePath, n);
+    timer.mark("objects+meta");
 
     // Each page's subtreePageCount = 1 + Σ its subtree children's counts (the tree's
     // child/overflow/freelist-leaf edges). Computed bottom-up with an explicit stack
@@ -367,8 +399,11 @@ void writeMap(const std::string& sourcePath, const std::string& outPath) {
             }
         }
     }
+    timer.mark("subtree count compute");
     for (std::int64_t pg = 1; pg <= n; ++pg)
         writer.writeSubtreeCount(pg, subtreeCount[static_cast<std::size_t>(pg)]);
+    timer.mark("subtree count write");
 
     writer.commit();
+    timer.mark("commit");
 }

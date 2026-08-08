@@ -3,17 +3,19 @@
 `visualize` is a parent command with child commands. v1 ships one:
 
 ```
-sqlinsite visualize serve --map-file <map.sqlite> [--profile-file <run.csv>] [--port <n>]
+sqlinsite visualize serve --map-file <map.sqlite> [--profile-file <run.sqlite>] [--port <n>]
 ```
 
 `serve` starts a local web server that hosts an interactive, **canvas-based** view
-of a `sqlinsite map` result, optionally overlaid with a `sqlinsite profile` CSV.
+of a `sqlinsite map` result, optionally overlaid with a `sqlinsite profile` database.
 It runs in the foreground and prints its URL; stop it with Ctrl-C.
 
 - `--map-file` (required) — the **SQLite** map from `sqlinsite map`.
-- `--profile-file` (optional) — CSV from `sqlinsite profile`; enables the
-  read/write overlay.
-- `--db-file` (optional) - The SQLite file mapped by the `map-file`.  File will be opened read-only.
+- `--profile-file` (optional) — the profile SQLite db from `sqlinsite
+  profile`; imported as loaded ('input') sources of the read/write overlay.
+- `--db-file` (optional) - The SQLite file mapped by the `map-file`.  File will be opened read-only. Enables the Query view and is the no-prefix base of the Analysis Query Metrics.
+- `--manifest-file` (optional) — a Cloud Backed SQLite `manifest.bcv`; enables the **Block** view and the block metrics of the **Analysis** view (see BLOCK_VIEW.md, ANALYSIS_VIEW.md).
+- `--manifest-db-name` (optional) — which named database in the manifest the map corresponds to (defaults to the block-count match; mismatch disables the Block view).
 - `--port` (optional, default `8080`; `0` picks a free port).
 
 
@@ -24,9 +26,14 @@ It runs in the foreground and prints its URL; stop it with Ctrl-C.
 - **Data source:** the server opens `--map-file` **read-only** with SQLite and
   answers queries against it directly — it never loads the full map into memory.
   Prepared statements + the map's indexes keep each request O(log n + result).
-- **Profile:** if given, the CSV is aggregated once into an in-memory SQLite
-  table `profile(pageNumber PRIMARY KEY, reads, writes)` so overlay queries are
-  range/aggregate SQL joined on `pageNumber`.
+- **Profile:** a single on-disk **temp SQLite database** (`ProfileDb`, WAL) holds
+  every profile *source* in two tables — `sources(sourceId, kind, sessionName,
+  sessionId)` and `page_access(sourceId, pageNumber, reads, writes)`. A
+  `--profile-file` is imported as `kind='input'` sources; each interactive
+  Query-view run is added as a `kind='query'` source (see the live-query doc). Every
+  read connection `ATTACH`es it as `prof`, so overlay queries are range/aggregate SQL
+  over `prof.page_access` filtered by the selected `sourceId`s. One store means any
+  profile — loaded or interactive — can be overlaid in any view.
 - **Assets:** the React + TypeScript front-end (source in `web/`, bundled by
   Vite) is built as part of the normal CMake build into `web_build/` (gitignored,
   never committed) and embedded into the binary by a build-time byte-array
@@ -43,15 +50,19 @@ All page ranges are inclusive and 1-based.
 | Method/Path | Returns |
 |---|---|
 | `GET /` , `GET /static/*` | embedded assets |
-| `GET /api/meta` | `meta` row + `objects` list (id, type, name, tableName, rootPage, **pageCount**, startPage, startLeafPage) + **`typeCounts`** + `hasProfile`, `hasDb`, and the profile `sessions` manifest |
+| `GET /api/meta` | `meta` row + `objects` list (id, type, name, tableName, rootPage, **pageCount**, startPage, startLeafPage) + **`typeCounts`** + `hasProfile`, `hasDb`, and (when a manifest is loaded) `hasManifest`, `blockSize`, `pagesPerBlock`, `blockCount`, `manifestDbName`, `manifestMatch` |
 | `GET /api/pages?from&to` | per-page rows `{pageNumber, pageType, objectId}` in range (per-block LOD). Rejects with 413 if the range exceeds a server cap; the client must use `/api/runs` instead. |
-| `GET /api/runs?from&to[&profiled&sel]` | runs overlapping the range `{startPage, endPage, pageType, objectId}` (zoomed-out LOD); with `profiled` they are recomputed to the accessed spans for the selected leaves |
+| `GET /api/runs?from&to` | runs overlapping the range `{startPage, endPage, pageType, objectId}` (zoomed-out LOD), from the map's pre-coalesced `runs` table. The profile overlay is applied client-side. |
 | `GET /api/object/pages?objectId&from&to` | pages of one object by 0-based ordinal window (Tables view) |
 | `GET /api/page/:n` | full single-page detail: `pages` row + its `pointers`, `cells`, `ptrmap` entries, and profile `{reads,writes}` |
-| `GET /api/profile/pages?from&to[&sel]` | `{pageNumber, reads, writes}` for touched pages in range, filtered to the selected session/query leaves |
+| `GET /api/profile/pages?from&to[&sel]` | `{pageNumber, reads, writes}` for touched pages in range, filtered to the selected profile sources |
+| `GET /api/profile/sources` | the profile selection tree: `{sources:[{sourceId, kind, sessionName, sessionId}]}` (loaded 'input' + interactive 'query'); refetched by the client after each run |
+| `GET /api/blocks?from&to` | Block view: one row per block in the index window (or coalesced runs zoomed out) — `{blockIndex, blockId, startPage, endPage, realPages, dominantObjectId, usedPages, freePages, sharedWithParent}` (see BLOCK_VIEW.md) |
+| `GET /api/block/:i` | full detail for block `i` (object mix, used/free, blockId/object name, shared-with-parent, profile totals) |
+| `POST /api/analysis/query` | runs SQL on the **unified analysis connection** (primary base + `map`/`profile`/`manifest` attached, read-only, no profiling); returns a plain results table (see ANALYSIS_VIEW.md) |
 
-Overlay queries accept `&sel=` (comma-separated leaf ids) to scope the profile to
-the selected sessions/queries.
+Overlay queries accept `&sel=` (comma-separated `sourceId`s) to scope the profile to
+the selected sources (loaded statements and/or interactive query runs).
 
 **Live query (only when `--db-file` is supplied):**
 

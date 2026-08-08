@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { fetchMeta, fetchProfilePages, fetchRuns, fetchStructuralGroups } from "./core/api.ts";
+import { fetchMeta, fetchMinimap } from "./core/api.ts";
 import { formatVersionError } from "./core/version.ts";
+import { perfMark, perfReady } from "./core/perf.ts";
 import { Profile } from "./core/profile.ts";
 import { ControllerProvider } from "./state/ControllerContext.tsx";
 import { useViz } from "./state/store.ts";
@@ -11,6 +12,8 @@ import { PanelResizer } from "./components/PanelResizer.tsx";
 import { CanvasStage } from "./components/CanvasStage.tsx";
 import { QueryLayout } from "./components/QueryLayout.tsx";
 import { PageTreeView } from "./components/PageTreeView.tsx";
+import { AnalysisView } from "./components/AnalysisView.tsx";
+import { BlockView } from "./components/BlockView.tsx";
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -22,18 +25,19 @@ export default function App() {
     (async () => {
       const meta = await fetchMeta();
       if (!meta) { setError("Failed to load /api/meta"); return; }
+      perfMark("meta-loaded");
       // Refuse a map whose format version this build can't read (older or newer).
       const verr = formatVersionError(meta.meta.formatVersion, meta.expectedFormatVersion);
       if (verr) { setError(verr); return; }
-      const pageCount = meta.meta.pageCount;
-      const runs = await fetchRuns(1, pageCount); // whole-file run map for the minimap
-      const structural = await fetchStructuralGroups(); // Tables-view non-object bands
-      let profile = Profile.empty();
-      if (meta.hasProfile) {
-        const data = await fetchProfilePages(1, pageCount, ""); // all leaves
-        profile = new Profile(data ?? { pages: [] });
-      }
-      initFromMeta(meta, runs?.runs ?? [], profile, structural?.groups ?? []);
+      // Fetch the downsampled object-colored minimap (a few KB, not the whole-file
+      // run map). The Tables view's structural-page bands are loaded lazily on first
+      // entry (see store), so that heavy query no longer blocks initial load.
+      const minimap = await fetchMinimap();
+      perfMark("minimap-loaded");
+      initFromMeta(meta, minimap?.buckets ?? [], Profile.empty());
+      // Load the unified profile sources (loaded + any interactive runs) and build
+      // the overlay from them; this is what every view shades against.
+      await useViz.getState().loadSources();
       // History navigation: subscribe to nav changes, seed the stack from
       // localStorage, then restore the position from the URL (or the last one).
       initHistory();
@@ -42,6 +46,11 @@ export default function App() {
       setReady(true);
     })();
   }, [initFromMeta]);
+
+  // Signal the perf harness once the first view has actually painted.
+  useEffect(() => {
+    if (ready) requestAnimationFrame(() => perfReady());
+  }, [ready]);
 
   if (error) return <div style={{ padding: 16, color: "#e15759" }}>{error}</div>;
   if (!ready) return <div style={{ padding: 16, color: "#9aa0aa" }}>Loading…</div>;
@@ -57,6 +66,8 @@ export default function App() {
         <div className="view-main">
           {view === "query" ? <QueryLayout />
             : view === "tree" ? <PageTreeView />
+            : view === "analysis" ? <AnalysisView />
+            : view === "blocks" ? <BlockView />
             : <CanvasStage />}
         </div>
       </main>

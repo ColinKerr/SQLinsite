@@ -7,7 +7,11 @@
 
 namespace {
 
-// Mirrors plan/commands/map.schema.sql.
+// Mirrors plan/commands/map.schema.sql. Tables (and the WITHOUT ROWID primary
+// keys, which define row storage) are created up front; secondary indexes are
+// created *after* all rows are inserted (see kIndexSql / MapWriter::commit) —
+// bulk-building an index by sorting is far cheaper than maintaining it across
+// millions of single-row inserts, and yields tighter (smaller) index b-trees.
 constexpr const char* kSchemaSql = R"SQL(
 CREATE TABLE meta (
   formatVersion INTEGER, path TEXT, pageSize INTEGER, pageCount INTEGER,
@@ -23,7 +27,6 @@ CREATE TABLE pages (
   freeBytes INTEGER, cellCount INTEGER,
   firstFreeblock INTEGER, cellContentStart INTEGER, fragmentedFreeBytes INTEGER,
   rightmostPointer INTEGER, parseError TEXT, subtreePageCount INTEGER);
-CREATE INDEX pages_object ON pages(objectId);
 CREATE TABLE cells (
   pageNumber INTEGER, cellIndex INTEGER, rowid INTEGER, leftChild INTEGER,
   payloadBytes INTEGER, localBytes INTEGER, overflowPage INTEGER,
@@ -31,25 +34,34 @@ CREATE TABLE cells (
   -- ranges). Table-leaf rows are represented compactly by page_row_runs; index
   -- cells and their keys are decoded on demand from the source (/content).
   PRIMARY KEY (pageNumber, cellIndex)) WITHOUT ROWID;
-CREATE INDEX cells_leftChild ON cells(leftChild);
 CREATE TABLE pointers (fromPage INTEGER, toPage INTEGER, kind TEXT);
-CREATE INDEX pointers_from ON pointers(fromPage);
-CREATE INDEX pointers_to ON pointers(toPage);
 CREATE TABLE page_row_runs (
   parentPageNumber INTEGER, startRowId INTEGER, endRowId INTEGER, rowCount INTEGER,
   objectId INTEGER, isLeaf INTEGER);      -- objectId/isLeaf drive rowid → leaf lookup
-CREATE INDEX page_row_runs_parent ON page_row_runs(parentPageNumber);
--- Point lookup "which table-leaf page holds rowid R" (replaces cells_rowid):
--- leaf runs of one object are disjoint + ascending, so the run with the largest
--- startRowId ≤ R that also has endRowId ≥ R is R's leaf.
-CREATE INDEX page_row_runs_leaf ON page_row_runs(objectId, startRowId) WHERE isLeaf=1;
 CREATE TABLE ptrmap (
   pageNumber INTEGER, targetPage INTEGER, entryType INTEGER, parentPage INTEGER,
   PRIMARY KEY (pageNumber, targetPage)) WITHOUT ROWID;
 CREATE TABLE runs (
   startPage INTEGER, endPage INTEGER, pageType TEXT, objectId INTEGER);
-CREATE INDEX runs_start ON runs(startPage);
 CREATE TABLE type_counts (pageType TEXT PRIMARY KEY, count INTEGER);
+)SQL";
+
+// Secondary indexes, built once after the bulk insert (see commit()).
+constexpr const char* kIndexSql = R"SQL(
+CREATE INDEX pages_object ON pages(objectId);
+-- Serves the pageType filters in structuralGroupsJson (COUNT per group) and
+-- treeRootsJson (freelist/lock-byte/pointer-map existence checks) so they seek
+-- instead of full-scanning `pages` (one row per db page) on large files.
+CREATE INDEX pages_type ON pages(pageType);
+CREATE INDEX cells_leftChild ON cells(leftChild);
+CREATE INDEX pointers_from ON pointers(fromPage);
+CREATE INDEX pointers_to ON pointers(toPage);
+CREATE INDEX page_row_runs_parent ON page_row_runs(parentPageNumber);
+-- Point lookup "which table-leaf page holds rowid R" (replaces cells_rowid):
+-- leaf runs of one object are disjoint + ascending, so the run with the largest
+-- startRowId ≤ R that also has endRowId ≥ R is R's leaf.
+CREATE INDEX page_row_runs_leaf ON page_row_runs(objectId, startRowId) WHERE isLeaf=1;
+CREATE INDEX runs_start ON runs(startPage);
 )SQL";
 
 [[noreturn]] void fail(sqlite3* db, const std::string& what) {
@@ -281,6 +293,11 @@ void MapWriter::writeSubtreeCount(std::int64_t pageNumber, std::int64_t count) {
 }
 
 void MapWriter::commit() {
+    // Build all secondary indexes now (one sort each) rather than maintaining
+    // them across every insert; see kIndexSql.
+    if (sqlite3_exec(db_, kIndexSql, nullptr, nullptr, nullptr) != SQLITE_OK) {
+        fail(db_, "create indexes");
+    }
     if (sqlite3_exec(db_, "COMMIT", nullptr, nullptr, nullptr) != SQLITE_OK) {
         fail(db_, "commit");
     }

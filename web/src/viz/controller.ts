@@ -1,15 +1,24 @@
 import {
-  fetchObjectPageOrdinal, fetchObjectPages, fetchPage, fetchPages, fetchRuns,
-  fetchStructuralPageOrdinal, fetchStructuralPages,
+  fetchBlock, fetchBlocks, fetchObjectPageOrdinal, fetchObjectPages, fetchObjectRuns, fetchPage,
+  fetchPages, fetchRuns, fetchStructuralPageOrdinal, fetchStructuralPages, selParam,
 } from "../core/api.ts";
-import { BG, GAP, HEADER_H, LOD_THRESHOLD, RANGE_CAP } from "../core/constants.ts";
-import { bestFitBlockPx, cell, colsFor, pagesContentHeight, scrollForPageAtY, topLeftPage, visiblePageRange }
-  from "../core/layout.ts";
+import { BG, GAP, HEADER_H, LOD_THRESHOLD, MIN_BLOCK_PX, RANGE_CAP, SCROLL_SETTLE_MS } from "../core/constants.ts";
+import {
+  bestFitBlockPx, cell, colsFor, mapBandY, pagesContentHeight, scrollForPageAtY, tablesBandBoxes,
+  topLeftPage, visiblePageRange, type BandBox,
+} from "../core/layout.ts";
 import { colorForObject, colorForPage, GLYPH, STRUCTURAL } from "../core/palette.ts";
 import { overlayFill } from "../core/overlay.ts";
 import { formatCount } from "../core/format.ts";
-import type { ObjectPagesResponse, PagesResponse, Run, RunsResponse, View }
-  from "../core/types.ts";
+import type {
+  BlockRow, ObjectPagesResponse, ObjectRun, ObjectRunsResponse, PagesResponse, Run, RunsResponse, View,
+} from "../core/types.ts";
+
+// One band's cached window: individual pages (zoomed in) or coalesced ordinal-runs
+// (zoomed out) — the Tables analog of pagesCache's pages/runs LOD.
+type BandData =
+  | { lod: "pages"; pages: ObjectPagesResponse }
+  | { lod: "runs"; runs: ObjectRunsResponse };
 import type { VizState } from "../state/store.ts";
 import type { StoreApi } from "zustand";
 
@@ -50,7 +59,10 @@ export class CanvasController {
   private miniW = 0;
   private miniH = 0;
 
-  private scroll: Record<View, number> = { pages: 0, tables: 0, query: 0, tree: 0 };
+  private scroll: Record<View, number> = { pages: 0, tables: 0, query: 0, tree: 0, blocks: 0, analysis: 0 };
+  // Block view: all blocks fetched once (block count is small), plus a hover detail.
+  private blocksData: BlockRow[] = [];
+  private blocksFetched = false;
   private selected = 0;
   private lastSelectedObject: number | null = null;
 
@@ -59,11 +71,15 @@ export class CanvasController {
     pages: PagesResponse | null; runs: RunsResponse | null;
   } = { lod: null, from: 0, to: 0, pages: null, runs: null };
   private pagesFetchKey: string | null = null;
-  private objPages = new Map<string, ObjectPagesResponse | null>();
+  private objPages = new Map<string, BandData | null>();
   private bands: Band[] = [];
   private tablesHeight = 0;
 
   private pending = false;
+  // True while actively scrolling: detail fetches are deferred until scrolling
+  // settles (the always-drawn coarse layer stands in meanwhile). See markScrolling.
+  private scrolling = false;
+  private settleTimer: ReturnType<typeof setTimeout> | null = null;
   private popupTimer: number | null = null;
   private cleanups: Array<() => void> = [];
 
@@ -117,6 +133,7 @@ export class CanvasController {
   }
 
   unmount() {
+    if (this.settleTimer) { clearTimeout(this.settleTimer); this.settleTimer = null; }
     for (const c of this.cleanups) c();
     this.cleanups = [];
   }
@@ -133,15 +150,21 @@ export class CanvasController {
     this.cssW = this.stage.clientWidth;
     this.cssH = this.stage.clientHeight;
     this.dpr = window.devicePixelRatio || 1;
-    this.canvas.width = Math.floor(this.cssW * this.dpr);
-    this.canvas.height = Math.floor(this.cssH * this.dpr);
+    // Only set size when it's different
+    const cw = Math.floor(this.cssW * this.dpr), ch = Math.floor(this.cssH * this.dpr);
+    if (this.canvas.width !== cw || this.canvas.height !== ch) {
+      this.canvas.width = cw; this.canvas.height = ch;
+    }
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.miniW = this.minimap.clientWidth;
     this.miniH = this.minimap.clientHeight;
-    this.minimap.width = Math.floor(this.miniW * this.dpr);
-    this.minimap.height = Math.floor(this.miniH * this.dpr);
+    const mw = Math.floor(this.miniW * this.dpr), mh = Math.floor(this.miniH * this.dpr);
+    if (this.minimap.width !== mw || this.minimap.height !== mh) {
+      this.minimap.width = mw; this.minimap.height = mh;
+    }
     this.mctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.scheduleRender();
+    // Redraw synchronously to avoid flashing
+    this.render();
   };
 
   // ---- render loop --------------------------------------------------------
@@ -151,36 +174,61 @@ export class CanvasController {
     requestAnimationFrame(() => { this.pending = false; this.render(); });
   }
 
+  // Called on continuous scroll (wheel / minimap drag): render a coarse layer now
+  // (no fetch) and, once scrolling stops for SCROLL_SETTLE_MS, load full detail.
+  private markScrolling() {
+    this.scrolling = true;
+    if (this.settleTimer) clearTimeout(this.settleTimer);
+    this.settleTimer = setTimeout(() => {
+      this.settleTimer = null;
+      this.scrolling = false;
+      this.scheduleRender(); // settled → ensure*Data fetches + full detail
+    }, SCROLL_SETTLE_MS);
+    this.scheduleRender();
+  }
+
   private render() {
     if (!this.s.meta) return;
     this.clampScroll();
-    if (this.s.view === "pages") { this.ensurePagesData(); this.renderPages(); }
-    else { this.rebuildBands(); this.ensureTablesData(); this.renderTables(); }
+    // Only fetch detail when settled; during a scroll the coarse layer stands in.
+    if (this.s.view === "pages") { if (!this.scrolling) this.ensurePagesData(); this.renderPages(); }
+    else if (this.s.view === "blocks") { this.ensureBlocks(); this.renderBlocks(); }
+    else { this.rebuildBands(); if (!this.scrolling) this.ensureTablesData(); this.renderTables(); }
     this.renderMinimap();
   }
 
   private clampScroll() {
     const v = this.s.view;
-    const h = v === "pages" ? this.pagesContentHeight() : this.tablesHeight;
+    const h = v === "pages" ? this.pagesContentHeight()
+            : v === "blocks" ? this.blocksContentHeight()
+            : this.tablesHeight;
     this.scroll[v] = Math.max(0, Math.min(this.scroll[v], Math.max(0, h - this.cssH)));
+  }
+
+  // Blocks are a wrapped grid, one cell per block (like pages, unit = block).
+  private blocksContentHeight() {
+    return Math.ceil(this.s.blockCount / this.cols()) * this.cell();
   }
 
   private pagesContentHeight() {
     return pagesContentHeight(this.s.pageCount, this.cssW, this.blockPx());
   }
 
-  // Total height of the Tables layout at a hypothetical zoom (mirrors
-  // rebuildBands), so `fit()` can evaluate candidate zoom levels without mutating
-  // state.
+  // Total height of the Tables layout at a hypothetical zoom, so `fit()` can
+  // evaluate candidate zoom levels without mutating state.
   private tablesHeightAt(bp: number): number {
-    const cols = colsFor(this.cssW, bp);
-    const c = cell(bp);
-    let y = 0;
-    for (const grp of this.tableGroups()) {
-      const rows = Math.max(1, Math.ceil(grp.pageCount / cols));
-      y += HEADER_H + rows * c + 10;
-    }
-    return y;
+    return tablesBandBoxes(this.tableGroups().map((g) => g.pageCount),
+                           colsFor(this.cssW, bp), cell(bp)).height;
+  }
+
+  // The tables bands laid out at a FIXED, zoom-independent reference zoom
+  // (fully-zoomed-out), so the minimap always renders the same shape. Returned as
+  // plain boxes plus the groups (for colors), parallel by index.
+  private tablesReferenceLayout(): { groups: TableGroup[]; boxes: BandBox[]; height: number } {
+    const groups = this.tableGroups();
+    const { boxes, height } = tablesBandBoxes(
+      groups.map((g) => g.pageCount), colsFor(this.cssW, MIN_BLOCK_PX), cell(MIN_BLOCK_PX), true);
+    return { groups, boxes, height };
   }
 
   // ---- pages-view data (no-flash: keep old until new arrives) -------------
@@ -222,6 +270,11 @@ export class CanvasController {
 
   private drawBlock(x: number, y: number, color: string, pageType: string, pageNumber: number) {
     const bp = this.blockPx();
+    // Repaint the full cell pitch with the background first: the coarse base layer
+    // fills the inter-cell gaps with the page color, so this restores each cell's
+    // dark outline (the GAP to its right and below).
+    this.ctx.fillStyle = BG;
+    this.ctx.fillRect(x, y, this.cell(), this.cell());
     this.ctx.fillStyle = color;
     this.ctx.fillRect(x, y, bp, bp);
     if (this.overlayActive()) {
@@ -232,8 +285,31 @@ export class CanvasController {
     this.drawGlyph(pageType, x, y);
   }
 
+  // Coarse base layer: the page grid colored by owning object, from the already-
+  // loaded minimap buckets (no fetch). Same cell geometry as the detail grid, so
+  // detail (type color + glyph + profile) paints exactly on top — the rough map is
+  // always drawn first so switching to detail never flashes through to black.
+  private drawCoarsePages() {
+    const cols = this.cols(), scroll = this.scroll.pages, bp = this.blockPx();
+    for (const b of this.s.minimap) {
+      const color = b.objectId != null ? colorForObject(b.objectId) : STRUCTURAL["unallocated"];
+      const s = b.startPage - 1, e = b.endPage - 1;
+      const rowS = Math.floor(s / cols), rowE = Math.floor(e / cols);
+      this.ctx.fillStyle = color;
+      for (let row = rowS; row <= rowE; row++) {
+        const y = row * this.cell() - scroll;
+        if (y > this.cssH || y + bp < 0) continue;
+        const c0 = row === rowS ? s % cols : 0;
+        const c1 = row === rowE ? e % cols : cols - 1;
+        const x = c0 * this.cell(), w = (c1 - c0 + 1) * this.cell() - GAP;
+        this.ctx.fillRect(x, y, w, bp);
+      }
+    }
+  }
+
   private renderPages() {
     this.clear();
+    this.drawCoarsePages();
     const bp = this.blockPx(), cols = this.cols(), scroll = this.scroll.pages, c = this.pagesCache;
     if (c.lod === "pages" && c.pages) {
       for (const p of c.pages.pages) {
@@ -251,23 +327,34 @@ export class CanvasController {
     }
   }
 
-  private drawRun(run: Run, cols: number, scroll: number) {
+  // Draws a coalesced run of cells [startIdx, endIdx] (0-based) in a `cols`-wide grid
+  // whose row 0 starts at viewport y `originY`, repainting the pitch with BG first so
+  // the cell outline shows over the coarse base layer. Shared by the Pages runs LOD
+  // (index = pageNumber-1, originY = -scroll) and the Tables runs LOD (index = ordinal,
+  // originY = band top - scroll).
+  private drawRunCells(startIdx: number, endIdx: number, cols: number, originY: number,
+                       base: string, overlay: string | null) {
     const bp = this.blockPx();
-    const s = run.startPage - 1, e = run.endPage - 1;
-    const rowS = Math.floor(s / cols), rowE = Math.floor(e / cols);
-    const base = colorForPage(run.objectId, run.pageType);
-    const { profile, metric } = this.s;
-    const v = this.overlayActive() ? profile.rangeMax(run.startPage, run.endPage, metric) : 0;
-    const fill = this.overlayActive() ? overlayFill(v, profile.globalMax(metric)) : null;
+    const rowS = Math.floor(startIdx / cols), rowE = Math.floor(endIdx / cols);
     for (let row = rowS; row <= rowE; row++) {
-      const y = row * this.cell() - scroll;
+      const y = originY + row * this.cell();
       if (y > this.cssH || y + bp < 0) continue;
-      const c0 = row === rowS ? s % cols : 0;
-      const c1 = row === rowE ? e % cols : cols - 1;
+      const c0 = row === rowS ? startIdx % cols : 0;
+      const c1 = row === rowE ? endIdx % cols : cols - 1;
       const x = c0 * this.cell(), w = (c1 - c0 + 1) * this.cell() - GAP;
+      this.ctx.fillStyle = BG; this.ctx.fillRect(x, y, (c1 - c0 + 1) * this.cell(), this.cell());
       this.ctx.fillStyle = base; this.ctx.fillRect(x, y, w, bp);
-      if (fill) { this.ctx.fillStyle = fill; this.ctx.fillRect(x, y, w, bp); }
+      if (overlay) { this.ctx.fillStyle = overlay; this.ctx.fillRect(x, y, w, bp); }
     }
+  }
+
+  private drawRun(run: Run, cols: number, scroll: number) {
+    const { profile, metric } = this.s;
+    const overlay = this.overlayActive()
+      ? overlayFill(profile.rangeMax(run.startPage, run.endPage, metric), profile.globalMax(metric))
+      : null;
+    this.drawRunCells(run.startPage - 1, run.endPage - 1, cols, -scroll,
+                      colorForPage(run.objectId, run.pageType), overlay);
   }
 
   // ---- tables view --------------------------------------------------------
@@ -292,6 +379,14 @@ export class CanvasController {
       : fetchStructuralPages(grp.structuralKey as string, from, to);
   }
 
+  // A band's LOD, mirroring the Pages view: coalesced runs when zoomed out, else
+  // per-page. Runs only for object bands (structural bands are small). Object runs
+  // carry page numbers (same shape as Pages-view runs), so the profile overlay
+  // applies to them too — no need to fall back to per-page when a profile is loaded.
+  private tablesLod(grp: TableGroup): "pages" | "runs" {
+    return grp.objectId != null && this.blockPx() < LOD_THRESHOLD ? "runs" : "pages";
+  }
+
   // A representative band color for the minimap: the object palette color, or a
   // fixed structural tint (the "All other pages" group is mixed, so use gray).
   private bandColor(grp: TableGroup): string {
@@ -302,14 +397,10 @@ export class CanvasController {
   }
 
   private rebuildBands() {
-    const cols = this.cols();
-    this.bands = []; let y = 0;
-    for (const grp of this.tableGroups()) {
-      const rows = Math.max(1, Math.ceil(grp.pageCount / cols));
-      const h = HEADER_H + rows * this.cell();
-      this.bands.push({ grp, y, h }); y += h + 10;
-    }
-    this.tablesHeight = y;
+    const groups = this.tableGroups();
+    const { boxes, height } = tablesBandBoxes(groups.map((g) => g.pageCount), this.cols(), this.cell());
+    this.bands = groups.map((grp, i) => ({ grp, y: boxes[i].y, h: boxes[i].h }));
+    this.tablesHeight = height;
   }
 
   private ensureTablesData() {
@@ -321,18 +412,45 @@ export class CanvasController {
       const lastRow = Math.floor((scroll + this.cssH - band.y - HEADER_H) / this.cell());
       const from = Math.max(0, firstRow * cols);
       const to = Math.min(band.grp.pageCount - 1, (lastRow + 1) * cols);
-      if (to < from || to - from + 1 > RANGE_CAP) continue;
-      const key = `${band.grp.key}:${from}:${to}`;
+      if (to < from) continue;
+      const lod = this.tablesLod(band.grp);
+      if (lod === "pages" && to - from + 1 > RANGE_CAP) continue; // runs are bounded
+      const key = `${band.grp.key}:${lod}:${from}:${to}`;
       if (this.objPages.has(key)) continue;
       this.objPages.set(key, null);
-      this.fetchGroupPages(band.grp, from, to).then((d) => {
-        this.objPages.set(key, d); this.scheduleRender();
-      });
+      const load: Promise<BandData | null> = lod === "runs"
+        ? fetchObjectRuns(band.grp.objectId as number, from, to)
+            .then((d) => (d ? { lod: "runs", runs: d } : null))
+        : this.fetchGroupPages(band.grp, from, to)
+            .then((d) => (d ? { lod: "pages", pages: d } : null));
+      load.then((d) => { this.objPages.set(key, d); this.scheduleRender(); });
+    }
+  }
+
+  // Coarse base layer: each visible band filled with its object/structural color
+  // (band height ∝ pageCount, from meta — a band is one object, so this is its
+  // rough grid). Always drawn under the detail blocks so switching never flashes
+  // to black; detail (type color + glyph + profile) paints on top.
+  private drawCoarseTables() {
+    const scroll = this.scroll.tables, cols = this.cols(), cellPx = this.cell();
+    for (const band of this.bands) {
+      const top = band.y - scroll;
+      if (top > this.cssH || top + band.h < 0) continue;
+      const gridY = top + HEADER_H;
+      // Fill only the object's actual cells: the complete rows at full width, then
+      // the final partial row up to pageCount. Filling the whole width would leave
+      // the last row's trailing (non-existent) cells object-colored after detail.
+      const fullRows = Math.floor(band.grp.pageCount / cols);
+      const rem = band.grp.pageCount % cols;
+      this.ctx.fillStyle = this.bandColor(band.grp);
+      if (fullRows > 0) this.ctx.fillRect(0, gridY, this.cssW, fullRows * cellPx);
+      if (rem > 0) this.ctx.fillRect(0, gridY + fullRows * cellPx, rem * cellPx, cellPx);
     }
   }
 
   private renderTables() {
     this.clear();
+    this.drawCoarseTables();
     const bp = this.blockPx(), cols = this.cols(), scroll = this.scroll.tables;
     for (const band of this.bands) {
       const top = band.y - scroll;
@@ -343,11 +461,26 @@ export class CanvasController {
         `${band.grp.label}  ·  ${formatCount(band.grp.pageCount)} pages`,
         2, top + 14,
       );
+      const originY = band.y + HEADER_H - scroll;
+      const lod = this.tablesLod(band.grp);
       for (const [key, data] of this.objPages) {
-        if (!data || !key.startsWith(band.grp.key + ":")) continue;
-        for (const p of data.pages) {
+        if (!data || data.lod !== lod || !key.startsWith(band.grp.key + ":")) continue;
+        if (data.lod === "runs") {
+          const { profile, metric } = this.s;
+          for (const r of data.runs.runs) {
+            // Shade the run exactly like the Pages view (drawRun): the run carries
+            // its page range, so the overlay uses the brightest accessed page in it.
+            const overlay = this.overlayActive()
+              ? overlayFill(profile.rangeMax(r.startPage, r.endPage, metric), profile.globalMax(metric))
+              : null;
+            this.drawRunCells(r.startOrdinal, r.endOrdinal, cols, originY,
+                              colorForPage(band.grp.objectId, r.pageType), overlay);
+          }
+          continue;
+        }
+        for (const p of data.pages.pages) {
           const x = (p.ordinal % cols) * this.cell();
-          const y = band.y + HEADER_H + Math.floor(p.ordinal / cols) * this.cell() - scroll;
+          const y = originY + Math.floor(p.ordinal / cols) * this.cell();
           if (y > this.cssH || y + bp < 0) continue;
           this.drawBlock(x, y, colorForPage(band.grp.objectId, p.pageType), p.pageType, p.pageNumber);
           if (p.pageNumber === this.selected) {
@@ -359,15 +492,113 @@ export class CanvasController {
     }
   }
 
+  // ---- blocks view --------------------------------------------------------
+  // Block count is small (a few thousand for a multi-GB db), so all blocks are
+  // fetched once and rendered from the array — no windowing/LOD needed.
+  private ensureBlocks() {
+    if (this.blocksFetched || this.s.blockCount <= 0) return;
+    this.blocksFetched = true;
+    void fetchBlocks(0, this.s.blockCount - 1).then((r) => {
+      this.blocksData = r?.blocks ?? [];
+      this.scheduleRender();
+    });
+  }
+
+  // A block's fill color for the active color mode.
+  private blockColor(b: BlockRow): string {
+    switch (this.s.blockColorMode) {
+      case "free": {
+        // Green (fully used) → red (fully free).
+        const f = b.realPages > 0 ? b.freePages / b.realPages : 0;
+        const r = Math.round(80 + 150 * f), g = Math.round(200 - 150 * f);
+        return `rgb(${r},${g},90)`;
+      }
+      case "shared":
+        return b.sharedWithParent ? "#3b7dd8" : "#e0a030"; // shared vs new/changed
+      case "profile": {
+        if (!this.overlayActive()) return colorForPage(b.dominantObjectId, "");
+        const { profile, metric } = this.s;
+        return overlayFill(profile.rangeMax(b.startPage, b.endPage, metric),
+                           profile.globalMax(metric)) ?? "#2a2d35";
+      }
+      default:
+        return colorForPage(b.dominantObjectId, ""); // by object (structural → gray)
+    }
+  }
+
+  private renderBlocks() {
+    this.clear();
+    const cols = this.cols(), cell = this.cell(), bp = this.blockPx();
+    const scroll = this.scroll.blocks;
+    const firstRow = Math.max(0, Math.floor(scroll / cell));
+    const lastRow = Math.floor((scroll + this.cssH) / cell);
+    for (const b of this.blocksData) {
+      const row = Math.floor(b.blockIndex / cols);
+      if (row < firstRow || row > lastRow) continue;
+      const x = (b.blockIndex % cols) * cell;
+      const y = row * cell - scroll;
+      this.ctx.fillStyle = BG;
+      this.ctx.fillRect(x, y, cell, cell);
+      this.ctx.fillStyle = this.blockColor(b);
+      this.ctx.fillRect(x, y, bp, bp);
+      if (b.blockIndex === this.selected) {
+        this.ctx.strokeStyle = "#6ea8fe"; this.ctx.lineWidth = 2;
+        this.ctx.strokeRect(x + 1, y + 1, bp - 2, bp - 2);
+      }
+    }
+  }
+
+  private blockAt(mx: number, my: number): BlockRow | null {
+    const cols = this.cols(), cell = this.cell();
+    const col = Math.floor(mx / cell);
+    const idx = Math.floor((my + this.scroll.blocks) / cell) * cols + col;
+    if (col < 0 || col >= cols || idx < 0 || idx >= this.s.blockCount) return null;
+    return this.blocksData[idx] ?? null;
+  }
+
+  private onBlockHover(evt: MouseEvent, rect: DOMRect) {
+    const b = this.blockAt(evt.clientX - rect.left, evt.clientY - rect.top);
+    if (!b) { this.hidePopup(); return; }
+    this.clearPopupTimer();
+    this.popupTimer = window.setTimeout(async () => {
+      const sel = selParam(this.s.selSources, this.s.sourceCount, this.overlayActive());
+      const d = await fetchBlock(b.blockIndex, sel);
+      if (!d) return;
+      const obj = d.objectMix.find((o) => o.objectId != null);
+      const rows: Array<[string, string | number]> = [
+        ["object", d.objectName],
+        ["pages", `${d.startPage}–${d.endPage} (${d.realPages})`],
+        ["used / free", `${d.usedPages} / ${d.freePages}`],
+        ["main object", obj?.name ?? "—"],
+        ["shared w/ parent", d.sharedWithParent ? "yes" : "no"],
+      ];
+      if (d.profile) rows.push(["reads / writes", `${d.profile.reads} / ${d.profile.writes}`]);
+      let html = `<h4>Block ${d.blockIndex}</h4><table>`;
+      for (const [k, v] of rows) html += `<tr><td>${k}</td><td class="v">${v}</td></tr>`;
+      html += "</table>";
+      this.placePopup(evt, html);
+    }, 60);
+  }
+
   // ---- minimap ------------------------------------------------------------
   private initMinimap() {
     let dragging = false;
     const scrollTo = (clientY: number) => {
       const rect = this.minimap.getBoundingClientRect();
       const frac = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
-      const contentH = this.s.view === "pages" ? this.pagesContentHeight() : this.tablesHeight;
-      this.scroll[this.s.view] = Math.max(0, frac * contentH - this.cssH / 2);
-      this.scheduleRender();
+      if (this.s.view === "tables") {
+        // The minimap is drawn in the fixed reference layout; map the clicked
+        // fraction back through it to a current-layout scroll offset.
+        const ref = this.tablesReferenceLayout();
+        const cur: BandBox[] = this.bands.map((b) => ({ y: b.y, h: b.h }));
+        const curY = mapBandY(frac * ref.height, ref.boxes, cur);
+        this.scroll.tables = Math.max(0, curY - this.cssH / 2);
+      } else {
+        const contentH = this.s.view === "blocks" ? this.blocksContentHeight()
+                                                   : this.pagesContentHeight();
+        this.scroll[this.s.view] = Math.max(0, frac * contentH - this.cssH / 2);
+      }
+      this.markScrolling();
     };
     this.addListener(this.minimap, "mousedown", ((e: MouseEvent) => {
       dragging = true; scrollTo(e.clientY); e.preventDefault();
@@ -380,24 +611,52 @@ export class CanvasController {
     const w = this.miniW, h = this.miniH;
     if (w === 0 || h === 0) return;
     this.mctx.clearRect(0, 0, w, h);
-    const contentH = this.s.view === "pages" ? this.pagesContentHeight() : this.tablesHeight;
-    if (contentH <= 0) return;
-    const scale = h / contentH;
     if (this.s.view === "pages") {
+      const contentH = this.pagesContentHeight();
+      if (contentH <= 0) return;
+      const scale = h / contentH;
       const cols = this.cols();
-      for (const run of this.s.allRuns) {
-        const rowS = Math.floor((run.startPage - 1) / cols);
-        const rowE = Math.floor((run.endPage - 1) / cols);
-        this.mctx.fillStyle = colorForPage(run.objectId, run.pageType);
+      // Colored by owning table/index (structural/unowned → neutral). The buckets
+      // are a downsampled whole-file overview (see /api/minimap), not the run map.
+      for (const bkt of this.s.minimap) {
+        const rowS = Math.floor((bkt.startPage - 1) / cols);
+        const rowE = Math.floor((bkt.endPage - 1) / cols);
+        this.mctx.fillStyle = bkt.objectId != null ? colorForObject(bkt.objectId) : STRUCTURAL["unallocated"];
         this.mctx.fillRect(0, rowS * this.cell() * scale, w, Math.max(0.5, (rowE - rowS + 1) * this.cell() * scale));
       }
-    } else {
-      for (const band of this.bands) {
-        this.mctx.fillStyle = this.bandColor(band.grp);
-        this.mctx.fillRect(0, band.y * scale, w, Math.max(0.5, band.h * scale));
-      }
+      this.drawMinimapViewport(this.scroll.pages * scale, Math.max(2, this.cssH * scale));
+      return;
     }
-    const vy = this.scroll[this.s.view] * scale, vh = Math.max(2, this.cssH * scale);
+    if (this.s.view === "blocks") {
+      const contentH = this.blocksContentHeight();
+      if (contentH <= 0) return;
+      const scale = h / contentH, cols = this.cols(), cell = this.cell();
+      for (const b of this.blocksData) {
+        const row = Math.floor(b.blockIndex / cols);
+        this.mctx.fillStyle = this.blockColor(b);
+        this.mctx.fillRect(0, row * cell * scale, w, Math.max(0.5, cell * scale));
+      }
+      this.drawMinimapViewport(this.scroll.blocks * scale, Math.max(2, this.cssH * scale));
+      return;
+    }
+    // Tables: draw from the FIXED reference layout so the minimap doesn't reflow as
+    // the user zooms; map the (zoom-dependent) current viewport into that layout so
+    // the highlight still lines up with the bands.
+    const ref = this.tablesReferenceLayout();
+    if (ref.height <= 0) return;
+    const scale = h / ref.height;
+    for (let i = 0; i < ref.groups.length; i++) {
+      this.mctx.fillStyle = this.bandColor(ref.groups[i]);
+      this.mctx.fillRect(0, ref.boxes[i].y * scale, w, Math.max(0.5, ref.boxes[i].h * scale));
+    }
+    const cur: BandBox[] = this.bands.map((b) => ({ y: b.y, h: b.h }));
+    const top = mapBandY(this.scroll.tables, cur, ref.boxes);
+    const bot = mapBandY(this.scroll.tables + this.cssH, cur, ref.boxes);
+    this.drawMinimapViewport(top * scale, Math.max(2, (bot - top) * scale));
+  }
+
+  private drawMinimapViewport(vy: number, vh: number) {
+    const w = this.miniW;
     this.mctx.fillStyle = "rgba(110,168,254,.22)"; this.mctx.fillRect(0, vy, w, vh);
     this.mctx.strokeStyle = "rgba(255,255,255,.8)"; this.mctx.lineWidth = 1;
     this.mctx.strokeRect(0.5, vy + 0.5, w - 1, vh - 1);
@@ -422,8 +681,15 @@ export class CanvasController {
       if (col < 0 || col >= cols || ordinal >= band.grp.pageCount) return null;
       for (const [key, data] of this.objPages) {
         if (!data || !key.startsWith(band.grp.key + ":")) continue;
-        const hit = data.pages.find((p) => p.ordinal === ordinal);
-        if (hit) return { pageNumber: hit.pageNumber };
+        if (data.lod === "pages") {
+          const hit = data.pages.pages.find((p) => p.ordinal === ordinal);
+          if (hit) return { pageNumber: hit.pageNumber };
+        } else {
+          // Runs carry both ordinal and page ranges, so an ordinal within a run maps
+          // straight back to its page number (the run's pages are contiguous).
+          const r = data.runs.runs.find((r) => ordinal >= r.startOrdinal && ordinal <= r.endOrdinal);
+          if (r) return { pageNumber: r.startPage + (ordinal - r.startOrdinal) };
+        }
       }
       return null;
     }
@@ -438,6 +704,7 @@ export class CanvasController {
 
   private onMouseMove = (evt: MouseEvent) => {
     const rect = this.canvas.getBoundingClientRect();
+    if (this.s.view === "blocks") { this.onBlockHover(evt, rect); return; }
     const hit = this.pageAt(evt.clientX - rect.left, evt.clientY - rect.top);
     if (!hit) { this.hidePopup(); return; }
 
@@ -518,6 +785,15 @@ export class CanvasController {
   // its page type).
   selectPageInView(n: number, objectId: number | null, pageType: string | null) {
     if (this.s.view === "tables") { void this.scrollToPageInBand(n, objectId, pageType); return; }
+    if (this.s.view === "blocks") {
+      // Scroll to and select the block that holds page n.
+      const bi = this.s.pagesPerBlock > 0 ? Math.floor((n - 1) / this.s.pagesPerBlock) : 0;
+      const row = Math.floor(bi / this.cols());
+      this.scroll.blocks = Math.max(0, row * this.cell() - this.cssH / 2);
+      this.selected = bi;
+      this.scheduleRender();
+      return;
+    }
     this.scroll.pages = Math.max(0, scrollForPageAtY(n, this.cssH / 2, this.cssW, this.blockPx()));
     this.selected = n;
     this.scheduleRender();
@@ -549,6 +825,9 @@ export class CanvasController {
 
   // Public: called by the Zoom controls.
   setZoom(px: number, anchorPage?: number, anchorY?: number) {
+    // Zoom is not a scroll — cancel any pending settle so detail loads immediately.
+    this.scrolling = false;
+    if (this.settleTimer) { clearTimeout(this.settleTimer); this.settleTimer = null; }
     if (anchorPage == null && this.s.view === "pages") {
       anchorPage = topLeftPage(this.scroll.pages, this.cssW, this.blockPx());
       anchorY = 0;
@@ -560,6 +839,38 @@ export class CanvasController {
     this.scheduleRender();
   }
   zoomBy(delta: number) { this.setZoom(this.blockPx() + delta); }
+
+  // Tables-view zoom anchoring: zoom to `px` and scroll so `ordinal` of `objectId`'s
+  // band lands at viewport y `anchorY`. The Tables analog of setZoom's page anchor —
+  // bands are laid out by ordinal (packed) coordinates, so a page number alone can't
+  // anchor here. rebuildBands() re-lays the bands at the new cell size before we
+  // measure; clampScroll() (on render) keeps the result in range.
+  private setZoomTables(px: number, objectId: number, ordinal: number, anchorY = 0) {
+    this.scrolling = false;
+    if (this.settleTimer) { clearTimeout(this.settleTimer); this.settleTimer = null; }
+    this.store.getState().setBlockPx(px); // clamps to [MIN,MAX]
+    this.rebuildBands();
+    const band = this.bands.find((b) => b.grp.objectId === objectId);
+    if (band) {
+      const row = Math.floor(ordinal / this.cols());
+      this.scroll.tables = Math.max(0, band.y + HEADER_H + row * this.cell() - anchorY);
+    }
+    this.scheduleRender();
+  }
+
+  // The object band + object-run covering `pageNumber` at the current (zoomed-out)
+  // Tables LOD, from the band caches — used to anchor a click-to-zoom on the run.
+  private tablesRunAt(pageNumber: number): { grp: TableGroup; run: ObjectRun } | null {
+    for (const band of this.bands) {
+      if (band.grp.objectId == null) continue;
+      for (const [key, data] of this.objPages) {
+        if (!data || data.lod !== "runs" || !key.startsWith(band.grp.key + ":")) continue;
+        const run = data.runs.runs.find((r) => pageNumber >= r.startPage && pageNumber <= r.endPage);
+        if (run) return { grp: band.grp, run };
+      }
+    }
+    return null;
+  }
 
   // Best-fit: pick the largest zoom at which the whole view fits vertically — the
   // full file (Pages) or all object bands (Tables) — zooming in or out as needed,
@@ -607,23 +918,60 @@ export class CanvasController {
     if (e.ctrlKey || e.metaKey) {
       const rect = this.canvas.getBoundingClientRect();
       const my = e.clientY - rect.top;
-      const anchor = Math.floor((my + this.scroll.pages) / this.cell()) * this.cols() + 1;
-      this.setZoom(this.blockPx() + (e.deltaY < 0 ? 2 : -2), anchor, my);
+      const px = this.blockPx() + (e.deltaY < 0 ? 2 : -2);
+      if (this.s.view === "pages") {
+        const anchor = Math.floor((my + this.scroll.pages) / this.cell()) * this.cols() + 1;
+        this.setZoom(px, anchor, my);
+      } else {
+        // Tables: keep the block-row under the cursor fixed on screen. Anchor a
+        // stable ordinal (the row's first block pre-zoom) — the row reflows as the
+        // column count changes with the cell size, so a screen row can't anchor.
+        const band = this.bands.find((b) => {
+          const top = b.y - this.scroll.tables;
+          return b.grp.objectId != null && my >= top + HEADER_H && my <= top + b.h;
+        });
+        if (band && band.grp.objectId != null) {
+          const rowPre = Math.max(0, Math.floor((my - (band.y - this.scroll.tables) - HEADER_H) / this.cell()));
+          const ordinal = rowPre * this.cols();
+          const anchorY = band.y + HEADER_H + rowPre * this.cell() - this.scroll.tables;
+          this.setZoomTables(px, band.grp.objectId, ordinal, anchorY);
+        } else {
+          this.setZoom(px); // over a header/structural band: just change zoom
+        }
+      }
     } else {
       this.scroll[this.s.view] += e.deltaY;
-      this.scheduleRender();
+      this.markScrolling();
     }
   };
 
   private onClick = (e: MouseEvent) => {
     const rect = this.canvas.getBoundingClientRect();
+    if (this.s.view === "blocks") {
+      const b = this.blockAt(e.clientX - rect.left, e.clientY - rect.top);
+      if (b) {
+        this.selected = b.blockIndex;
+        this.store.getState().setSelectedBlock(b.blockIndex);  // drives the detail panel
+        this.scheduleRender();
+      }
+      return;
+    }
     const hit = this.pageAt(e.clientX - rect.left, e.clientY - rect.top);
     if (!hit) return;
-    if (this.s.view === "pages" && this.blockPx() < LOD_THRESHOLD) {
-      const run = this.runAt(hit.pageNumber);
-      if (run) this.setZoom(12, run.startPage);
-    } else {
-      this.selected = hit.pageNumber; this.scheduleRender();
+    if (this.blockPx() < LOD_THRESHOLD) {
+      // Zoomed out: a click on a run zooms into it — anchored at the run's start
+      // (top-left in Pages, the band's ordinal in Tables).
+      if (this.s.view === "pages") {
+        const run = this.runAt(hit.pageNumber);
+        if (run) { this.setZoom(12, run.startPage); return; }
+      } else {
+        const hitRun = this.tablesRunAt(hit.pageNumber);
+        if (hitRun && hitRun.grp.objectId != null) {
+          this.setZoomTables(12, hitRun.grp.objectId, hitRun.run.startOrdinal);
+          return;
+        }
+      }
     }
+    this.selected = hit.pageNumber; this.scheduleRender();
   };
 }

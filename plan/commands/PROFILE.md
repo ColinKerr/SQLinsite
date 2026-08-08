@@ -35,27 +35,56 @@ cold page cache, give it its own session.
 
 ## Output File Format
 
-A CSV file with a header row followed by one row per page access. Columns:
+A SQLite db with two tables: a raw `accesses` log — one row
+per page access, preserving order and timing — and a single-row `meta` header. The
+raw log is kept whole (not pre-aggregated) so the db is useful for timing analysis;
+`sqlinsite visualize --profile-file` aggregates it into per-page read/write counts on
+import.
 
-- `Session Name` - Name of the session from the statements file.
-- `Statement Index` - 0-based index of the statement running when this page was accessed.
-- `Time Start` - Monotonic clock reading (nanoseconds) when the page request entered the VFS.
-- `Time End` - Monotonic clock reading (nanoseconds) when the underlying VFS returned.
-- `Page Number` - 1-based SQLite page number, derived as `offset / page_size + 1` (page 1 is the database header). Matches SQLite's own numbering and the `pageNumber` field emitted by `sqlinsite map`. Only the main database file is logged.
-- `Read or Write` - `Read` or `Write`, indicating whether the page was accessed via `xRead` or `xWrite`.
+### `accesses` table (one row per page access)
 
-Rows are emitted in the order page accesses occur. With `--timing raw` (default)
-`Time Start` / `Time End` share an arbitrary monotonic epoch and are meaningful as
+- `sessionName` — Name of the session from the statements file.
+- `statementIndex` — 0-based index of the statement running when this page was accessed.
+- `timeStart` — Monotonic clock reading (nanoseconds) when the page request entered the VFS.
+- `timeEnd` — Monotonic clock reading (nanoseconds) when the underlying VFS returned.
+- `pageNumber` — 1-based SQLite page number, derived as `offset / page_size + 1` (page 1 is the database header). Matches SQLite's own numbering and the `pageNumber` field emitted by `sqlinsite map`. Only the main database file is logged.
+- `access` — `Read` or `Write`, indicating whether the page was accessed via `xRead` or `xWrite`.
+
+Rows are inserted in the order page accesses occur. With `--timing raw` (default)
+`timeStart` / `timeEnd` share an arbitrary monotonic epoch and are meaningful as
 deltas, not wall-clock times; with `--timing relative` they are rebased to the run start.
 
-The SQL text is **not** included in the output rows — it would bloat
-every row and the statements file already maps `Session Name` + `Statement Index`
-back to the exact statement. Treat the statements JSON as the run's manifest.
+The SQL text is **not** stored per access — it would bloat every row and the
+statements file already maps `sessionName` + `statementIndex` back to the exact
+statement. Treat the statements JSON as the run's manifest.
+
+### `meta` table (single row, run header)
+
+- `formatVersion` — Profile-db schema version, so `visualize` can refuse an incompatible file.
+- `testFile` — Path to the db that was profiled (`--db-file`); lets `visualize` catch a profile overlaid onto a different db.
+- `pageSize` — Page size discovered from the test db header (confirms page-number alignment with the map).
+- `timing` — `raw` or `relative` (how to interpret `timeStart` / `timeEnd`).
+- `name` — `TestRun.Name` from the statements file.
+- `createdAt` — UTC ISO-8601 timestamp of the run.
+
+`formatVersion`, `testFile`, and `pageSize` are the correctness-relevant fields
+`visualize` reads; the rest are provenance. Example row as JSON:
+
+```json
+{
+  "formatVersion": 1,
+  "testFile": "/Users/me/src/imodels/1CP02_4k.bim",
+  "pageSize": 4096,
+  "timing": "raw",
+  "name": "Nightly load test",
+  "createdAt": "2026-08-03T14:12:07Z"
+}
+```
 
 ## Run summary
 
 Unless `--quiet` is given, a summary is written to stderr after a run: per-session
-row counts (with read/write split) and a grand total. It does not affect the CSV.
+row counts (with read/write split) and a grand total. It does not affect the output db.
 
 ```
 SQLinsite summary:

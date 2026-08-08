@@ -8,7 +8,7 @@
 
 #include <sqlite3.h>
 
-#include "profile/csv_writer.hpp"
+#include "profile/sqlite_writer.hpp"
 #include "profile/profiling_context.hpp"
 #include "profile/statements_file.hpp"
 #include "profile/vfs_shim.hpp"
@@ -73,7 +73,7 @@ struct SessionStat {
     std::int64_t writes;
 };
 
-void printSummary(const std::vector<SessionStat>& stats, const CsvWriter& writer) {
+void printSummary(const std::vector<SessionStat>& stats, const SqliteWriter& writer) {
     std::cerr << "SQLinsite summary:\n";
     for (const SessionStat& s : stats) {
         std::cerr << "  session \"" << s.name << "\": " << (s.reads + s.writes)
@@ -85,7 +85,7 @@ void printSummary(const std::vector<SessionStat>& stats, const CsvWriter& writer
 }
 
 bool runSession(const Session& session, const std::string& testFile,
-                CsvWriter& writer) {
+                SqliteWriter& writer) {
     sqlite3* db = nullptr;
     int rc = sqlite3_open_v2(testFile.c_str(), &db, SQLITE_OPEN_READWRITE,
                              kSQLINSITEVfsName);
@@ -135,8 +135,7 @@ int runProfile(const ProfileOptions& options) {
         return 1;
     }
 
-    CsvWriter writer(options.outFile);
-    writer.writeHeader();
+    SqliteWriter writer(options.outFile);
 
     ProfilingContext& ctx = profilingContext();
     ctx.relativeTiming = options.relativeTiming;
@@ -156,6 +155,11 @@ int runProfile(const ProfileOptions& options) {
         stats.push_back({session.name, writer.readCount() - reads0,
                          writer.writeCount() - writes0});
     }
+
+    // `ctx.pageSize` was set to the test db's page size while profiling; it's the
+    // same file every session, so the last value is authoritative.
+    writer.finish({options.testFile, ctx.pageSize,
+                   options.relativeTiming ? "relative" : "raw", testRun.name});
 
     if (!options.quiet) {
         printSummary(stats, writer);

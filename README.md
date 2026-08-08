@@ -50,13 +50,13 @@ Front-end unit tests (Vitest): `cd web && npm test`.
 
 ```
 # profile
-sqlinsite profile --test-file app.db --statements queries.json --out-file trace.csv
+sqlinsite profile --db-file app.db --statements queries.json --out-file trace.db
 
 # map the database structure
-sqlinsite map --test-file app.db --out-file app.map.sqlite
+sqlinsite map --db-file app.db --out-file app.map.sqlite
 
 # visualize (open the printed URL)
-sqlinsite visualize serve --map-file app.map.sqlite --profile-file trace.csv
+sqlinsite visualize serve --map-file app.map.sqlite --profile-file trace.db
 
 # visualize + live Query view (read-only db access)
 sqlinsite visualize serve --map-file app.map.sqlite --db-file app.db

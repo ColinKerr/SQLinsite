@@ -5,14 +5,13 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
 
 #include "map/map_writer.hpp"
-#include "visualize/profile_reader.hpp"
-#include "visualize/run_coalesce.hpp"
 
 using nlohmann::json;
 
@@ -61,9 +60,9 @@ json queryRows(sqlite3* db, const std::string& sql,
 // Builds an " AND leafId IN (...)" fragment for the selected leaves, or empty
 // when nothing is selected (meaning "all leaves"). The ids are integers parsed
 // server-side, so inlining them is injection-safe.
-std::string leafInClause(const std::vector<int>& sel) {
+std::string sourceInClause(const std::vector<int>& sel) {
     if (sel.empty()) return {};
-    std::string s = " AND leafId IN (";
+    std::string s = " AND sourceId IN (";
     for (std::size_t i = 0; i < sel.size(); ++i) {
         if (i) s += ',';
         s += std::to_string(sel[i]);
@@ -85,49 +84,108 @@ bool tableExists(sqlite3* db, const char* name) {
 
 }  // namespace
 
+ReadPool::~ReadPool() {
+    for (auto& [id, c] : conns_) sqlite3_close(c);
+}
+
+void ReadPool::init(std::string path, std::function<void(sqlite3*)> onOpen) {
+    path_ = std::move(path);
+    onOpen_ = std::move(onOpen);
+}
+
+ReadPool::operator sqlite3*() const {
+    const std::thread::id id = std::this_thread::get_id();
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = conns_.find(id);
+        if (it != conns_.end()) return it->second;
+    }
+    // Open (and seed) this thread's connection outside the lock so the one-time
+    // per-thread setup never blocks other threads' queries.
+    sqlite3* c = nullptr;
+    if (sqlite3_open_v2(path_.c_str(), &c, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        sqlite3_close(c);
+        return nullptr;
+    }
+    if (onOpen_) onOpen_(c);
+    std::lock_guard<std::mutex> lk(mu_);
+    conns_[id] = c;
+    return c;
+}
+
 MapDb::MapDb(const std::string& mapPath) : mapPath_(mapPath) {
-    if (sqlite3_open_v2(mapPath.c_str(), &db_, SQLITE_OPEN_READONLY, nullptr) !=
-        SQLITE_OK) {
-        const std::string msg = sqlite3_errmsg(db_);
-        sqlite3_close(db_);
-        db_ = nullptr;
+    // Validate on a throwaway connection (clear error message on failure), then set
+    // up the per-thread read pool. onConnOpen seeds each connection's profile table.
+    sqlite3* v = nullptr;
+    if (sqlite3_open_v2(mapPath.c_str(), &v, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        const std::string msg = sqlite3_errmsg(v);
+        sqlite3_close(v);
         fail("cannot open map file: " + msg);
     }
     for (const char* t : {"meta", "objects", "pages", "runs", "type_counts"}) {
-        if (!tableExists(db_, t)) {
-            sqlite3_close(db_);
-            db_ = nullptr;
+        if (!tableExists(v, t)) {
+            sqlite3_close(v);
             fail("not a sqlinsite map (missing table '" + std::string(t) + "')");
         }
     }
+    sqlite3_close(v);
+    db_.init(mapPath, [this](sqlite3* c) { onConnOpen(c); });
 }
 
-MapDb::~MapDb() { sqlite3_close(db_); }
+MapDb::~MapDb() = default;
 
-void MapDb::loadProfile(const std::string& csvPath) {
-    const ProfileAggregate agg = aggregateProfileFile(csvPath);
-    leaves_ = agg.leaves;
-    sqlite3_exec(db_,
-                 "CREATE TEMP TABLE profile(leafId INTEGER, pageNumber INTEGER, "
-                 "reads INTEGER, writes INTEGER)",
-                 nullptr, nullptr, nullptr);
-    sqlite3_exec(db_, "BEGIN", nullptr, nullptr, nullptr);
-    sqlite3_stmt* ins = nullptr;
-    sqlite3_prepare_v2(db_, "INSERT INTO profile VALUES (?,?,?,?)", -1, &ins,
-                       nullptr);
-    for (const LeafPageAccess& a : agg.leafPages) {
-        sqlite3_bind_int(ins, 1, a.leafId);
-        sqlite3_bind_int64(ins, 2, a.pageNumber);
-        sqlite3_bind_int64(ins, 3, a.reads);
-        sqlite3_bind_int64(ins, 4, a.writes);
-        sqlite3_step(ins);
-        sqlite3_reset(ins);
-    }
-    sqlite3_finalize(ins);
-    sqlite3_exec(db_, "COMMIT", nullptr, nullptr, nullptr);
-    sqlite3_exec(db_, "CREATE INDEX profile_page ON profile(pageNumber)", nullptr,
-                 nullptr, nullptr);
+void MapDb::loadProfile(const std::string& profileDbPath) {
+    // Import the input profile as 'input' sources into the shared profile db; each
+    // pool connection ATTACHes it on open (see onConnOpen). Always called before
+    // serving, so every connection is opened after this.
+    profile_.importInputProfile(profileDbPath);
     hasProfile_ = true;
+}
+
+std::int64_t MapDb::addQuerySource(const std::string& sql, int queryId,
+                                   const std::vector<ProfileDb::PageCount>& pages) {
+    const std::int64_t sourceId = profile_.addQuerySource(sql, queryId, pages);
+    hasProfile_ = true;  // an overlay is now available even without --profile-file
+    return sourceId;
+}
+
+void MapDb::loadManifest(const std::string& manifestPath, const std::string& dbName) {
+    // Read the map's page size/count from a short-lived private connection so we do
+    // NOT open the pool connection before manifest_ is set — pool connections ATTACH
+    // `manifest` in onConnOpen only when it already exists.
+    int pageSize = 0;
+    std::int64_t pageCount = 0;
+    sqlite3* c = nullptr;
+    if (sqlite3_open_v2(mapPath_.c_str(), &c, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK) {
+        json m = queryRows(c, "SELECT pageSize, pageCount FROM meta LIMIT 1");
+        if (!m.empty()) {
+            if (!m[0]["pageSize"].is_null()) pageSize = m[0]["pageSize"].get<int>();
+            if (!m[0]["pageCount"].is_null()) pageCount = m[0]["pageCount"].get<std::int64_t>();
+        }
+    }
+    sqlite3_close(c);
+    manifest_ = std::make_unique<ManifestDb>(manifestPath, dbName, pageCount, pageSize);
+}
+
+std::string MapDb::profileDbPath() const { return profile_.path(); }
+std::string MapDb::manifestDbPath() const {
+    return manifest_ ? manifest_->path() : std::string();
+}
+
+void MapDb::onConnOpen(sqlite3* c) const {
+    // ATTACH the shared profile db so overlay queries can read `prof.page_access`
+    // and `prof.sources`. Always attached (even with no --profile-file) so
+    // interactive Query-view runs can be overlaid too.
+    char* sql = sqlite3_mprintf("ATTACH DATABASE %Q AS prof", profile_.path().c_str());
+    sqlite3_exec(c, sql, nullptr, nullptr, nullptr);
+    sqlite3_free(sql);
+    // ATTACH the CBS manifest (blocks/databases/meta) when present, so block
+    // endpoints can join `manifest.blocks` against the map's pages.
+    if (manifest_) {
+        char* ms = sqlite3_mprintf("ATTACH DATABASE %Q AS manifest", manifest_->path().c_str());
+        sqlite3_exec(c, ms, nullptr, nullptr, nullptr);
+        sqlite3_free(ms);
+    }
 }
 
 std::string MapDb::metaJson() const {
@@ -135,21 +193,9 @@ std::string MapDb::metaJson() const {
     json rows = queryRows(db_, "SELECT * FROM meta LIMIT 1");
     if (!rows.empty()) meta = rows[0];
 
-    // Sessions tree for the profile checkbox control: each session lists its
-    // statement leaves (leafId + 0-based statement index), preserving CSV order.
-    json sessions = json::array();
-    json* current = nullptr;
-    std::string currentName;
-    for (const ProfileLeaf& leaf : leaves_) {
-        if (current == nullptr || leaf.sessionName != currentName) {
-            sessions.push_back({{"session", leaf.sessionName}, {"leaves", json::array()}});
-            current = &sessions.back();
-            currentName = leaf.sessionName;
-        }
-        (*current)["leaves"].push_back(
-            {{"leafId", leaf.leafId}, {"statementIndex", leaf.statementIndex}});
-    }
-
+    // The profile selection tree (loaded 'input' + interactive 'query' sources) is
+    // served separately by /api/profile/sources, which the client refetches after
+    // each run to pick up new sources.
     json j = {
         {"meta", meta},
         // The format version this build understands; the front-end compares it to
@@ -169,8 +215,16 @@ std::string MapDb::metaJson() const {
          queryRows(db_, "SELECT pageType,count FROM type_counts ORDER BY pageType")},
         {"hasProfile", hasProfile_},
         {"hasDb", hasDb_},
-        {"sessions", sessions},
+        {"hasManifest", manifest_ != nullptr},
     };
+    if (manifest_) {
+        j["blockSize"] = manifest_->blockSize();
+        j["pagesPerBlock"] = manifest_->pagesPerBlock();
+        j["blockCount"] = manifest_->blockCount();
+        j["manifestDbName"] = manifest_->selectedDbName();
+        j["manifestMatch"] = manifest_->match();
+        j["manifestMatchReason"] = manifest_->matchReason();
+    }
     return j.dump();
 }
 
@@ -232,49 +286,80 @@ std::string MapDb::pagesJson(std::int64_t from, std::int64_t to,
     return j.dump();
 }
 
-std::string MapDb::runsJson(std::int64_t from, std::int64_t to, bool profiled,
-                            const LeafFilter& sel) const {
-    if (!profiled || !hasProfile_) {
-        json j = {{"runs", queryRows(db_,
-                                     "SELECT startPage,endPage,pageType,objectId FROM runs "
-                                     "WHERE startPage <= ? AND endPage >= ? ORDER BY startPage",
-                                     {to, from})}};
-        return j.dump();
-    }
+std::string MapDb::runsJson(std::int64_t from, std::int64_t to) const {
+    json j = {{"runs", queryRows(db_,
+                                 "SELECT startPage,endPage,pageType,objectId FROM runs "
+                                 "WHERE startPage <= ? AND endPage >= ? ORDER BY startPage",
+                                 {to, from})}};
+    return j.dump();
+}
 
-    // Profile-filtered: a run is a contiguous span of same (pageType, objectId)
-    // pages that the selected leaves accessed at least once. Accessed pages are
-    // bounded by the profile, so we coalesce them in C++ then keep the runs that
-    // overlap [from, to].
-    const std::string sql =
-        "SELECT p.pageNumber, p.pageType, p.objectId FROM pages p "
-        "WHERE p.pageNumber IN (SELECT DISTINCT pageNumber FROM profile WHERE 1=1" +
-        leafInClause(sel) + ") ORDER BY p.pageNumber";
-    sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
-        fail(std::string("runs query failed: ") + sqlite3_errmsg(db_));
+std::string MapDb::minimapJson(int buckets) const {
+    if (buckets < 1) buckets = 1;
+    // Concurrent threads may race here now (per-thread connections); the cache is
+    // shared, so guard it. First caller computes; the rest wait then hit the cache.
+    std::lock_guard<std::mutex> lk(minimapMu_);
+    if (minimapCacheBuckets_ == buckets && !minimapCache_.empty()) return minimapCache_;
+
+    json m = queryRows(db_, "SELECT pageCount FROM meta LIMIT 1");
+    const std::int64_t pageCount =
+        (!m.empty() && !m[0]["pageCount"].is_null()) ? m[0]["pageCount"].get<std::int64_t>() : 0;
+    if (pageCount <= 0) {
+        return json({{"pageCount", 0}, {"buckets", json::array()}}).dump();
     }
-    std::vector<PageMeta> pages;
+    // Never more buckets than pages; page b (1-based) → bucket (b-1)*n/pageCount,
+    // bucket k spans pages [k*pageCount/n + 1, (k+1)*pageCount/n].
+    const std::int64_t n = std::min<std::int64_t>(buckets, pageCount);
+
+    // Tally owned pages per object within each bucket, from the runs table (which
+    // coalesces every page, owned or not). objectId -1 stands in for NULL/unowned.
+    std::vector<std::unordered_map<std::int64_t, std::int64_t>> tally(static_cast<std::size_t>(n));
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db_, "SELECT startPage,endPage,objectId FROM runs", -1, &stmt, nullptr);
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        PageMeta m;
-        m.pageNumber = sqlite3_column_int64(stmt, 0);
-        m.pageType = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        if (sqlite3_column_type(stmt, 2) != SQLITE_NULL) {
-            m.objectId = sqlite3_column_int64(stmt, 2);
+        const std::int64_t s = sqlite3_column_int64(stmt, 0);
+        const std::int64_t e = sqlite3_column_int64(stmt, 1);
+        const std::int64_t obj =
+            sqlite3_column_type(stmt, 2) == SQLITE_NULL ? -1 : sqlite3_column_int64(stmt, 2);
+        // Split the run at bucket boundaries, adding each slice to its bucket.
+        std::int64_t p = std::max<std::int64_t>(1, s);
+        while (p <= e) {
+            std::int64_t k = (p - 1) * n / pageCount;
+            if (k >= n) k = n - 1;
+            std::int64_t bucketEnd = (k + 1) * pageCount / n; // last page of bucket k
+            const std::int64_t segEnd = std::min(e, std::max(p, bucketEnd));
+            tally[static_cast<std::size_t>(k)][obj] += segEnd - p + 1;
+            p = segEnd + 1;
         }
-        pages.push_back(std::move(m));
     }
     sqlite3_finalize(stmt);
 
-    json runs = json::array();
-    for (const CoalescedRun& r : coalesceRuns(pages)) {
-        if (r.startPage > to || r.endPage < from) continue;
-        runs.push_back({{"startPage", r.startPage},
-                        {"endPage", r.endPage},
-                        {"pageType", r.pageType},
-                        {"objectId", r.objectId ? json(*r.objectId) : json(nullptr)}});
+    // Dominant object per bucket (most pages; ties → smaller objectId for determinism).
+    std::vector<std::int64_t> dom(static_cast<std::size_t>(n), -1);
+    for (std::int64_t k = 0; k < n; ++k) {
+        std::int64_t best = -1, bestCount = -1;
+        for (const auto& [obj, cnt] : tally[static_cast<std::size_t>(k)]) {
+            if (cnt > bestCount || (cnt == bestCount && obj < best)) { best = obj; bestCount = cnt; }
+        }
+        dom[static_cast<std::size_t>(k)] = best;
     }
-    return json({{"runs", std::move(runs)}}).dump();
+
+    // Emit contiguous spans, merging adjacent buckets with the same dominant object.
+    json arr = json::array();
+    for (std::int64_t k = 0; k < n;) {
+        std::int64_t k2 = k;
+        while (k2 + 1 < n && dom[static_cast<std::size_t>(k2 + 1)] == dom[static_cast<std::size_t>(k)]) ++k2;
+        const std::int64_t startPage = k * pageCount / n + 1;
+        const std::int64_t endPage = (k2 + 1) * pageCount / n;
+        const std::int64_t obj = dom[static_cast<std::size_t>(k)];
+        arr.push_back({{"startPage", startPage}, {"endPage", endPage},
+                       {"objectId", obj < 0 ? json(nullptr) : json(obj)}});
+        k = k2 + 1;
+    }
+
+    minimapCache_ = json({{"pageCount", pageCount}, {"buckets", std::move(arr)}}).dump();
+    minimapCacheBuckets_ = buckets;
+    return minimapCache_;
 }
 
 std::string MapDb::objectPagesJson(std::int64_t objectId, std::int64_t from,
@@ -311,6 +396,219 @@ std::string MapDb::objectPageOrdinalJson(std::int64_t objectId, std::int64_t pag
     json n = queryRows(db_, "SELECT COUNT(*) AS n FROM pages WHERE objectId=?1 AND pageNumber<?2",
                        {objectId, page});
     return json({{"ordinal", n[0]["n"]}}).dump();
+}
+
+const std::vector<OrdinalRun>& MapDb::objectRuns(std::int64_t objectId) const {
+    {
+        std::lock_guard<std::mutex> lk(objRunsMu_);
+        auto it = objRunsCache_.find(objectId);
+        if (it != objRunsCache_.end()) return it->second;
+    }
+    // Build outside the lock: read the object's physical runs in pageNumber order
+    // (identical to the Pages-view runs, filtered by objectId) and accumulate an
+    // ordinal offset — the object's page-number gaps collapse in ordinal space, but
+    // each run is kept whole so the runs match the Pages view exactly.
+    std::vector<OrdinalRun> built;
+    sqlite3* conn = db_;
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(conn,
+                           "SELECT startPage, endPage, pageType FROM runs "
+                           "WHERE objectId=?1 ORDER BY startPage",
+                           -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int64(stmt, 1, objectId);
+        std::int64_t ord = 0;
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const std::int64_t startPage = sqlite3_column_int64(stmt, 0);
+            const std::int64_t endPage = sqlite3_column_int64(stmt, 1);
+            const std::int64_t len = endPage - startPage + 1;
+            const char* t = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+            built.push_back({ord, ord + len - 1, startPage, endPage, t ? t : ""});
+            ord += len;
+        }
+        sqlite3_finalize(stmt);
+    }
+    std::lock_guard<std::mutex> lk(objRunsMu_);
+    auto [it, _] = objRunsCache_.emplace(objectId, std::move(built));
+    return it->second;
+}
+
+std::string MapDb::objectRunsJson(std::int64_t objectId, std::int64_t from, std::int64_t to) const {
+    const std::vector<OrdinalRun>& runs = objectRuns(objectId);
+    // runs are ordinal-contiguous and sorted; binary-search the first one that
+    // reaches `from`, then emit until past `to`.
+    std::size_t lo = 0, hi = runs.size();
+    while (lo < hi) {
+        std::size_t m = (lo + hi) / 2;
+        if (runs[m].endOrdinal < from) lo = m + 1; else hi = m;
+    }
+    json arr = json::array();
+    for (std::size_t i = lo; i < runs.size() && runs[i].startOrdinal <= to; ++i) {
+        arr.push_back({{"startOrdinal", runs[i].startOrdinal},
+                       {"endOrdinal", runs[i].endOrdinal},
+                       {"startPage", runs[i].startPage},
+                       {"endPage", runs[i].endPage},
+                       {"pageType", runs[i].pageType}});
+    }
+    return json({{"runs", std::move(arr)}}).dump();
+}
+
+namespace {
+bool isFreePageType(const std::string& t) {
+    return t == "freelist-trunk" || t == "freelist-leaf" || t == "unallocated";
+}
+}  // namespace
+
+const std::vector<BlockAgg>& MapDb::blocksAgg() const {
+    std::lock_guard<std::mutex> lk(blocksMu_);
+    if (blocksBuilt_) return blocksCache_;
+    blocksBuilt_ = true;
+    if (!manifest_ || !manifest_->match()) return blocksCache_;  // stays empty
+
+    const std::int64_t ppb = manifest_->pagesPerBlock();
+    const std::int64_t nBlk = manifest_->blockCount();
+    const std::int64_t selId = manifest_->selectedDbId();
+    if (ppb <= 0 || nBlk <= 0) return blocksCache_;
+
+    blocksCache_.resize(static_cast<std::size_t>(nBlk));
+    for (std::int64_t i = 0; i < nBlk; ++i) blocksCache_[static_cast<std::size_t>(i)].blockIndex = i;
+
+    // Block ids + shared flag from the manifest.
+    {
+        sqlite3_stmt* s = nullptr;
+        if (sqlite3_prepare_v2(db_,
+                "SELECT blockIndex, blockId, sharedWithParent FROM manifest.blocks "
+                "WHERE dbId=?1", -1, &s, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int64(s, 1, selId);
+            while (sqlite3_step(s) == SQLITE_ROW) {
+                const std::int64_t bi = sqlite3_column_int64(s, 0);
+                if (bi < 0 || bi >= nBlk) continue;
+                BlockAgg& a = blocksCache_[static_cast<std::size_t>(bi)];
+                const auto* id = reinterpret_cast<const char*>(sqlite3_column_text(s, 1));
+                a.blockId = id ? id : "";
+                a.sharedWithParent = sqlite3_column_int(s, 2);
+            }
+            sqlite3_finalize(s);
+        }
+    }
+
+    // Distribute the map's pre-coalesced runs across the blocks they span (a run
+    // rarely spans more than one block), tallying real/free pages and per-object
+    // page counts for the dominant object + object mix.
+    std::vector<std::map<std::int64_t, std::int64_t>> objCounts(static_cast<std::size_t>(nBlk));
+    sqlite3_stmt* rs = nullptr;
+    if (sqlite3_prepare_v2(db_, "SELECT startPage,endPage,pageType,objectId FROM runs "
+                                "ORDER BY startPage", -1, &rs, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(rs) == SQLITE_ROW) {
+            const std::int64_t sp = sqlite3_column_int64(rs, 0);
+            const std::int64_t ep = sqlite3_column_int64(rs, 1);
+            const auto* t = reinterpret_cast<const char*>(sqlite3_column_text(rs, 2));
+            const bool freeType = isFreePageType(t ? t : "");
+            const std::int64_t objId =
+                sqlite3_column_type(rs, 3) == SQLITE_NULL ? -1 : sqlite3_column_int64(rs, 3);
+            const std::int64_t b0 = (sp - 1) / ppb, b1 = (ep - 1) / ppb;
+            for (std::int64_t bi = b0; bi <= b1 && bi < nBlk; ++bi) {
+                const std::int64_t lo = std::max(sp, bi * ppb + 1);
+                const std::int64_t hi = std::min(ep, (bi + 1) * ppb);
+                const std::int64_t cnt = hi - lo + 1;
+                if (cnt <= 0) continue;
+                BlockAgg& a = blocksCache_[static_cast<std::size_t>(bi)];
+                a.realPages += cnt;
+                if (freeType) a.freePages += cnt;
+                objCounts[static_cast<std::size_t>(bi)][objId] += cnt;
+            }
+        }
+        sqlite3_finalize(rs);
+    }
+
+    for (std::int64_t bi = 0; bi < nBlk; ++bi) {
+        BlockAgg& a = blocksCache_[static_cast<std::size_t>(bi)];
+        std::vector<std::pair<std::int64_t, std::int64_t>> mix(
+            objCounts[static_cast<std::size_t>(bi)].begin(),
+            objCounts[static_cast<std::size_t>(bi)].end());
+        std::sort(mix.begin(), mix.end(),
+                  [](const auto& x, const auto& y) { return x.second > y.second; });
+        a.objectMix = std::move(mix);
+        // Dominant = the owning object (objectId >= 0) with the most pages.
+        for (const auto& [oid, c] : a.objectMix) {
+            (void)c;
+            if (oid >= 0) { a.dominantObjectId = oid; break; }
+        }
+    }
+    return blocksCache_;
+}
+
+std::string MapDb::blocksJson(std::int64_t from, std::int64_t to) const {
+    const std::vector<BlockAgg>& all = blocksAgg();
+    if (all.empty()) return R"({"blocks":[]})";
+    const std::int64_t ppb = manifest_->pagesPerBlock();
+    json m = queryRows(db_, "SELECT pageCount FROM meta LIMIT 1");
+    const std::int64_t pageCount =
+        (!m.empty() && !m[0]["pageCount"].is_null()) ? m[0]["pageCount"].get<std::int64_t>() : 0;
+    from = std::max<std::int64_t>(0, from);
+    to = std::min<std::int64_t>(to, static_cast<std::int64_t>(all.size()) - 1);
+    json arr = json::array();
+    for (std::int64_t i = from; i <= to; ++i) {
+        const BlockAgg& a = all[static_cast<std::size_t>(i)];
+        arr.push_back({{"blockIndex", a.blockIndex},
+                       {"blockId", a.blockId},
+                       {"startPage", a.blockIndex * ppb + 1},
+                       {"endPage", std::min((a.blockIndex + 1) * ppb, pageCount)},
+                       {"realPages", a.realPages},
+                       {"usedPages", a.realPages - a.freePages},
+                       {"freePages", a.freePages},
+                       {"dominantObjectId",
+                        a.dominantObjectId >= 0 ? json(a.dominantObjectId) : json(nullptr)},
+                       {"sharedWithParent", a.sharedWithParent != 0}});
+    }
+    return json({{"blocks", std::move(arr)}}).dump();
+}
+
+std::string MapDb::blockJson(std::int64_t blockIndex, const LeafFilter& sel) const {
+    const std::vector<BlockAgg>& all = blocksAgg();
+    if (blockIndex < 0 || blockIndex >= static_cast<std::int64_t>(all.size())) {
+        return R"({"error":"no such block"})";
+    }
+    const BlockAgg& a = all[static_cast<std::size_t>(blockIndex)];
+    const std::int64_t ppb = manifest_->pagesPerBlock();
+    json m = queryRows(db_, "SELECT pageCount FROM meta LIMIT 1");
+    const std::int64_t pageCount =
+        (!m.empty() && !m[0]["pageCount"].is_null()) ? m[0]["pageCount"].get<std::int64_t>() : 0;
+    const std::int64_t startPage = a.blockIndex * ppb + 1;
+    const std::int64_t endPage = std::min((a.blockIndex + 1) * ppb, pageCount);
+
+    // Object mix with names.
+    json mix = json::array();
+    for (const auto& [oid, c] : a.objectMix) {
+        json name = nullptr;
+        if (oid >= 0) {
+            json r = queryRows(db_, "SELECT name FROM objects WHERE id=?1", {oid});
+            if (!r.empty()) name = r[0]["name"];
+        }
+        mix.push_back({{"objectId", oid >= 0 ? json(oid) : json(nullptr)},
+                       {"name", name}, {"pages", c}});
+    }
+    json j = {{"blockIndex", a.blockIndex},
+              {"blockId", a.blockId},
+              {"objectName", a.blockId + ".bcv"},
+              {"startPage", startPage}, {"endPage", endPage},
+              {"realPages", a.realPages}, {"usedPages", a.realPages - a.freePages},
+              {"freePages", a.freePages},
+              {"sharedWithParent", a.sharedWithParent != 0},
+              {"objectMix", std::move(mix)}};
+    // The parent checkpoint's name (for shared-with-parent context).
+    json pn = queryRows(db_,
+        "SELECT name FROM manifest.databases WHERE id="
+        "(SELECT parent FROM manifest.databases WHERE id="
+        "(SELECT selectedDbId FROM manifest.meta))");
+    j["parentName"] = (!pn.empty() && !pn[0]["name"].is_null()) ? pn[0]["name"] : json(nullptr);
+    if (hasProfile_) {
+        json p = queryRows(db_,
+            "SELECT COALESCE(SUM(reads),0) AS reads, COALESCE(SUM(writes),0) AS writes "
+            "FROM prof.page_access WHERE pageNumber BETWEEN ? AND ?" + sourceInClause(sel),
+            {startPage, endPage});
+        j["profile"] = p.empty() ? json({{"reads", 0}, {"writes", 0}}) : p[0];
+    }
+    return j.dump();
 }
 
 namespace {
@@ -401,9 +699,21 @@ std::string MapDb::pageJson(std::int64_t pageNumber, const LeafFilter& sel) cons
         json p = queryRows(
             db_,
             "SELECT COALESCE(SUM(reads),0) AS reads, COALESCE(SUM(writes),0) AS writes "
-            "FROM profile WHERE pageNumber=?" + leafInClause(sel),
+            "FROM prof.page_access WHERE pageNumber=?" + sourceInClause(sel),
             {pageNumber});
         j["profile"] = p.empty() ? json({{"reads", 0}, {"writes", 0}}) : p[0];
+    }
+    // The CBS block that holds this page (when a matching manifest is loaded).
+    if (manifest_ && manifest_->match()) {
+        const std::int64_t ppb = manifest_->pagesPerBlock();
+        const std::int64_t bi = (pageNumber - 1) / ppb;
+        const std::vector<BlockAgg>& all = blocksAgg();
+        json bid = nullptr;
+        if (bi >= 0 && bi < static_cast<std::int64_t>(all.size()))
+            bid = all[static_cast<std::size_t>(bi)].blockId;
+        const std::int64_t pageSize = manifest_->blockSize() / ppb;
+        j["block"] = {{"blockIndex", bi}, {"blockId", bid},
+                      {"inBlockOffset", ((pageNumber - 1) % ppb) * pageSize}};
     }
     return j.dump();
 }
@@ -414,11 +724,19 @@ std::string MapDb::profilePagesJson(std::int64_t from, std::int64_t to,
     json j = {{"pages", queryRows(
                             db_,
                             "SELECT pageNumber, SUM(reads) AS reads, SUM(writes) AS writes "
-                            "FROM profile WHERE pageNumber BETWEEN ? AND ?" +
-                                leafInClause(sel) +
+                            "FROM prof.page_access WHERE pageNumber BETWEEN ? AND ?" +
+                                sourceInClause(sel) +
                                 " GROUP BY pageNumber ORDER BY pageNumber",
                             {from, to})}};
     return j.dump();
+}
+
+std::string MapDb::profileSourcesJson() const {
+    return json({{"sources",
+                  queryRows(db_,
+                            "SELECT sourceId, kind, sessionName, sessionId "
+                            "FROM prof.sources ORDER BY sourceId")}})
+        .dump();
 }
 
 namespace {
@@ -689,13 +1007,16 @@ std::string MapDb::treeRootsJson() const {
                          {"hasChildren", true}});
     }
 
-    // All other pages (virtual) — only when at least one such page exists.
+    // All other pages (virtual) — only when at least one such page exists. Uses
+    // the same "unowned + non-structural" definition as structuralGroupsJson
+    // (objectId IS NULL): the map assigns an objectId to every page reachable from
+    // an object b-tree (root/child/overflow), so objectId IS NULL is exactly the
+    // set of unowned pages. The pages_object index serves it as a seek, versus the
+    // old form (NOT IN the whole pointers table) which full-scanned `pages`.
     json other = queryRows(
         db_,
-        "SELECT EXISTS(SELECT 1 FROM pages WHERE pageNumber>1 "
-        "AND pageType NOT IN ('freelist-trunk','freelist-leaf','lock-byte','pointer-map') "
-        "AND pageNumber NOT IN (SELECT rootPage FROM objects) "
-        "AND pageNumber NOT IN (SELECT toPage FROM pointers)) AS ex");
+        "SELECT EXISTS(SELECT 1 FROM pages WHERE pageNumber>1 AND (" +
+            std::string(structuralGroupWhere("other")) + ")) AS ex");
     if (!other.empty() && other[0]["ex"].get<int>() != 0) {
         roots.push_back({{"kind", "other"}, {"label", "All other pages"}, {"page", nullptr},
                          {"pageType", nullptr}, {"objectId", nullptr}, {"hasChildren", true}});

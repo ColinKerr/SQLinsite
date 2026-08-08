@@ -13,9 +13,9 @@ sqlite3 fruit.db "CREATE TABLE Fruit(id INTEGER PRIMARY KEY, name TEXT);
 
 ```sh
 sqlinsite profile \
-  --test-file fruit.db \
+  --db-file fruit.db \
   --statements examples/statements.json \
-  --out-file fruit-trace.csv \
+  --out-file fruit-trace.sqlite \
   --timing relative
 ```
 
@@ -31,25 +31,34 @@ SQLinsite summary:
 
 ## 3. Read the trace
 
-`fruit-trace.csv` (abridged; timings vary per machine):
+`fruit-trace.sqlite` is a SQLite database — query it with `sqlite3`. The raw
+per-access log is in `accesses` (abridged; timings vary per machine):
 
-```csv
-Session Name,Statement Index,Time Start,Time End,Page Number,Read or Write
-WarmCacheReads,0,121000,122416,1,Read
-WarmCacheReads,0,175333,176333,1,Read
-WarmCacheReads,0,179375,180416,2,Read
-Write,0,537958,539625,1,Write
-Write,0,540083,541333,2,Write
+```sh
+sqlite3 fruit-trace.sqlite \
+  "SELECT sessionName, statementIndex, timeStart, timeEnd, pageNumber, access
+   FROM accesses ORDER BY timeStart LIMIT 5;"
+```
+```
+WarmCacheReads|0|121000|122416|1|Read
+WarmCacheReads|0|175333|176333|1|Read
+WarmCacheReads|0|179375|180416|2|Read
+Write|0|537958|539625|1|Write
+Write|0|540083|541333|2|Write
 ```
 
 - Each row is one page access at the VFS layer for the **main database file**.
-- `Statement Index` is the 0-based position of the statement within its session;
+- `statementIndex` is the 0-based position of the statement within its session;
   cross-reference it against `examples/statements.json` to see the SQL.
-- `Page Number` is `byte_offset / page_size + 1`; page 1 is the database header.
+- `pageNumber` is `byte_offset / page_size + 1`; page 1 is the database header.
   It matches SQLite's numbering and `sqlinsite map`'s `pageNumber`.
-- `Time Start`/`Time End` are nanoseconds. With `--timing relative` they are
+- `timeStart`/`timeEnd` are nanoseconds. With `--timing relative` they are
   rebased to the start of the run; without it they are raw monotonic ticks.
-  Use `Time End - Time Start` for the per-access cost.
+  Use `timeEnd - timeStart` for the per-access cost.
+- The `meta` table carries the run header (`SELECT * FROM meta;`): `formatVersion`,
+  `testFile`, `pageSize`, `timing`, `name`, `createdAt`.
+- Pass this file to `sqlinsite visualize serve --profile-file fruit-trace.sqlite`
+  to overlay the reads/writes on the map.
 
 Notes:
 

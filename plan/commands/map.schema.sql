@@ -42,6 +42,8 @@ CREATE TABLE pages (
   subtreePageCount   INTEGER              -- pages in this page's subtree (incl. self)
 );
 CREATE INDEX pages_object ON pages(objectId);
+-- Serves pageType filters (structural-groups counts, tree-roots existence checks).
+CREATE INDEX pages_type ON pages(pageType);
 
 -- ONLY table-interior cells are stored (their leftChild → interior rowid ranges).
 -- Table-leaf rows are represented compactly by page_row_runs; index cells and their

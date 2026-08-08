@@ -53,7 +53,7 @@ ParsedCli parseProfile(const std::vector<std::string>& args, std::size_t start) 
 
         std::string* target = nullptr;
         std::string timing;
-        if (flag.name == "--test-file") {
+        if (flag.name == "--db-file") {
             target = &options.testFile;
         } else if (flag.name == "--statements") {
             target = &options.statementsFile;
@@ -85,7 +85,7 @@ ParsedCli parseProfile(const std::vector<std::string>& args, std::size_t start) 
     }
 
     std::string missing;
-    if (options.testFile.empty()) missing += " --test-file";
+    if (options.testFile.empty()) missing += " --db-file";
     if (options.statementsFile.empty()) missing += " --statements";
     if (options.outFile.empty()) missing += " --out-file";
     if (!missing.empty()) {
@@ -106,7 +106,7 @@ ParsedCli parseMap(const std::vector<std::string>& args, std::size_t start) {
         const Flag flag = splitFlag(args[i]);
 
         std::string* target = nullptr;
-        if (flag.name == "--test-file") {
+        if (flag.name == "--db-file") {
             target = &options.testFile;
         } else if (flag.name == "--out-file") {
             target = &options.outFile;
@@ -124,7 +124,7 @@ ParsedCli parseMap(const std::vector<std::string>& args, std::size_t start) {
     }
 
     std::string missing;
-    if (options.testFile.empty()) missing += " --test-file";
+    if (options.testFile.empty()) missing += " --db-file";
     if (options.outFile.empty()) missing += " --out-file";
     if (!missing.empty()) {
         return error("missing required option(s):" + missing);
@@ -152,6 +152,10 @@ ParsedCli parseVisualizeServe(const std::vector<std::string>& args,
             target = &options.profileFile;
         } else if (flag.name == "--db-file") {
             target = &options.dbFile;
+        } else if (flag.name == "--manifest-file") {
+            target = &options.manifestFile;
+        } else if (flag.name == "--manifest-db-name") {
+            target = &options.manifestDbName;
         } else if (flag.name == "--port") {
             target = &value;
         } else {
@@ -201,12 +205,14 @@ ParsedCli parseVisualize(const std::vector<std::string>& args,
 }  // namespace
 
 std::string usageText() {
-    return "Usage: sqlinsite profile  --test-file <db> --statements <db> "
-           "--out-file <csv>\n"
+    return "Usage: sqlinsite profile  --db-file <db> --statements <json> "
+           "--out-file <db>\n"
            "                          [--timing raw|relative] [--quiet]\n"
-           "       sqlinsite map      --test-file <db> --out-file <db>\n"
+           "       sqlinsite map      --db-file <db> --out-file <db>\n"
            "       sqlinsite visualize serve --map-file <db> "
-           "[--profile-file <csv>] [--db-file <db>] [--port <n>]\n"
+           "[--profile-file <db>] [--db-file <db>]\n"
+           "                                 [--manifest-file <manifest.bcv>] "
+           "[--manifest-db-name <name>] [--port <n>]\n"
            "       sqlinsite --help\n";
 }
 

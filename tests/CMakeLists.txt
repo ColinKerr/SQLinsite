@@ -11,15 +11,13 @@ add_executable(sqlinsite_tests
   test_main.cpp
   test_cli.cpp
   test_statements_file.cpp
-  test_csv_writer.cpp
   test_aggregating_sink.cpp
   test_page_index.cpp
   test_profile_integration.cpp
+  test_manifest_db.cpp
   test_sqlite_format.cpp
   test_db_file.cpp
   test_map_integration.cpp
-  test_profile_reader.cpp
-  test_run_coalesce.cpp
   test_query_augment.cpp
   test_cell_page_map.cpp
   test_page_content.cpp

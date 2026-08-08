@@ -527,6 +527,55 @@ TEST_CASE("objectPageOrdinalJson gives a page's position within its object band"
     CHECK(json::parse(map.objectPageOrdinalJson(objId, 999999))["ordinal"].get<std::int64_t>() == -1);
 }
 
+TEST_CASE("objectRunsJson returns the object's runs (same as Pages) in ordinal space") {
+    const Fixture fx = buildInteriorFixture();  // one multi-page table T
+    MapDb map(fx.mapPath);
+    MapQuery m(fx.mapPath);
+
+    const std::int64_t objId = m.scalar("SELECT id FROM objects WHERE name='T' AND type='table'");
+    REQUIRE(objId >= 0);
+    const std::int64_t pageCount = m.scalar("SELECT COUNT(*) FROM pages WHERE objectId=" + std::to_string(objId));
+    REQUIRE(pageCount > 2);
+
+    auto runs = json::parse(map.objectRunsJson(objId, 0, pageCount - 1))["runs"];
+    REQUIRE(runs.is_array());
+    REQUIRE_FALSE(runs.empty());
+
+    // One run per physical run of the object — identical boundaries to the Pages-view
+    // `runs` table filtered by objectId (no extra cross-gap coalescing).
+    const std::int64_t runCount =
+        m.scalar("SELECT COUNT(*) FROM runs WHERE objectId=" + std::to_string(objId));
+    CHECK(static_cast<std::int64_t>(runs.size()) == runCount);
+
+    // Ordinal spans are contiguous and cover [0, pageCount-1]; each run carries its
+    // page range, and its ordinal length matches its page length. Every run matches a
+    // row in the `runs` table (same startPage/endPage/pageType for this objectId).
+    CHECK(runs.front()["startOrdinal"].get<std::int64_t>() == 0);
+    CHECK(runs.back()["endOrdinal"].get<std::int64_t>() == pageCount - 1);
+    std::int64_t covered = 0;
+    for (std::size_t i = 0; i < runs.size(); ++i) {
+        const std::int64_t so = runs[i]["startOrdinal"].get<std::int64_t>();
+        const std::int64_t eo = runs[i]["endOrdinal"].get<std::int64_t>();
+        const std::int64_t sp = runs[i]["startPage"].get<std::int64_t>();
+        const std::int64_t ep = runs[i]["endPage"].get<std::int64_t>();
+        const std::string pt = runs[i]["pageType"].get<std::string>();
+        CHECK(eo >= so);
+        CHECK(eo - so == ep - sp);  // ordinal length == page length
+        covered += eo - so + 1;
+        if (i > 0) CHECK(so == runs[i - 1]["endOrdinal"].get<std::int64_t>() + 1);
+        CHECK(m.scalar("SELECT COUNT(*) FROM runs WHERE objectId=" + std::to_string(objId) +
+                       " AND startPage=" + std::to_string(sp) + " AND endPage=" + std::to_string(ep) +
+                       " AND pageType='" + pt + "'") == 1);
+    }
+    CHECK(covered == pageCount);
+
+    // A window returns only the runs overlapping it.
+    auto win = json::parse(map.objectRunsJson(objId, pageCount - 1, pageCount - 1))["runs"];
+    REQUIRE(win.size() == 1);
+    CHECK(win[0]["startOrdinal"].get<std::int64_t>() <= pageCount - 1);
+    CHECK(win[0]["endOrdinal"].get<std::int64_t>() >= pageCount - 1);
+}
+
 TEST_CASE("structural groups expose the Tables-view non-object page bands") {
     const Fixture fx = buildFreelistFixture();  // a large delete frees whole pages
     MapDb map(fx.mapPath);

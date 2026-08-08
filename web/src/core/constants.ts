@@ -4,4 +4,7 @@ export const RANGE_CAP = 2_000_000;
 export const MIN_BLOCK_PX = 1;
 export const MAX_BLOCK_PX = 40; // 100% zoom; the top-bar % is blockPx / MAX_BLOCK_PX
 export const HEADER_H = 22; // tables-view band header height
+export const TABLE_BAND_GAP = 10; // px between tables-view bands
 export const BG = "#1b1d23"; // canvas background
+export const MINIMAP_BUCKETS = 2000; // whole-file minimap resolution (>> its pixel height)
+export const SCROLL_SETTLE_MS = 80; // idle after scrolling before loading full detail

@@ -72,7 +72,7 @@ DbFile DbFile::open(const std::string& path) {
     return file;
 }
 
-std::vector<sqlfmt::Byte> DbFile::page(std::int64_t pageNumber) const {
+const std::vector<sqlfmt::Byte>& DbFile::page(std::int64_t pageNumber) const {
     if (pageNumber < 1 || pageNumber > pageCount_) {
         throw std::out_of_range("page number out of range");
     }
@@ -86,9 +86,9 @@ std::vector<sqlfmt::Byte> DbFile::page(std::int64_t pageNumber) const {
     const auto* bytes =
         static_cast<const sqlfmt::Byte*>(sqlite3_column_blob(pageStmt_, 0));
     const int len = sqlite3_column_bytes(pageStmt_, 0);
-    std::vector<sqlfmt::Byte> out(bytes, bytes + len);
+    pageBuf_.assign(bytes, bytes + len);  // reuses capacity — no per-page alloc
     sqlite3_reset(pageStmt_);
-    return out;
+    return pageBuf_;
 }
 
 DbFile::~DbFile() {

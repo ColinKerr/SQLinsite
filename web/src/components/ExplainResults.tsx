@@ -1,4 +1,5 @@
 import { useQuery } from "../state/queryStore.ts";
+import type { ExplainResult } from "../core/types.ts";
 
 function SimpleTable({ title, data }: { title: string; data?: { columns: string[]; rows: unknown[][] } }) {
   if (!data) return null;
@@ -19,8 +20,9 @@ function SimpleTable({ title, data }: { title: string; data?: { columns: string[
   );
 }
 
-export function ExplainResults() {
-  const explain = useQuery((s) => s.explain);
+// Presentational Explain view (query plan + bytecode); shared by the Query and
+// Analysis views. Both run EXPLAIN QUERY PLAN + EXPLAIN and render the results here.
+export function ExplainView({ explain }: { explain: ExplainResult | null }) {
   if (!explain) return <div className="results-msg muted">Press Explain to see the query plan.</div>;
   if (explain.error) return <div className="results-msg error">{explain.error}</div>;
   return (
@@ -29,4 +31,10 @@ export function ExplainResults() {
       <SimpleTable title="EXPLAIN (bytecode)" data={explain.explain} />
     </div>
   );
+}
+
+// The Query view's Explain tab, wired to the query store.
+export function ExplainResults() {
+  const explain = useQuery((s) => s.explain);
+  return <ExplainView explain={explain} />;
 }

@@ -1,4 +1,4 @@
-import { GAP, MAX_BLOCK_PX, MIN_BLOCK_PX } from "./constants.ts";
+import { GAP, HEADER_H, MAX_BLOCK_PX, MIN_BLOCK_PX, TABLE_BAND_GAP } from "./constants.ts";
 
 // Grid geometry, all pure functions of (blockPx, cssW/H, scroll, pageCount).
 
@@ -24,6 +24,43 @@ export const colsFor = (cssW: number, blockPx: number) =>
 
 export function pagesContentHeight(pageCount: number, cssW: number, blockPx: number): number {
   return Math.ceil(pageCount / colsFor(cssW, blockPx)) * cell(blockPx);
+}
+
+// ---- tables-view band layout ------------------------------------------------
+
+export interface BandBox { y: number; h: number }
+
+// Vertical [y, h] box per tables-view band (one per group's pageCount) at a given
+// column count and cell size, plus the total content height. Pure — used both for
+// the live layout (rebuildBands) and for the FIXED, zoom-independent reference
+// layout the minimap renders from, so the minimap doesn't reflow as you zoom.
+export function tablesBandBoxes(pageCounts: number[], cols: number, cellPx: number, onlyCells: boolean = false): { boxes: BandBox[]; height: number } {
+  const boxes: BandBox[] = [];
+  let y = 0;
+  for (const pc of pageCounts) {
+    const rows = Math.max(1, Math.ceil(pc / cols));
+    const h = (onlyCells ? 0 : HEADER_H) + rows * cellPx;
+    boxes.push({ y, h });
+    y += h + (onlyCells ? 0 : TABLE_BAND_GAP);
+  }
+  return { boxes, height: y };
+}
+
+// Maps a y from one band layout to the corresponding y in another layout with the
+// same bands in the same order (piecewise-linear within each band). Lets the minimap
+// place the current viewport in the fixed reference layout, and translate a minimap
+// click back to a scroll offset. `from` and `to` must be the same length.
+export function mapBandY(y: number, from: BandBox[], to: BandBox[]): number {
+  if (from.length === 0 || to.length === 0) return 0;
+  for (let i = 0; i < from.length; i++) {
+    const box = from[i];
+    if (y < box.y + box.h || i === from.length - 1) {
+      const t = box.h > 0 ? clamp((y - box.y) / box.h, 0, 1) : 0;
+      return to[i].y + t * to[i].h;
+    }
+  }
+  const last = to[to.length - 1];
+  return last.y + last.h;
 }
 
 // Inclusive 1-based [from, to] page range visible for the given scroll offset.

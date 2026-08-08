@@ -8,12 +8,15 @@ class Server;
 class MapDb;
 class QueryEngine;
 class PageContent;
+class AnalysisDb;
 
 struct VisualizeOptions {
     std::string mapFile;
-    std::string profileFile;  // optional
-    std::string dbFile;       // optional — enables the live Query view
-    int port = 8080;          // 0 picks a free port
+    std::string profileFile;   // optional
+    std::string dbFile;        // optional — enables the live Query view
+    std::string manifestFile;  // optional — CBS manifest.bcv; enables the Block view
+    std::string manifestDbName;  // optional — which named db in the manifest (else auto)
+    int port = 8080;           // 0 picks a free port
 };
 
 // Registers the visualize routes (static assets + the map query API) on the
@@ -22,7 +25,8 @@ struct VisualizeOptions {
 // Page Tree detail route (/api/page/:n/content) is registered. Exposed for tests.
 void configureVisualizeRoutes(httplib::Server& server, MapDb& db,
                               QueryEngine* engine = nullptr,
-                              PageContent* content = nullptr);
+                              PageContent* content = nullptr,
+                              AnalysisDb* analysis = nullptr);
 
 // Opens the map (+ optional profile), starts the web server, and serves until
 // interrupted. Returns a process exit code.

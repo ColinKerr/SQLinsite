@@ -1,7 +1,9 @@
+import { MINIMAP_BUCKETS } from "./constants.ts";
 import type {
-  Meta, ObjectPagesResponse, PageContent, PageDetail, PagesResponse, ProfilePagesResponse,
-  RunsResponse, StructuralGroupsResponse, TreeChild, TreeObjectResponse, TreePagesResponse,
-  TreePathResponse, TreeRoot, TreeSearchResponse,
+  AnalysisResult, BlockDetail, BlocksResponse, Meta, MinimapResponse, ObjectPagesResponse,
+  ObjectRunsResponse, PageContent, PageDetail, PagesResponse, ProfilePagesResponse,
+  ProfileSourcesResponse, RunsResponse, StructuralGroupsResponse, TreeChild, TreeObjectResponse,
+  TreePagesResponse, TreePathResponse, TreeRoot, TreeSearchResponse,
 } from "./types.ts";
 
 export async function getJson<T>(url: string): Promise<T | null> {
@@ -10,13 +12,13 @@ export async function getJson<T>(url: string): Promise<T | null> {
   return (await r.json()) as T;
 }
 
-// `&sel=` fragment for the current session/query selection; empty when all
-// leaves are on (the server treats "no sel" as "all"), "&sel=-1" when none.
-export function selParam(selLeaves: Set<number>, leafCount: number, hasProfile: boolean): string {
+// `&sel=` fragment for the current profile-source selection; empty when all
+// sources are on (the server treats "no sel" as "all"), "&sel=-1" when none.
+export function selParam(selSources: Set<number>, sourceCount: number, hasProfile: boolean): string {
   if (!hasProfile) return "";
-  if (selLeaves.size === 0) return "&sel=-1";
-  if (selLeaves.size === leafCount) return "";
-  return "&sel=" + [...selLeaves].join(",");
+  if (selSources.size === 0) return "&sel=-1";
+  if (selSources.size === sourceCount) return "";
+  return "&sel=" + [...selSources].join(",");
 }
 
 export const fetchMeta = () => getJson<Meta>("/api/meta");
@@ -24,8 +26,13 @@ export const fetchPages = (from: number, to: number) =>
   getJson<PagesResponse>(`/api/pages?from=${from}&to=${to}`);
 export const fetchRuns = (from: number, to: number) =>
   getJson<RunsResponse>(`/api/runs?from=${from}&to=${to}`);
+// Whole-file object-colored overview for the minimap (tiny; no run map needed).
+export const fetchMinimap = (buckets = MINIMAP_BUCKETS) =>
+  getJson<MinimapResponse>(`/api/minimap?buckets=${buckets}`);
 export const fetchObjectPages = (objectId: number, from: number, to: number) =>
   getJson<ObjectPagesResponse>(`/api/object/pages?objectId=${objectId}&from=${from}&to=${to}`);
+export const fetchObjectRuns = (objectId: number, from: number, to: number) =>
+  getJson<ObjectRunsResponse>(`/api/object/runs?objectId=${objectId}&from=${from}&to=${to}`);
 export const fetchObjectPageOrdinal = (objectId: number, page: number) =>
   getJson<{ ordinal: number }>(`/api/object/page-ordinal?objectId=${objectId}&page=${page}`);
 export const fetchStructuralGroups = () =>
@@ -37,6 +44,24 @@ export const fetchStructuralPageOrdinal = (key: string, page: number) =>
 export const fetchPage = (n: number) => getJson<PageDetail>(`/api/page/${n}`);
 export const fetchProfilePages = (from: number, to: number, sel: string) =>
   getJson<ProfilePagesResponse>(`/api/profile/pages?from=${from}&to=${to}${sel}`);
+// Every profile source (loaded 'input' + interactive 'query') for the overlay tree.
+export const fetchProfileSources = () =>
+  getJson<ProfileSourcesResponse>("/api/profile/sources");
+
+// Block view: all blocks in [from, to] (see BLOCK_VIEW.md), and one block's detail.
+export const fetchBlocks = (from: number, to: number) =>
+  getJson<BlocksResponse>(`/api/blocks?from=${from}&to=${to}`);
+export const fetchBlock = (blockIndex: number, sel: string) =>
+  getJson<BlockDetail>(`/api/block/${blockIndex}${sel ? "?" + sel.replace(/^&/, "") : ""}`);
+
+// Analysis view: run SQL over the unified read-only connection (primary + map +
+// profile + manifest). Returns columns/rows or {error}.
+export async function runAnalysisQuery(sql: string): Promise<AnalysisResult> {
+  const r = await fetch("/api/analysis/query", {
+    method: "POST", body: sql, headers: { "Content-Type": "text/plain" },
+  });
+  return (await r.json()) as AnalysisResult;
+}
 
 // Page Tree view.
 export const fetchTreeRoots = () => getJson<{ roots: TreeRoot[] }>("/api/tree/roots");

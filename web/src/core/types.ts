@@ -1,7 +1,16 @@
 // Shapes returned by the visualize server API (see plan/commands/VISUALIZE.md).
 
 export type Metric = "none" | "reads" | "writes" | "total";
-export type View = "pages" | "tables" | "query" | "tree";
+export type View = "pages" | "tables" | "query" | "tree" | "blocks" | "analysis";
+
+// Result of an Analysis Query-Metrics run (see /api/analysis/query).
+export interface AnalysisResult {
+  columns?: { name: string }[];
+  rows?: unknown[][];
+  rowCount?: number;
+  truncated?: boolean;
+  error?: string;
+}
 
 export interface ObjectInfo {
   id: number;
@@ -14,13 +23,16 @@ export interface ObjectInfo {
   startLeafPage: number;
 }
 
-export interface Leaf {
-  leafId: number;
-  statementIndex: number;
+// One selectable profile source in the unified store: a loaded-profile statement
+// ('input') or an interactive Query-view run ('query'). See /api/profile/sources.
+export interface ProfileSource {
+  sourceId: number;                 // the sel/filter key
+  kind: "input" | "query";
+  sessionName: string;              // input: session name; query: the SQL text
+  sessionId: number;                // input: statementIndex; query: queryId
 }
-export interface SessionInfo {
-  session: string;
-  leaves: Leaf[];
+export interface ProfileSourcesResponse {
+  sources: ProfileSource[];
 }
 
 export interface Meta {
@@ -30,8 +42,47 @@ export interface Meta {
   typeCounts: { pageType: string; count: number }[];
   hasProfile: boolean;
   hasDb?: boolean;
-  sessions: SessionInfo[];
+  // Present when a matching CBS manifest is loaded (enables the Block view).
+  hasManifest?: boolean;
+  manifestMatch?: boolean;
+  blockSize?: number;
+  pagesPerBlock?: number;
+  blockCount?: number;
+  manifestDbName?: string;
 }
+
+// One CBS block row for the Block view (see /api/blocks).
+export interface BlockRow {
+  blockIndex: number;
+  blockId: string;
+  startPage: number;
+  endPage: number;
+  realPages: number;
+  usedPages: number;
+  freePages: number;
+  dominantObjectId: number | null;
+  sharedWithParent: boolean;
+}
+export interface BlocksResponse { blocks: BlockRow[] }
+
+export interface BlockDetail {
+  blockIndex: number;
+  blockId: string;
+  objectName: string;
+  startPage: number;
+  endPage: number;
+  realPages: number;
+  usedPages: number;
+  freePages: number;
+  sharedWithParent: boolean;
+  parentName: string | null;
+  objectMix: { objectId: number | null; name: string | null; pages: number }[];
+  profile?: { reads: number; writes: number };
+}
+
+// Block-view coloring: by owning object, free-fraction ramp, shared-vs-changed
+// (needs a child manifest db), or the profile overlay.
+export type BlockColorMode = "object" | "free" | "shared" | "profile";
 
 export interface PageRow {
   pageNumber: number;
@@ -51,11 +102,36 @@ export interface Run {
 export interface RunsResponse {
   runs: Run[];
 }
+// A whole-file minimap span, colored by the object that owns most of it
+// (objectId null = unowned/structural). See /api/minimap.
+export interface MinimapBucket {
+  startPage: number;
+  endPage: number;
+  objectId: number | null;
+}
+export interface MinimapResponse {
+  pageCount: number;
+  buckets: MinimapBucket[];
+}
 
 export interface ObjectPageRow {
   ordinal: number;
   pageNumber: number;
   pageType: string;
+}
+// One of an object's runs in the zoomed-out Tables LOD (see /api/object/runs): the
+// same run as a Pages-view `Run` filtered by objectId (carries its page range, so
+// the profile overlay applies identically), annotated with its position in the
+// band's packed ordinal coordinates (startOrdinal/endOrdinal) for grid placement.
+export interface ObjectRun {
+  startOrdinal: number;
+  endOrdinal: number;
+  startPage: number;
+  endPage: number;
+  pageType: string;
+}
+export interface ObjectRunsResponse {
+  runs: ObjectRun[];
 }
 export interface ObjectPagesResponse {
   pages: ObjectPageRow[];

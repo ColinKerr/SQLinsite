@@ -29,7 +29,8 @@ public:
     // v3: dropped cells.keyJson (index keys now decoded on demand from the source).
     // v4: cells holds only table-interior cells; table-leaf rows live in
     //     page_row_runs (+objectId/isLeaf for rowid→leaf); pages from DBSTAT.
-    static constexpr int kFormatVersion = 4;
+    // v5: added index pages_type on pages(pageType) (structural-groups/tree-roots).
+    static constexpr int kFormatVersion = 5;
 
     explicit MapWriter(const std::string& path);
     ~MapWriter();
