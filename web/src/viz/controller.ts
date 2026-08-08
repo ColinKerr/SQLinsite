@@ -150,15 +150,21 @@ export class CanvasController {
     this.cssW = this.stage.clientWidth;
     this.cssH = this.stage.clientHeight;
     this.dpr = window.devicePixelRatio || 1;
-    this.canvas.width = Math.floor(this.cssW * this.dpr);
-    this.canvas.height = Math.floor(this.cssH * this.dpr);
+    // Only set size when it's different
+    const cw = Math.floor(this.cssW * this.dpr), ch = Math.floor(this.cssH * this.dpr);
+    if (this.canvas.width !== cw || this.canvas.height !== ch) {
+      this.canvas.width = cw; this.canvas.height = ch;
+    }
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.miniW = this.minimap.clientWidth;
     this.miniH = this.minimap.clientHeight;
-    this.minimap.width = Math.floor(this.miniW * this.dpr);
-    this.minimap.height = Math.floor(this.miniH * this.dpr);
+    const mw = Math.floor(this.miniW * this.dpr), mh = Math.floor(this.miniH * this.dpr);
+    if (this.minimap.width !== mw || this.minimap.height !== mh) {
+      this.minimap.width = mw; this.minimap.height = mh;
+    }
     this.mctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.scheduleRender();
+    // Redraw synchronously to avoid flashing
+    this.render();
   };
 
   // ---- render loop --------------------------------------------------------
