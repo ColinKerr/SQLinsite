@@ -11,7 +11,7 @@ of a `sqlinsite map` result, optionally overlaid with a `sqlinsite profile` data
 It runs in the foreground and prints its URL; stop it with Ctrl-C.
 
 - `--map-file` (required) — the **SQLite** map from `sqlinsite map`.
-- `--profile-file` (optional) — the profile **SQLite database** from `sqlinsite
+- `--profile-file` (optional) — the profile SQLite db from `sqlinsite
   profile`; imported as loaded ('input') sources of the read/write overlay.
 - `--db-file` (optional) - The SQLite file mapped by the `map-file`.  File will be opened read-only. Enables the Query view and is the no-prefix base of the Analysis Query Metrics.
 - `--manifest-file` (optional) — a Cloud Backed SQLite `manifest.bcv`; enables the **Block** view and the block metrics of the **Analysis** view (see BLOCK_VIEW.md, ANALYSIS_VIEW.md).

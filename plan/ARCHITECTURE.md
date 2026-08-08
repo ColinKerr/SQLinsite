@@ -13,11 +13,11 @@
 
 The binary exposes several subcommands, each its own module set:
 
-- **`profile`** — runs statements through the wrapping VFS, emitting a **SQLite database** with a raw per-page-access log + run metadata. Detailed below; see [commands/PROFILE.md](./commands/PROFILE.md).
+- **`profile`** — runs statements through the wrapping VFS, emitting a SQLite db with a raw per-page-access log + run metadata. see [commands/PROFILE.md](./commands/PROFILE.md).
 - **`map`** — parses the SQLite file format into an **indexed SQLite file** describing every page. Uses the `sqlite_dbpage` vtab for raw page bytes; does not use the VFS shim. See [commands/MAP.md](./commands/MAP.md).
 - **`visualize serve`** — local web server that queries the map SQLite file by page-number range and renders it on a canvas with zoom and level-of-detail (+ optional profile overlay). With `--db-file` it also serves a live **Query** view that runs SQL against the mapped database (through the profiling VFS, fresh cold connection per run) and shows the pages each query touches. See [commands/VISUALIZE.md](./commands/VISUALIZE.md) and [commands/VISUALIZE_LIVE_QUERY_VIEW.md](./commands/VISUALIZE_LIVE_QUERY_VIEW.md).
 
-`profile` and `map` both produce data keyed by SQLite's 1-based **page number**, which is the join `visualize` relies on. The map is a queryable, indexed SQLite database (not a JSON blob) so the visualizer fetches only the pages in the current viewport.
+`profile` and `map` both produce data keyed by SQLite's 1-based page number, which is the join `visualize` relies on. The map is a queryable, indexed SQLite database (not a JSON blob) so the visualizer fetches only the pages in the current viewport.
 
 ## Overview
 

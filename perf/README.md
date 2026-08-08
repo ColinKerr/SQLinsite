@@ -1,13 +1,8 @@
 # SQLinsite perf harness
 
-Reusable performance harness for profiling how SQLinsite loads large SQLite
-files. See [`plan/PERF_HARNESS.md`](../plan/PERF_HARNESS.md) for the full plan.
+Reusable performance harness for profiling how SQLinsite loads large SQLite files. See [`plan/PERF_HARNESS.md`](../plan/PERF_HARNESS.md) for the full plan.
 
-**Status: Phase 4 (complete).** Orchestrates the C++ pipeline; via headless
-Chromium (Playwright) loads a view, runs a scripted interaction, and captures a
-Chromium trace, heap timeline, long tasks, and a leak check; ships a **synthetic
-generator** that reproduces the real-file bottlenecks, plus **baseline/regression**
-tracking and per-run `report.md`.
+Orchestrates the C++ pipeline; via Playwright loads a view, runs a scripted interaction, and captures a Chromium trace, heap timeline, long tasks, and a leak check; includes a db generator that reproduces the real-file bottlenecks, plus baseline/regression tracking and per-run `report.md`.
 
 ## Setup
 
@@ -43,13 +38,9 @@ npm run perf -- --no-browser   # backend only
 npm run perf -- --help         # all options
 ```
 
-`--map-only` records **map build wall time**, **peak RSS**, and the **generated
-map file size** (absolute + as a % of the source db). These are also captured on
-any run that generates a map, and tracked against the baseline (`map build ms`,
-`map peak RSS MB`, `map size MB`).
+`--map-only` records **map build wall time**, **peak RSS**, and the **generated map file size** (absolute + as a % of the source db). These are also captured on any run that generates a map, and tracked against the baseline (`map build ms`, `map peak RSS MB`, `map size MB`).
 
-Later runs auto-compare against `results/baseline.json` and flag metrics that
-regress > 20%.
+Later runs auto-compare against `results/baseline.json` and flag metrics that regress > 20%.
 
 ### Synthetic data (reproduce the bottlenecks without a real large file)
 
@@ -59,23 +50,12 @@ npm run generate -- --pages 11000000 --out synth/huge.db   # ~8M pages, matches 
 npm run perf -- --db <generated.db>          # maps + profiles it
 ```
 
-The generator uses a small `page_size` + overflow blobs to hit a high **page
-count** cheaply — the dimension the bottlenecks scale on. 
+The generator uses a small `page_size` + overflow blobs to hit a high **page count** cheaply — the dimension the bottlenecks scale on. 
 
 What the harness records (written to `perf/results/<timestamp>/`):
 
-- **Backend** — map build wall time + peak RSS (when mapping), serve startup
-  time, serve peak RSS / CPU, and latency + payload size for the Pages-view
-  endpoints (`/api/meta`, `/api/pages`, `/api/runs`, `/api/page/1`).
-- **Frontend** — navigation→ready time (with `meta-loaded` / `runs-loaded`
-  marks), retained + peak JS heap, long tasks (main-thread blocking), a scripted
-  interaction (canvas **scroll** with an FPS, or **query** run), an optional
-  **leak** check, and per-request timing/size for `/api/*`.
-- `summary.json` (all metrics) + `rss.json` (serve RSS/CPU time series) +
-  **`trace.json`** (Chromium trace — open in [Perfetto](https://ui.perfetto.dev)
-  or `chrome://tracing`) + `heap-timeline.json`.
+- **Backend** — map build wall time + peak RSS (when mapping), serve startup time, serve peak RSS / CPU, and latency + payload size for the Pages-view endpoints (`/api/meta`, `/api/pages`, `/api/runs`, `/api/page/1`).
+- **Frontend** — navigation→ready time (with `meta-loaded` / `runs-loaded` marks), retained + peak JS heap, long tasks (main-thread blocking), a scripted interaction (canvas **scroll** with an FPS, or **query** run), an optional **leak** check, and per-request timing/size for `/api/*`.
+- `summary.json` (all metrics) + `rss.json` (serve RSS/CPU time series) + **`trace.json`** (Chromium trace — open in [Perfetto](https://ui.perfetto.dev) or `chrome://tracing`) + `heap-timeline.json`.
 
-The frontend timing relies on always-on marks in the app
-(`web/src/core/perf.ts` → `window.__sqlinsitePerf`), so **after changing the web
-app rebuild the binary** (`cmake --build build`, or pass `--build`) to re-embed
-the assets. The harness uses the binary at `build/sqlinsite`.
+The frontend timing relies on always-on marks in the app (`web/src/core/perf.ts` → `window.__sqlinsitePerf`), so **after changing the web app rebuild the binary** (`cmake --build build`, or pass `--build`) to re-embed the assets. The harness uses the binary at `build/sqlinsite`.

@@ -35,7 +35,7 @@ cold page cache, give it its own session.
 
 ## Output File Format
 
-A **SQLite database** with two tables: a raw `accesses` log — one row
+A SQLite db with two tables: a raw `accesses` log — one row
 per page access, preserving order and timing — and a single-row `meta` header. The
 raw log is kept whole (not pre-aggregated) so the db is useful for timing analysis;
 `sqlinsite visualize --profile-file` aggregates it into per-page read/write counts on

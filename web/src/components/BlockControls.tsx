@@ -1,6 +1,6 @@
 import { useViz } from "../state/store.ts";
 import { ZoomControls } from "./ZoomControls.tsx";
-import { formatCount } from "../core/format.ts";
+import { formatBytes, formatCount } from "../core/format.ts";
 import type { BlockColorMode } from "../core/types.ts";
 
 const MODES: { id: BlockColorMode; label: string }[] = [
@@ -17,7 +17,7 @@ export function BlockControls() {
   const setMode = useViz((s) => s.setBlockColorMode);
   const hasProfile = useViz((s) => s.hasProfile);
   const blockCount = useViz((s) => s.blockCount);
-  const ppb = useViz((s) => s.pagesPerBlock);
+  const pagesPerBlock = useViz((s) => s.pagesPerBlock);
   const dbName = useViz((s) => (s.meta?.manifestDbName as string) ?? "");
   const blockSize = useViz((s) => (s.meta?.blockSize as number) ?? 0);
 
@@ -39,8 +39,8 @@ export function BlockControls() {
       <ZoomControls />
       <div className="bar-group block-stats" title={dbName}>
         <span>{formatCount(blockCount)} blocks</span>
-        <span>· {ppb} pages/block</span>
-        <span>· {(blockSize / (1024 * 1024)).toFixed(0)} MiB each</span>
+        <span>· {pagesPerBlock} pages/block</span>
+        <span>· {formatBytes(blockSize)} each</span>
       </div>
     </div>
   );
