@@ -83,6 +83,8 @@
                 "visualize", "serve",
                 "--map-file", "${input:mapFile}",
                 "--db-file", "${input:dbFile}",
+                "--profile-file", "${input:profileFile}",
+                "--manifest-file", "${input:manifestFile}",
                 "--port", "${input:port}"
             ],
             "cwd": "${workspaceFolder}",
@@ -169,6 +171,18 @@
             "type": "promptString",
             "description": "Path to the source SQLite db (enables the live Query view)",
             "default": "${workspaceFolder}/source.db"
+        },
+        {
+            "id": "profileFile",
+            "type": "promptString",
+            "description": "Path to the profile file (sqlinsite profile output)",
+            "default": "${workspaceFolder}/profile.sqlite"
+        },
+        {
+            "id": "manifestFile",
+            "type": "promptString",
+            "description": "Path to the manifest file (manifest.bcv)",
+            "default": "${workspaceFolder}/manifest.bcv"
         },
         {
             "id": "port",

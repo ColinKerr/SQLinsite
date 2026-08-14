@@ -163,11 +163,12 @@ ManifestDb::ManifestDb(const std::string& manifestPath, const std::string& dbNam
         if (selected == nullptr)
             matchReason_ = "named database '" + dbName + "' not found in manifest";
     } else {
-        // Auto: prefer a non-deleted, non-BASELINE db whose block count matches.
-        const DbHdr* best = nullptr;   // best matching by block count
-        const DbHdr* newest = nullptr; // fallback: newest non-baseline
+        // Auto: traverse the databases from highest id to lowest and select the
+        // first (newest) non-deleted db whose block count matches the mapped file.
+        const DbHdr* best = nullptr;   // highest-id db whose block count matches
+        const DbHdr* newest = nullptr; // fallback: highest-id non-deleted db
         for (const DbHdr& d : dbs) {
-            if (d.deleted || d.name == "BASELINE.bim") continue;
+            if (d.deleted) continue;
             if (newest == nullptr || d.id > newest->id) newest = &d;
             if (d.nBlk == expected && (best == nullptr || d.id > best->id)) best = &d;
         }

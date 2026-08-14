@@ -77,9 +77,9 @@ void printSummary(const std::vector<SessionStat>& stats, const SqliteWriter& wri
     std::cerr << "SQLinsite summary:\n";
     for (const SessionStat& s : stats) {
         std::cerr << "  session \"" << s.name << "\": " << (s.reads + s.writes)
-                  << " rows (" << s.reads << " read, " << s.writes << " write)\n";
+                  << " pages (" << s.reads << " read, " << s.writes << " write)\n";
     }
-    std::cerr << "  total: " << writer.rowCount() << " rows ("
+    std::cerr << "  total: " << writer.rowCount() << " pages ("
               << writer.readCount() << " read, " << writer.writeCount()
               << " write) across " << stats.size() << " session(s)\n";
 }

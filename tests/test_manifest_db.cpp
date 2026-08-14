@@ -119,6 +119,26 @@ TEST_CASE("manifest parses, resolves child deltas, and auto-selects by block cou
     CHECK(scalar(db, "SELECT count(*) FROM blocks WHERE dbId=2") == 3);
 }
 
+TEST_CASE("manifest auto-selects BASELINE when its block count matches the map") {
+    const std::string path = buildManifest(tmpPath("m_baseline.bcv"));
+    // pageSize 4096, szBlk 8192 -> pagesPerBlock 2. pageCount 3 -> expected ceil(3/2)=2
+    // blocks, which matches BASELINE.bim (2 blocks), not data.bim (3 blocks). The
+    // baseline must not be excluded from auto-selection.
+    ManifestDb m(path, "", /*mapPageCount=*/3, /*pageSize=*/4096);
+
+    CHECK(m.selectedDbName() == "BASELINE.bim");
+    CHECK(m.selectedDbId() == 1);
+    CHECK(m.blockCount() == 2);
+    CHECK(m.match() == true);
+    CHECK(m.matchReason().empty());
+
+    const std::string db = m.path();
+    CHECK(scalar(db, "SELECT manifestMatch FROM meta") == 1);
+    CHECK(scalar(db, "SELECT selectedDbId FROM meta") == 1);
+    CHECK(scalar(db, "SELECT isSelected FROM databases WHERE name='BASELINE.bim'") == 1);
+    CHECK(scalar(db, "SELECT isSelected FROM databases WHERE name='data.bim'") == 0);
+}
+
 TEST_CASE("manifest honors an explicit db name and reports mismatch") {
     const std::string path = buildManifest(tmpPath("m2.bcv"));
 

@@ -19,7 +19,7 @@ The Block button is shown only when a manifest is loaded, gated the same way the
 - `--manifest-file <manifest.bcv>` — the CBS manifest for the container.
 - `--manifest-db-name <name>` — which named database in the manifest the `--map-file` corresponds to (a manifest can describe several; e.g. `BASELINE.bim` plus one checkpoint per changeset). Optional.
 
-**Default database selection (auto-match by block count).** When `--manifest-db-name` is omitted, the server picks the **non-deleted, non-`BASELINE` database whose block count equals `ceil(map.pageCount / pagesPerBlock)`** — the one that physically matches the mapped file. If exactly one matches it is used silently; if several match, the highest db id (newest checkpoint) wins. If an explicit name is given it is used as-is.
+**Default database selection (auto-match by block count).** When `--manifest-db-name` is omitted, the server traverses the manifest's databases from highest id to lowest and selects the first non-deleted database whose block count equals `ceil(map.pageCount / pagesPerBlock)`— i.e. the newest checkpoint with matching number of blocks is chosen. If an explicit name is given it is used as-is.
 
 **Mismatch handling.** If the selected database's block count does **not** equal `ceil(map.pageCount / pagesPerBlock)` (a manifest paired with the wrong map, or an
 uncommitted/stale file), the Block view is **disabled** and `/api/meta` reports the reason so the front-end can show a clear "this manifest does not match the mapped database" warning rather than drawing a misaligned mapping.
