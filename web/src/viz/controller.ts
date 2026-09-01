@@ -895,22 +895,40 @@ export class CanvasController {
     }
   }
 
-  // Public: called from the Navigation panel legend.
+  // Public: called from the Navigation panel legend. Scrolls to `id` within the
+  // CURRENT canvas view — it must never switch views (a view switch here bounces
+  // the user off the Blocks/Tables tab; see the per-view handling below).
   async navigateToObject(id: number) {
     const obj = this.s.objById.get(id);
     if (!obj) return;
-    if (this.s.view === "tables") {
-      const band = this.bands.find((b) => b.grp.objectId === id);
-      if (band) { this.scroll.tables = Math.max(0, band.y); this.scheduleRender(); }
-      return;
+    switch (this.s.view) {
+      case "tables": {
+        const band = this.bands.find((b) => b.grp.objectId === id);
+        if (band) { this.scroll.tables = Math.max(0, band.y); this.scheduleRender(); }
+        return;
+      }
+      case "pages":
+      case "blocks": {
+        // Both are page-indexed grids: resolve the object's first page, then scroll
+        // to it (Pages, top-aligned) or to its containing block (Blocks) — without
+        // changing the view.
+        let first: number | null = obj.startLeafPage || obj.startPage;
+        if (!first) {
+          const d = await fetchObjectPages(id, 0, 1);
+          const pages = d?.pages || [];
+          first = pages.length > 1 ? pages[1].pageNumber : pages.length ? pages[0].pageNumber : null;
+        }
+        if (first == null) return;
+        if (this.s.view === "pages") this.scrollToBlock(first);
+        else this.selectPageInView(first, id, null);
+        return;
+      }
+      default:
+        // The canvas controller only drives pages/tables/blocks; a query/tree/
+        // analysis (or unknown) view here means navigateToObject was called from an
+        // unexpected place.
+        console.error(`navigateToObject: unhandled view '${this.s.view}'`);
     }
-    let first: number | null = obj.startLeafPage || obj.startPage;
-    if (!first) {
-      const d = await fetchObjectPages(id, 0, 1);
-      const pages = d?.pages || [];
-      first = pages.length > 1 ? pages[1].pageNumber : pages.length ? pages[0].pageNumber : null;
-    }
-    if (first) this.scrollToBlock(first);
   }
 
   private onWheel = (e: WheelEvent) => {
