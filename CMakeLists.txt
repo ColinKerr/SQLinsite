@@ -76,6 +76,7 @@ target_compile_definitions(sqlite3 PRIVATE
   SQLITE_ENABLE_DBPAGE_VTAB
   SQLITE_ENABLE_DBSTAT_VTAB   # map builder classifies btree pages via dbstat
   SQLITE_ENABLE_MATH_FUNCTIONS  # built-in math funcs (ceil, pow, log, sqrt, …) in queries
+  SQLITE_ENABLE_RTREE # enable R*Tree module for spatial indexing
 )
 if(NOT MSVC)
   target_compile_options(sqlite3 PRIVATE -w)
